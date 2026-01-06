@@ -76,5 +76,6 @@ Always respond in this structure:
 
 6. **Call out deferred tests**
    - Anything too expensive or out of scope for this phase, with a rationale.
+   - **Note:** If test requirements are unclear and need user clarification, escalate to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.
 
 This spec guides **test-spec, coder, test-runner, and reviewer** in evaluating coverage.

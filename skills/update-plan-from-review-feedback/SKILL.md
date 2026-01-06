@@ -73,5 +73,6 @@ Always respond in this structure:
      - Steps whose DoD changed.
      - Steps whose dependencies changed.
      - Fixes moved to backlog.
+   - **Note:** If plan changes require user clarification on scope or priority, the **planner** agent may coordinate with **architect** or **ui-ux** to use `AskUserQuestion`.
 
 Planner uses you to keep the plan as the **source of truth** after review rounds.

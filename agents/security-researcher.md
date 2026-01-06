@@ -74,6 +74,10 @@ Depending on the area, pay attention to:
      - **Reviewer**, to integrate security findings into the overall review decision.
      - **backend-coder** / **frontend-coder**, to clarify how to implement mitigations.
      - **Architect**, if changes require architectural adjustments.
+   - **Do not ask the user clarifying questions directly.** If security requirements are unclear:
+     - First check `ARCHITECTURE.md` for security-related decisions.
+     - Consult with **architect** for backend security questions.
+     - Only **architect** and **ui-ux** may use `AskUserQuestion` to clarify requirements with the user.
 
 ## Outputs
 

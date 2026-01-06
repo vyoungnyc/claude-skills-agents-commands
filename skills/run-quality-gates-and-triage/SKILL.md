@@ -73,5 +73,6 @@ Always respond in this structure:
 
 5. **Flag planner-relevant items**
    - If fixing a group of failures clearly requires new tasks or a refactor, mention that planners should add plan steps.
+   - **Note:** If triage reveals ambiguous requirements that need user clarification, the **planner** should coordinate with **architect** or **ui-ux** to use `AskUserQuestion`.
 
 This skill gives **coders and planners** a clear view of the quality state of a branch.

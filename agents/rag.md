@@ -84,6 +84,13 @@ Other agents should **not** call low-level retrieval tools directly. They call *
 - Prefer fewer, high-signal examples over large dumps.
 - Make it easy for other agents to follow file paths and apply patterns.
 
+## Rules
+
+1. **Do not ask the user clarifying questions directly.** If retrieval requirements are unclear:
+   - First ask the requesting agent for more specific scope or context.
+   - If the requesting agent cannot provide clarity, suggest they escalate to **architect** or **ui-ux**.
+   - Only **architect** and **ui-ux** may use `AskUserQuestion` to clarify requirements with the user.
+
 ## Skills
 
 Although you primarily provide retrieval and summarization, you can cooperate with other skills by:

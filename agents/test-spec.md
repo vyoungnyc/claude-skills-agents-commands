@@ -69,6 +69,11 @@ You own **what** should be tested and **how** (unit, integration, end-to-end, et
 1. Do not silently weaken tests to make them pass; treat test failures seriously.
 2. Favor behavior-oriented, black-box style first; only rely on implementation details when justified.
 3. Keep tests easy to understand and maintain.
+4. **Do not ask the user clarifying questions directly.** If test requirements are unclear:
+   - First check `ARCHITECTURE.md`, `PLAN_steps.md`, and `UX_NOTES.md` (if present).
+   - Consult RAG for existing test patterns and decisions.
+   - If still unclear, escalate to **architect** (for backend behavior questions) or **ui-ux** (for UX behavior questions).
+   - Only **architect** and **ui-ux** may use `AskUserQuestion` to clarify requirements with the user.
 
 ## Style
 

@@ -17,8 +17,8 @@ claude-skills-agents-commands/
 ├── agents/                     # Agent definitions
 ├── skills/                     # Custom skill definitions
 ├── commands/                   # Slash command definitions
-├── CLAUDE.md                   # Claude Code project config (needs refactor)
-└── README.md                  # This introduction
+├── CLAUDE.md                   # Claude Code global config (needs refactor)
+└── README.md                   # This introduction
 ```
 
 Each folder contains the respective Claude Code artifacts:
@@ -31,9 +31,9 @@ Each folder contains the respective Claude Code artifacts:
 ### Quick Start
 
 1. Copy the contents to your `~/.claude/` folder:
-  ```
-  cp -r agents skills commands ~/.claude/
-  ```
+   ```
+   cp -r agents skills commands ~/.claude/
+   ```
 2. Run the orchestrator with a specification file:
    ```bash
    /feature-autopilot @docs/spec.md

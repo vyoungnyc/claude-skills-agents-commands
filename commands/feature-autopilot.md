@@ -235,6 +235,12 @@ Once relevant implementation + tests exist:
 - Only ask the user for input when:
   - Specs conflict in a way you cannot resolve reasonably.
   - A major scope / product decision is required.
+- **Do not ask the user clarifying questions directly.** Instead:
+  - Route design/architecture questions to **architect**.
+  - Route UX/interaction questions to **ui-ux**.
+  - Route scope/priority/sequencing questions to **planner**.
+  - Only **architect**, **ui-ux**, and **planner** may use `AskUserQuestion` to clarify requirements with the user.
+  - These agents will update `ARCHITECTURE.md`, `UX_NOTES.md`, or `PLAN_steps.md` with the clarified requirements.
 
 Otherwise, stay in autopilot and provide concise status and checkpoints.
 

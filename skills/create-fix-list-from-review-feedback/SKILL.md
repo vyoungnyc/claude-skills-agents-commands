@@ -71,5 +71,6 @@ Always respond in this structure:
 
 6. **Separate backlog**
    - Identify tasks that can be safely postponed and list them in **Backlog Suggestions**.
+   - **Note:** If prioritization requires user input, escalate to **planner** who may coordinate with **architect** or **ui-ux** to use `AskUserQuestion`.
 
 This output feeds **planner** skills, especially `update-plan-from-review-feedback`.
