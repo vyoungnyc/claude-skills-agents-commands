@@ -84,3 +84,4 @@ Always respond in this structure:
 7. **Do NOT plan**
    - Do not invent step sequences or modify plans directly.
    - Your output is **input** for `create-fix-list-from-review-feedback` and `update-plan-from-review-feedback`.
+   - **Note:** If you have open questions that require user clarification, escalate them to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.

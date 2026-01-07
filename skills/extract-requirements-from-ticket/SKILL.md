@@ -79,5 +79,6 @@ Always respond in this structure:
 7. **Formulate open questions**
    - Turn ambiguous or conflicting points into explicit questions.
    - These feed back to the product owner and planner.
+   - **Note:** If you need to ask the user for clarification, escalate to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.
 
 Your goal is a **requirements baseline** that all other agents (architect, planner, coder, test-spec, reviewer) can align on.

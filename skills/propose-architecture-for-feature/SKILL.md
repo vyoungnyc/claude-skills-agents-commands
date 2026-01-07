@@ -74,5 +74,6 @@ Always respond in this structure:
 5. **Identify open questions**
    - Point out where more information is needed.
    - These feed back to planner/architect/product.
+   - **Note:** If these questions require user input, the **architect** agent will use `AskUserQuestion` to clarify—do not ask the user directly from this skill.
 
 This is the **primary artifact** for coders and reviewers to align on before deep implementation.

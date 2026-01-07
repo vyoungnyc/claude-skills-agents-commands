@@ -80,5 +80,6 @@ Always respond in this structure:
 6. **Surface risks and unknowns**
    - Mention potential regressions (shared types, shared tables, shared APIs).
    - List explicit questions a planner/architect should resolve.
+   - **Note:** If these questions require user clarification, the **architect** or **ui-ux** agents will use `AskUserQuestion`—do not ask the user directly from this skill.
 
-Stay concise but **structured**; the planner/architect should be able to use your output as the “context section” of their own work.
+Stay concise but **structured**; the planner/architect should be able to use your output as the "context section" of their own work.

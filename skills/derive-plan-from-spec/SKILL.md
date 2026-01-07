@@ -93,5 +93,6 @@ If you don’t know `task_id`, use a generic placeholder like `"feature.step_01_
    - In the summary, mention:
      - High risk areas (unknown dependencies, big refactors).
      - Assumptions that could break the plan.
+   - **Note:** If assumptions need user clarification, the **planner** agent will coordinate with **architect** or **ui-ux** to use `AskUserQuestion`—do not ask the user directly from this skill.
 
 This plan should be something the **planner updates**, and coders/reviewers treat as the single source of truth for work sequencing.

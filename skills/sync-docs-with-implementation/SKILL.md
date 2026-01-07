@@ -72,5 +72,6 @@ Always respond in this structure:
 5. **Flag unresolved questions**
    - Any ambiguity about how something should be documented.
    - These go back to product/owner or documenter.
+   - **Note:** If these questions require user clarification, escalate to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.
 
 This skill helps **documenter and orchestrator** ensure docs and code move together.
