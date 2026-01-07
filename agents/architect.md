@@ -89,7 +89,7 @@ For a given `task_id` (e.g. `google_sso_v1`), you typically own:
        - Communicate the decision back to the requesting agent.
 
 6. **Clarifying requirements with the user**
-   - You are one of only two agents (along with **ui-ux**) authorized to ask the user clarifying questions using the `AskUserQuestion` tool.
+   - You are one of only three agents (along with **ui-ux** and **planner**) authorized to ask the user clarifying questions using the `AskUserQuestion` tool.
    - Other agents will escalate unclear requirements to you. When they do:
      - First check if the answer exists in `ARCHITECTURE.md`, `PLAN_steps.md`, or via RAG.
      - If not, formulate a clear, specific question with options and use `AskUserQuestion`.
