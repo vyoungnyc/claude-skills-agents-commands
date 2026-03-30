@@ -47,10 +47,11 @@ if $HAS_FORCE; then
 fi
 
 # --- Block push directly to main/master ---
-# Matches any remote (not just origin), plus refspec forms like HEAD:main
-# Use \S+\s+ repeated to skip flags like -u before the branch name
+# Matches any remote (not just origin), plus refspec forms like HEAD:main,
+# full ref paths like refs/heads/main, and --delete/-d main.
 if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)\b' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)\b'; then
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)\b' || \
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)\b'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
