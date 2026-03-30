@@ -109,6 +109,21 @@ Or invoke the orchestrator directly with a task description.
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
+## Platform Support
+
+| Component | GitHub | GitLab | Notes |
+|---|---|---|---|
+| **Hooks** (all 5) | ✅ | ✅ | Platform-agnostic — operates at the git level |
+| **Agents** (all 10) | ✅ | ✅ | No platform-specific logic |
+| **Skills** (all 12) | ✅ | ✅ | No platform-specific logic |
+| **/feature-autopilot** | ✅ | ✅ | No platform-specific logic |
+| **/backend-test-runner** | ✅ | ✅ | No platform-specific logic |
+| **/frontend-test-runner** | ✅ | ✅ | No platform-specific logic |
+| **/git** | ✅ | ✅ | No platform-specific logic |
+| **/pr-fix-loop** | ✅ | ❌ | GitHub only — uses GitHub GraphQL API for review threads, thread resolution, comment replies, and PR description reactions |
+
+`/pr-fix-loop` is built on GitHub's review thread model (`reviewThreads`, `resolveReviewThread` mutation, PR-level emoji reactions). GitLab uses a fundamentally different discussions/approval model, so a separate `/mr-fix-loop` implementation would be needed for GitLab support.
+
 ## Key Design Principles
 
 **Strict delegation** — The orchestrator and autopilot commands MUST NOT write code. All substantive work goes through specialized agents.
