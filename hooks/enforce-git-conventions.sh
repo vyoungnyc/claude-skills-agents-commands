@@ -16,7 +16,28 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # Handles: -c key=val, --no-pager, --git-dir=path, -C path, -p, etc.
 # After stripping, NORMALIZED starts with "git <subcommand> ..."
 # Note: use POSIX character classes — macOS sed does not support \s / \S in ERE
-NORMALIZED=$(echo "$COMMAND" | sed -E 's/^(git[[:space:]]+)((-[a-zA-Z]([[:space:]]+[^[:space:]]+)?|--[a-zA-Z][a-zA-Z0-9_-]*(=[^[:space:]]+)?)[[:space:]]+)*/\1/')
+#
+# Global flags that take a mandatory argument (consume next token):
+#   -C <path>, -c <key=val>, --git-dir <path>, --work-tree <path>,
+#   --namespace <name>, --super-prefix <path>, --config-env <name=envvar>
+# Global flags that are standalone (do NOT consume next token):
+#   -p/--paginate, -P/--no-pager, --no-replace-objects, --bare,
+#   --literal-pathspecs, --glob-pathspecs, --noglob-pathspecs,
+#   --no-optional-locks, --no-lazy-fetch, --html-path, --man-path, --info-path
+NORMALIZED="$COMMAND"
+# Strip long options with = value (e.g. --git-dir=/foo)
+NORMALIZED=$(echo "$NORMALIZED" | sed -E 's/(^git[[:space:]]+)((--[a-zA-Z][a-zA-Z0-9_-]*=[^[:space:]]+[[:space:]]+)*)/\1/' )
+# Iteratively strip global options from the front (after "git ")
+while true; do
+  PREV="$NORMALIZED"
+  # Strip flags that take a mandatory argument: -C, -c, --git-dir, --work-tree, --namespace, --super-prefix, --config-env
+  NORMALIZED=$(echo "$NORMALIZED" | sed -E 's/^(git[[:space:]]+)(-[Cc]|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+/\1/')
+  # Strip standalone flags: -p, -P, --paginate, --no-pager, --bare, --no-replace-objects, etc.
+  NORMALIZED=$(echo "$NORMALIZED" | sed -E 's/^(git[[:space:]]+)(-[pP]|--paginate|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--no-optional-locks|--no-lazy-fetch|--html-path|--man-path|--info-path)[[:space:]]+/\1/')
+  # Strip long options with = value (e.g. --git-dir=/foo)
+  NORMALIZED=$(echo "$NORMALIZED" | sed -E 's/^(git[[:space:]]+)--[a-zA-Z][a-zA-Z0-9_-]*=[^[:space:]]+[[:space:]]+/\1/')
+  [ "$NORMALIZED" = "$PREV" ] && break
+done
 
 # --- Block force push ---
 # --force overrides --force-with-lease when both are present, so block
@@ -62,8 +83,10 @@ if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?
   exit 0
 fi
 
-# --- Block --no-verify ---
-if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify'; then
+# --- Block --no-verify / -n (commit short form) ---
+# git commit supports -n as short for --no-verify; git push only has --no-verify.
+if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
+   echo "$NORMALIZED" | grep -qE 'git\s+commit\s+.*(\s|^)-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
