@@ -19,9 +19,10 @@ A set of agent definitions, skills, commands, and hooks that turn Claude Code in
 1. Copy the contents to your project's `.claude/` directory:
 
 ```bash
-cp -r agents/ .claude/agents/
-cp -r skills/ .claude/skills/
-cp -r commands/ .claude/commands/
+mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks
+cp -r agents/. .claude/agents/
+cp -r skills/. .claude/skills/
+cp -r commands/. .claude/commands/
 cp hooks/reinject-context.sh .claude/hooks/
 chmod +x .claude/hooks/reinject-context.sh
 ```

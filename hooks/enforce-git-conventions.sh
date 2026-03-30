@@ -21,10 +21,13 @@ NORMALIZED=$(echo "$COMMAND" | sed -E 's/^(git\s+)((-[a-zA-Z](\s+\S+)?|--[a-zA-Z
 # --force overrides --force-with-lease when both are present, so block
 # any command containing --force or -f (bare --force-with-lease without
 # --force is allowed as the safer alternative).
+# Use a two-step check: strip --force-with-lease first, then look for --force/-f,
+# so that --force-with-lease alone does not trip the force detector.
 HAS_FORCE=false
 HAS_LEASE=false
-echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(--force\b|-f\b)' && HAS_FORCE=true
-echo "$NORMALIZED" | grep -qE '\-\-force-with-lease' && HAS_LEASE=true
+echo "$NORMALIZED" | grep -qE '(^|\s)--force-with-lease(\s|$)' && HAS_LEASE=true
+_STRIPPED_LEASE=$(echo "$NORMALIZED" | sed 's/--force-with-lease//g')
+echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+.*(--force(\s|=|$)| -f(\s|$))' && HAS_FORCE=true
 
 if $HAS_FORCE; then
   if $HAS_LEASE; then
