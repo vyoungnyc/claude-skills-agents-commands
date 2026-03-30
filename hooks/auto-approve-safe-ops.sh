@@ -9,6 +9,10 @@
 # Everything else goes through normal permission flow.
 
 INPUT=$(cat)
+
+# Fast path: skip jq for commands that can't match safe patterns
+[[ "$INPUT" == *'"npm '* || "$INPUT" == *'"npx '* || "$INPUT" == *'"git '* ]] || exit 0
+
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 # Define safe patterns (read-only or non-destructive)

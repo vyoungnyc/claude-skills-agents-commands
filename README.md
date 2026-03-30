@@ -75,7 +75,7 @@ Or invoke the orchestrator directly with a task description.
 | **documenter** | haiku | memory: project | Docs and changelogs (cost-efficient) |
 | **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system guidance |
 
-### Skills (12)
+### Skills (11)
 
 | Skill | Purpose |
 |---|---|
@@ -119,7 +119,7 @@ Or invoke the orchestrator directly with a task description.
 | poll-pr-reviews.sh | GitHub | Poll a PR for new review threads, approval emoji (👍/✅), or idle timeout. Used by `/pr-fix-loop`. |
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
 
-**Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = pipeline failed (GitLab only), `10` = usage error.
+**Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
 
 **Usage:**
 ```bash

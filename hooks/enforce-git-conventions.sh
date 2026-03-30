@@ -43,67 +43,63 @@ while true; do
   [ "$NORMALIZED" = "$PREV" ] && break
 done
 
-# --- Block force push ---
-# --force overrides --force-with-lease when both are present, so block
-# any command containing --force or -f (bare --force-with-lease without
-# --force is allowed as the safer alternative).
-# Use a two-step check: strip --force-with-lease first, then look for --force/-f,
-# so that --force-with-lease alone does not trip the force detector.
-HAS_FORCE=false
-HAS_LEASE=false
-echo "$NORMALIZED" | grep -qE '(^|\s)--force-with-lease(\s|$)' && HAS_LEASE=true
-_STRIPPED_LEASE=$(echo "$NORMALIZED" | sed 's/--force-with-lease//g')
-echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-[a-zA-Z]*f[a-zA-Z]*(\s|$))' && HAS_FORCE=true
+# --- Push-specific checks (skip for non-push commands) ---
+if echo "$NORMALIZED" | grep -qE 'git\s+push\s'; then
 
-if $HAS_FORCE; then
-  if $HAS_LEASE; then
-    REASON="Cannot combine --force with --force-with-lease: --force overrides the lease safety. Use --force-with-lease alone."
-  else
-    REASON="Force push is not allowed. Use --force-with-lease if absolutely necessary, or rebase instead."
+  # Block force push
+  HAS_FORCE=false
+  HAS_LEASE=false
+  echo "$NORMALIZED" | grep -qE '(^|\s)--force-with-lease(\s|$)' && HAS_LEASE=true
+  _STRIPPED_LEASE=$(echo "$NORMALIZED" | sed 's/--force-with-lease//g')
+  echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-[a-zA-Z]*f[a-zA-Z]*(\s|$))' && HAS_FORCE=true
+
+  if $HAS_FORCE; then
+    if $HAS_LEASE; then
+      REASON="Cannot combine --force with --force-with-lease: --force overrides the lease safety. Use --force-with-lease alone."
+    else
+      REASON="Force push is not allowed. Use --force-with-lease if absolutely necessary, or rebase instead."
+    fi
+    jq -n --arg reason "$REASON" '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: $reason
+      }
+    }'
+    exit 0
   fi
-  jq -n --arg reason "$REASON" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-  exit 0
+
+  # Block push to main/master (including refspecs, --delete, --all, --mirror)
+  if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)(\s|$)' || \
+     echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)(\s|$)' || \
+     echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)' || \
+     echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*\s(--all|--mirror)(\s|$)'; then
+    jq -n '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "Direct push to main/master is not allowed (including --all/--mirror which can update protected branches). Use a feature branch and create a PR."
+      }
+    }'
+    exit 0
+  fi
+
 fi
 
-# --- Block push directly to main/master ---
-# Matches any remote (not just origin), plus refspec forms like HEAD:main,
-# full ref paths like refs/heads/main, --delete/-d main, and bulk modes
-# (--all, --mirror) that can implicitly update protected branches.
-if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)(\s|$)' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)(\s|$)' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(--all|--mirror)(\s|$)'; then
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "Direct push to main/master is not allowed (including --all/--mirror which can update protected branches). Use a feature branch and create a PR."
-    }
-  }'
-  exit 0
-fi
-
-# --- Block --no-verify / -n (commit short form) ---
-# git commit supports -n as short for --no-verify; git push only has --no-verify.
-# For -n detection on commit: only check the options portion BEFORE -m/--message
-# to avoid false positives from -n appearing inside commit message text.
-OPTS_BEFORE_MSG=$(echo "$NORMALIZED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
-if echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
-   echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+commit\s+.*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "Skipping hooks with --no-verify is not allowed. Fix the underlying issue instead."
-    }
-  }'
-  exit 0
+# --- Block --no-verify / -n (commit/push only) ---
+if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s'; then
+  OPTS_BEFORE_MSG=$(echo "$NORMALIZED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
+  if echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
+     echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+commit\s+.*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
+    jq -n '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "Skipping hooks with --no-verify is not allowed. Fix the underlying issue instead."
+      }
+    }'
+    exit 0
+  fi
 fi
 
 # --- Validate conventional commit messages ---

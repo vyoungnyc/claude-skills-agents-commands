@@ -39,7 +39,7 @@ For a given `task_id`, you may create or update:
 ## Rules
 
 1. **You are the single source of truth** for UX decisions.
-2. **Only you and architect** may use `AskUserQuestion`.
+2. **Only you, architect, and planner** may use `AskUserQuestion`.
 3. Always document decisions in `UX_NOTES.md`.
 
 ## Skills

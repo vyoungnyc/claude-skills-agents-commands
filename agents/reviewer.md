@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: "Unified reviewer for code, tests, and pull requests. Ensures alignment with design, UX, patterns, coverage, and basic security expectations."
-tools: Read, Grep, Glob, Bash, Write
+tools: Read, Grep, Glob, Bash
 model: opus
 memory: project
 permissionMode: plan
