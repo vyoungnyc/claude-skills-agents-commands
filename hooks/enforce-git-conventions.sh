@@ -12,8 +12,12 @@
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
+# Pattern to match optional git global flags (e.g. git -c key=val push ...)
+# This prevents bypasses like: git -c user.name=x push --force
+GIT_PREFIX='git\s+(-[a-zA-Z]+\s+\S+\s+)*'
+
 # --- Block force push ---
-if echo "$COMMAND" | grep -qE 'git\s+push\s+.*--force|git\s+push\s+-f\b'; then
+if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*--force|${GIT_PREFIX}push\s+.*-f\b"; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -25,7 +29,7 @@ if echo "$COMMAND" | grep -qE 'git\s+push\s+.*--force|git\s+push\s+-f\b'; then
 fi
 
 # --- Block push directly to main/master ---
-if echo "$COMMAND" | grep -qE 'git\s+push\s+(origin\s+)?(main|master)\b'; then
+if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+(origin\s+)?(main|master)\b"; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -37,7 +41,7 @@ if echo "$COMMAND" | grep -qE 'git\s+push\s+(origin\s+)?(main|master)\b'; then
 fi
 
 # --- Block --no-verify ---
-if echo "$COMMAND" | grep -qE 'git\s+(commit|push)\s+.*--no-verify'; then
+if echo "$COMMAND" | grep -qE "${GIT_PREFIX}(commit|push)\s+.*--no-verify"; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
