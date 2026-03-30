@@ -69,15 +69,17 @@ fi
 
 # --- Block push directly to main/master ---
 # Matches any remote (not just origin), plus refspec forms like HEAD:main,
-# full ref paths like refs/heads/main, and --delete/-d main.
+# full ref paths like refs/heads/main, --delete/-d main, and bulk modes
+# (--all, --mirror) that can implicitly update protected branches.
 if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)(\s|$)' || \
    echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)(\s|$)' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)'; then
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)' || \
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(--all|--mirror)(\s|$)'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: "Direct push to main/master is not allowed. Use a feature branch and create a PR."
+      permissionDecisionReason: "Direct push to main/master is not allowed (including --all/--mirror which can update protected branches). Use a feature branch and create a PR."
     }
   }'
   exit 0
@@ -85,8 +87,11 @@ fi
 
 # --- Block --no-verify / -n (commit short form) ---
 # git commit supports -n as short for --no-verify; git push only has --no-verify.
+# For -n detection on commit: only check the options portion BEFORE -m/--message
+# to avoid false positives from -n appearing inside commit message text.
+OPTS_BEFORE_MSG=$(echo "$NORMALIZED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
 if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+commit\s+.*(\s|^)-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
+   echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+commit\s+.*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
