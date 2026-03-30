@@ -1,6 +1,6 @@
 ---
 name: pr-fix-loop
-description: "Push fixes to a PR, trigger Codex review, resolve addressed threads, and poll for new feedback in a fix-review loop until clean."
+description: "Push fixes to a PR, resolve addressed threads, and poll for new feedback from Codex and users in a fix-review loop until clean."
 args:
   - name: pr_number
     type: number
@@ -18,7 +18,16 @@ args:
 
 # Command: /pr-fix-loop
 
-You manage an automated fix-review-poll loop for a GitHub PR with Codex (or similar bot) code review.
+You manage an automated fix-review-poll loop for a GitHub PR with automated code review bots.
+
+## Supported review bots
+
+Recognize comments from any of these bot reviewers (match by author login):
+- **Codex:** `chatgpt-codex-connector[bot]`
+- **Cursor BugBot:** `cursor-bugbot[bot]` or similar Cursor review bot accounts
+- **GitLab Copilot:** `gitlab-copilot[bot]` or similar GitLab AI reviewer accounts
+
+When identifying bot review threads, match against all known bot logins above. Treat all bot reviewers equally — the same triage logic applies regardless of which bot posted the comment.
 
 ## Inputs
 
@@ -28,7 +37,7 @@ You manage an automated fix-review-poll loop for a GitHub PR with Codex (or simi
 
 ## Mission
 
-Automate the cycle of: fix review comments → push → trigger re-review → poll for new comments → repeat until clean.
+Automate the cycle of: fix review comments → push → poll for new comments → repeat until clean. Review bots automatically review on every push — no manual trigger needed.
 
 ## Setup
 
@@ -41,16 +50,16 @@ Automate the cycle of: fix review comments → push → trigger re-review → po
 
 Determine what to do first based on the combination of local changes and remote review state:
 
-| Local changes? | Unresolved bot threads? | Action |
+| Local changes? | Unresolved threads? | Action |
 |---|---|---|
-| Yes | Any | Commit and push local changes first, then proceed to Phase 1 |
+| Yes | Any | Commit and push local changes first (review bots will auto-review the push), then proceed to Phase 1 |
 | No | Yes | **Fresh PR with existing comments** — go to Phase 1 to fix them |
-| No | No | **Clean PR** — add `@codex review` comment to trigger initial review, then Phase 3 (poll) |
+| No | No | **Clean PR** — go to Phase 3 (poll) and wait for review bots to review |
 
 This means `/pr-fix-loop` works on:
 - A PR you just pushed fixes to (commit + resolve + poll)
-- A fresh PR with existing bot comments but no local changes (fix + push + resolve + poll)
-- A clean PR with no comments yet (just poll and wait)
+- A fresh PR with existing comments but no local changes (fix + push + resolve + poll)
+- A clean PR with no comments yet (just poll and wait for bot auto-review)
 
 ## Phase 1: Fix and push
 
@@ -59,10 +68,10 @@ This means `/pr-fix-loop` works on:
    gh api graphql ... reviewThreads ... select(.isResolved == false)
    ```
 
-2. **If there are unresolved threads from a bot reviewer** (e.g. `chatgpt-codex-connector[bot]`):
+2. **If there are unresolved threads from any reviewer** (any supported review bot OR human users):
    a. Read each comment to understand the requested change — pay attention to the file path, line number, and the specific issue described.
    b. Read the referenced file(s) to understand current code.
-   c. **Triage each comment** into one of three categories:
+   c. **Triage each comment** into one of three categories. Apply the same triage logic regardless of whether the comment is from a bot or a human user:
 
    ### Category A: Agree — fix it
    The comment is correct and actionable. Implement the fix.
@@ -76,11 +85,13 @@ This means `/pr-fix-loop` works on:
 
    ### Category C: Unclear — ask for clarification
    The comment is ambiguous, could be interpreted multiple ways, or you're not sure if the fix would break something else. **Do NOT fix it.** Instead:
-   - Reply to the thread with your analysis of the issue, the options you see, and what you need clarified.
+   - If from Codex: reply with `@codex address that feedback` followed by your analysis of the issue, the options you see, and what you need clarified.
+   - If from another bot (Cursor BugBot, GitLab Copilot, etc.): reply with your analysis and what you need clarified.
+   - If from a human user: reply with your analysis and what you need clarified.
    - **Do NOT resolve the thread.** Leave it open.
    - Tag the comment internally as "needs-clarification".
 
-   d. For all Category A fixes: stage and commit with a conventional commit message, push to the PR branch.
+   d. For all Category A fixes: stage and commit with a conventional commit message, push to the PR branch. Review bots will automatically review the new push.
 
 3. **If there are NO unresolved threads**: skip to Phase 3 (poll).
 
@@ -91,7 +102,7 @@ This means `/pr-fix-loop` works on:
    - If the reviewer concedes or agrees with your pushback, resolve the thread.
    - If the user overrides your pushback with explicit instructions, implement what they asked.
 
-## Phase 2: Resolve and trigger review
+## Phase 2: Resolve threads
 
 After pushing fixes:
 
@@ -106,10 +117,7 @@ After pushing fixes:
    gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "{id}"}) { thread { isResolved } } }'
    ```
 
-3. **Trigger re-review** by adding a PR comment:
-   ```
-   gh api repos/{owner}/{repo}/issues/{pr_number}/comments -f body="@codex review"
-   ```
+3. Review bots will automatically review the new push — no manual trigger needed.
 
 ## Phase 3: Background polling
 
@@ -118,16 +126,16 @@ Launch a **background agent** to poll for new review comments. The agent:
 1. **Polls every `{poll_interval}` minutes** (default 5) for up to `{max_poll_time}` minutes (default 15).
 
 2. **On each poll**, check:
-   a. Unresolved review threads from bot reviewers.
-   b. Latest review state (did the bot approve or react with thumbs-up?).
+   a. Unresolved review threads from any reviewer (bot or user).
+   b. Whether any bot reviewer reacted with a 👍 or ✅ emoji, or posted an approval review.
+   c. Whether 15 minutes have passed with no new comments from any reviewer.
 
 3. **Stop conditions** (any of these ends the loop):
-   - No unresolved bot threads exist (excluding disputed threads awaiting user response) → done.
-   - Bot's latest review is an approval or contains positive signal (thumbs-up, "LGTM", no issues) → done.
-   - Max poll time reached with no new unresolved comments → done.
+   - A bot reviewer reacted with 👍 or ✅ emoji, or posted an approval → done, PR is approved.
+   - No new comments from any reviewer for 15 consecutive minutes (excluding disputed threads awaiting response) → done.
    - Only remaining unresolved threads are disputed (Category B/C) awaiting human input → done, but report these threads to the user so they can weigh in.
 
-4. **If new unresolved comments appear**:
+4. **If new unresolved comments appear** (from any bot or user):
    - The polling agent reports back with the comment details.
    - The parent (you) then runs Phase 1 and Phase 2 again.
    - After pushing and resolving, restart Phase 3 with a fresh polling window.
@@ -137,7 +145,7 @@ Launch a **background agent** to poll for new review comments. The agent:
 1. **Never force-push or use --no-verify.**
 2. **Use conventional commit messages** (e.g. `fix(hooks): description`).
 3. **Read files before editing** — understand current code before changing it.
-4. **Only fix bot review comments** — do not modify code beyond what the review requests.
+4. **Only fix review comments** (bot or user) — do not modify code beyond what the review requests.
 5. **Reply to every fixed thread** — explain what was changed and reference the commit.
 6. **Resolve threads only after the fix is pushed** — not before. Never resolve disputed or needs-clarification threads.
 7. **Timestamp awareness** — track when the last batch of comments was created so you don't re-process old resolved comments in the next poll cycle.
@@ -150,9 +158,9 @@ When polling ends (any stop condition met):
 
 1. Report the final state:
    - How many review rounds were completed.
-   - How many total comments were fixed.
+   - How many total comments were fixed (broken down by bot vs user comments).
    - How many comments were disputed (with links).
-   - Whether the bot approved or just stopped commenting.
+   - Whether the reviewer gave 👍 or the loop ended due to no new comments.
 2. If there are disputed threads awaiting human input, list each one with:
    - The original reviewer comment (summary).
    - Your reply / reasoning.
@@ -163,9 +171,9 @@ When polling ends (any stop condition met):
 
 1. Detect repo and branch.
 2. Check `git status` for local changes.
-3. Fetch current unresolved bot review threads on PR `{pr_number}`.
-4. Report the starting state (local changes? existing comments? how many?).
+3. Fetch current unresolved review threads on PR `{pr_number}` (from any supported bot or user).
+4. Report the starting state (local changes? existing comments? how many? which bots?).
 5. Follow Phase 0 to determine the right entry point:
-   - Local changes → commit, push, then Phase 1.
+   - Local changes → commit, push (bots auto-review), then Phase 1.
    - No local changes + unresolved comments → Phase 1 (fix existing comments).
-   - No local changes + no comments → add `@codex review` comment to kick off the review, then Phase 3 (poll).
+   - No local changes + no comments → Phase 3 (poll and wait for bot auto-review).
