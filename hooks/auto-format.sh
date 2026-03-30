@@ -6,18 +6,11 @@
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 
-# Skip non-formattable files
+# Only format TS/JS/TSX/JSX/CSS source files, skip everything else
 case "$FILE_PATH" in
-  *.md|*.json|*.lock|*.log|*.env*|*.txt)
-    exit 0
-    ;;
   */node_modules/*|*/.claude/*|*/dist/*|*/build/*)
     exit 0
     ;;
-esac
-
-# Only format TS/JS/TSX/JSX/CSS files
-case "$FILE_PATH" in
   *.ts|*.tsx|*.js|*.jsx|*.css|*.scss)
     ;;
   *)

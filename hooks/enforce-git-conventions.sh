@@ -81,7 +81,7 @@ fi
 
 # --- Validate branch naming on checkout -b ---
 if echo "$COMMAND" | grep -qE 'git\s+checkout\s+-b\s+'; then
-  BRANCH_NAME=$(echo "$COMMAND" | grep -oP '(?<=checkout\s-b\s)\S+')
+  BRANCH_NAME=$(echo "$COMMAND" | sed -n 's/.*checkout[[:space:]]*-b[[:space:]]*\([^[:space:]]*\).*/\1/p')
   if [ -n "$BRANCH_NAME" ]; then
     if ! echo "$BRANCH_NAME" | grep -qE '^(feature|fix|refactor|hotfix|release)/[a-zA-Z0-9_.-]+$'; then
       jq -n --arg branch "$BRANCH_NAME" '{

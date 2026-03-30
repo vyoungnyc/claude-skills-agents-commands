@@ -14,34 +14,29 @@ case "$FILE_PATH" in
   *.md|*.json|*.yml|*.yaml|*.env*|*.lock|*.log|*.txt)
     exit 0
     ;;
-  */docs/*|*/config/*|*/.claude/*|*/node_modules/*)
+  */docs/*|*/config/*|*/.claude/*|*/node_modules/*|*/dist/*|*/build/*)
     exit 0
     ;;
 esac
 
-# Skip if no test framework detected
-if [ ! -f "jest.config.js" ] && [ ! -f "jest.config.ts" ] && \
-   [ ! -f "vitest.config.ts" ] && [ ! -f "vitest.config.js" ]; then
+# Determine test runner (also serves as framework detection — exits if none found)
+if [ -f "vitest.config.ts" ] || [ -f "vitest.config.js" ]; then
+  TEST_CMD=(npx vitest run --reporter=verbose)
+elif [ -f "jest.config.js" ] || [ -f "jest.config.ts" ]; then
+  TEST_CMD=(npx jest --verbose)
+else
   exit 0
 fi
 
-# Determine test runner
-if [ -f "vitest.config.ts" ] || [ -f "vitest.config.js" ]; then
-  TEST_CMD="npx vitest run --reporter=verbose 2>&1"
-else
-  TEST_CMD="npx jest --verbose 2>&1"
-fi
-
-# Run tests and capture exit code separately from output
-# (piping to tail loses the test runner's exit code)
+# Capture exit code via pipefail (piping to tail would otherwise lose it)
 set -o pipefail
-TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1 | tail -30)
+TEST_OUTPUT=$("${TEST_CMD[@]}" 2>&1 | tail -30)
 TEST_EXIT=$?
 set +o pipefail
 
 # Build result message
 if [ $TEST_EXIT -eq 0 ]; then
-  PASS_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ passed' | head -1)
+  PASS_COUNT=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ passed' | head -1)
   jq -n --arg file "$FILE_PATH" --arg passes "$PASS_COUNT" '{
     hookSpecificOutput: {
       hookEventName: "PostToolUse",

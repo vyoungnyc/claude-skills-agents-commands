@@ -34,12 +34,11 @@ SAFE_PATTERNS=(
   "git stash list"
 )
 
-# Reject commands containing ANY shell metacharacters that could chain or redirect.
-# This blocks: && || ; | ` $() <() >() > >> < and newlines.
-if [[ "$COMMAND" == *$'\n'* ]]; then
-  exit 0  # newlines effectively chain commands
-fi
-if echo "$COMMAND" | grep -qE '&&|\||\||;|`|\$\(|<\(|>\(|>>|>|<'; then
+# Reject commands containing shell metacharacters that could chain, pipe, or redirect.
+# Newline check first (bash pattern), then all operators via regex.
+# Order matters: \|\| (||) must precede \| (|) so || isn't partially consumed.
+if [[ "$COMMAND" == *$'\n'* ]] || \
+   [[ "$COMMAND" =~ \&\&|\|\||\||;|\`|\$\(|\<\(|\>\(|\>\>|\>|\< ]]; then
   exit 0  # fall through to normal permission dialog
 fi
 
