@@ -24,7 +24,7 @@ NAME="${REPO##*/}"
 
 acquire_pidfile "/tmp/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
 
-BOT_PATTERNS="\\[bot\\]$|-bot-|^chatgpt-codex|^cursor-bugbot|^gitlab-copilot"
+BOT_PATTERNS="$BASE_BOT_PATTERNS|^gitlab-copilot"
 
 SNAPSHOT=$(gh api graphql -f query="
   query {
@@ -81,7 +81,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     | select(.content == \"THUMBS_UP\" or .content == \"WHITE_CHECK_MARK\")
     | select(.user.login | test(\"$BOT_PATTERNS\"; \"i\"))
   ]")
-  if [ "$(echo "$APPROVERS" | jq 'length')" -gt 0 ]; then
+  if echo "$APPROVERS" | jq -e 'length > 0' >/dev/null 2>&1; then
     echo "{\"status\": \"APPROVED\", \"poll\": $POLL, \"approvers\": $APPROVERS}"
     exit $EXIT_APPROVED
   fi

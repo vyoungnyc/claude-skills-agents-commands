@@ -14,6 +14,9 @@ EXIT_SNAPSHOT_FAILURE=11
 STALE_POLLS=0
 BLOCKED_THRESHOLD=3
 
+# Base bot patterns shared across platforms. Scripts append platform-specific entries.
+BASE_BOT_PATTERNS="\\[bot\\]$|-bot-|^chatgpt-codex|^cursor-bugbot"
+
 _CLEANUP_PATHS=()
 
 _cleanup() {
@@ -60,6 +63,10 @@ acquire_pidfile() {
 # Sets $_NEW_COUNT. Outputs new IDs to stdout.
 find_new_ids() {
   local all_ids="$1" known_ids="$2"
+  if [ -z "$all_ids" ]; then
+    _NEW_COUNT=0
+    return
+  fi
   if [ -z "$known_ids" ]; then
     _NEW_COUNT=$(echo "$all_ids" | grep -c . 2>/dev/null || echo 0)
     echo "$all_ids"

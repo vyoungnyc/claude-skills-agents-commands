@@ -19,10 +19,10 @@ fi
 require_positive_int "$POLL_INTERVAL" "poll_interval_sec"
 require_positive_int "$MAX_POLLS" "max_polls"
 
-PROJECT_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|\.git$||' | sed -E 's|.*[:/]||' | tr '/' '-')
+PROJECT_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|\.git$||' | sed -E 's|^.*://[^/]+/||; s|^[^:]+:||' | tr '/' '-')
 acquire_pidfile "/tmp/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
 
-BOT_PATTERNS="\\[bot\\]$|-bot-|^gitlab-duo|^gitlab-code-review|^cursor-bugbot|^chatgpt-codex"
+BOT_PATTERNS="$BASE_BOT_PATTERNS|^gitlab-duo|^gitlab-code-review"
 
 # Reusable temp dir for parallel API calls — created once, cleaned by trap
 POLL_DIR=$(mktemp -d)
@@ -38,7 +38,7 @@ if [ -z "$SNAPSHOT_DISCUSSIONS" ] || ! echo "$SNAPSHOT_DISCUSSIONS" | jq -e '.' 
   echo '{"error": "Failed to snapshot MR discussions"}' >&2
   exit $EXIT_SNAPSHOT_FAILURE
 fi
-KNOWN_IDS=$(echo "$SNAPSHOT_DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | .[]')
+KNOWN_IDS=$(echo "$SNAPSHOT_DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | (.id | tostring)] | sort | .[]')
 KNOWN_PIPELINE_ID=$(jq -r '.[0].id // "none"' < "$POLL_DIR/pipelines.json" 2>/dev/null || echo "none")
 
 POLL=0
@@ -67,7 +67,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     | select(.user.username | test(\"$BOT_PATTERNS\"; \"i\"))
     | {user: .user.username, emoji: .name}
   ]" < "$POLL_DIR/emoji.json" 2>/dev/null || echo '[]')
-  if [ "$(echo "$BOT_APPROVERS" | jq 'length')" -gt 0 ]; then
+  if echo "$BOT_APPROVERS" | jq -e 'length > 0' >/dev/null 2>&1; then
     echo "{\"status\": \"APPROVED\", \"poll\": $POLL, \"gate\": \"award_emoji\", \"approvers\": $BOT_APPROVERS}"
     exit $EXIT_APPROVED
   fi
@@ -78,7 +78,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     continue
   fi
 
-  ALL_UNRESOLVED_IDS=$(echo "$DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | .[]')
+  ALL_UNRESOLVED_IDS=$(echo "$DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | (.id | tostring)] | sort | .[]')
   NEW_IDS=$(find_new_ids "$ALL_UNRESOLVED_IDS" "$KNOWN_IDS")
 
   if [ "$_NEW_COUNT" -gt 0 ]; then
@@ -86,7 +86,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     UNRESOLVED=$(echo "$DISCUSSIONS" | jq --argjson ids "$NEW_ID_LIST" '[
       .[]
       | select(.notes[0].resolvable == true and .notes[0].resolved == false)
-      | select(.id as $did | $ids | index($did))
+      | select((.id | tostring) as $did | $ids | index($did))
       | {
           id: .id,
           author: .notes[0].author.username,
