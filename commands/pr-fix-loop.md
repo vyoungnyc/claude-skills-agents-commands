@@ -125,7 +125,9 @@ After pushing fixes:
 
 ## Phase 3: Background polling
 
-Run the polling script in the background to watch for new review comments. Use `scripts/poll-pr-reviews.sh` (or `"$CLAUDE_PROJECT_DIR"/.claude/scripts/poll-pr-reviews.sh`) to avoid generating inline scripts each time:
+**Preferred:** Run `scripts/poll-pr-reviews.sh` (or `"$CLAUDE_PROJECT_DIR"/.claude/scripts/poll-pr-reviews.sh`) in the background. The script handles all polling logic with zero token cost.
+
+**Fallback:** If the polling script is not found, launch a **background agent** with `model: "haiku"` to poll manually using the same `gh api graphql` queries described below. The agent should check on each cycle and report back when a stop condition is met.
 
 1. **Polls every `{poll_interval}` minutes** (default 1) for up to `{max_poll_time}` minutes (default 15).
 

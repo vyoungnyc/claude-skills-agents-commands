@@ -8,11 +8,12 @@
 #
 # Exit codes:
 #   0 — APPROVED (MR formally approved or bot reacted with thumbsup/white_check_mark)
-#   1 — NEW_COMMENTS (unresolved resolvable discussions detected)
+#   1 — NEW_COMMENTS (new unresolved resolvable discussions detected)
 #   2 — IDLE_TIMEOUT (no new comments within max polling window)
 #   3 — PIPELINE_FAILED (new pipeline failure since polling started)
 #   4 — BLOCKED_ON_HUMAN (only stale disputed discussions remain, no new activity)
 #   10 — Usage error
+#   11 — Snapshot failure (could not read initial MR state)
 #
 # Output: JSON on stdout describing the stop condition and relevant details.
 
@@ -27,33 +28,51 @@ if [ -z "$MR_IID" ]; then
   exit 10
 fi
 
+# Validate numeric arguments
+if ! [[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || [ "$POLL_INTERVAL" -lt 1 ]; then
+  echo '{"error": "poll_interval_sec must be a positive integer"}' >&2
+  exit 10
+fi
+if ! [[ "$MAX_POLLS" =~ ^[0-9]+$ ]] || [ "$MAX_POLLS" -lt 1 ]; then
+  echo '{"error": "max_polls must be a positive integer"}' >&2
+  exit 10
+fi
+
 # --- PID file: kill any previous polling instance ---
-# Derive a project identifier from the git remote for uniqueness
 PROJECT_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|.*[:/](.+)(\.git)?$|\1|' | tr '/' '-')
 PIDFILE="/tmp/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
+
+cleanup() { rm -f "$PIDFILE"; }
+trap cleanup EXIT INT TERM
 
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
     kill "$OLD_PID" 2>/dev/null || true
+    for _ in 1 2 3; do
+      kill -0 "$OLD_PID" 2>/dev/null || break
+      sleep 1
+    done
+    kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null || true
     echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $OLD_PID)" >&2
   fi
 fi
 echo $$ > "$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT
 
-# Known bot username patterns (case-insensitive match)
-BOT_PATTERNS="bot|duo|codex|cursor|bugbot"
+# Known bot username patterns — anchored to avoid matching human usernames
+BOT_PATTERNS="\\[bot\\]$|-bot-|^gitlab-duo|^gitlab-code-review|^cursor-bugbot|^chatgpt-codex"
 
-# Snapshot unresolved discussion IDs at startup so we only report truly NEW discussions.
-# Discussions that are already unresolved (e.g. disputed/needs-clarification) are "known".
-SNAPSHOT_DISCUSSIONS=$(glab api "projects/:id/merge_requests/$MR_IID/discussions" 2>/dev/null || echo '[]')
-KNOWN_DISC_IDS=$(echo "$SNAPSHOT_DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | join("\n")' 2>/dev/null || true)
+# Snapshot unresolved discussion IDs at startup
+SNAPSHOT_DISCUSSIONS=$(glab api "projects/:id/merge_requests/$MR_IID/discussions" 2>/dev/null)
+if [ -z "$SNAPSHOT_DISCUSSIONS" ] || ! echo "$SNAPSHOT_DISCUSSIONS" | jq -e '.' >/dev/null 2>&1; then
+  echo '{"error": "Failed to snapshot MR discussions — cannot determine known discussion IDs"}' >&2
+  exit 11
+fi
+KNOWN_DISC_IDS=$(echo "$SNAPSHOT_DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | .[]')
 
 # Snapshot pipeline status so we only report NEW failures
 SNAPSHOT_PIPELINES=$(glab api "projects/:id/merge_requests/$MR_IID/pipelines" 2>/dev/null || echo '[]')
-KNOWN_PIPELINE_STATUS=$(echo "$SNAPSHOT_PIPELINES" | jq -r '.[0].status // "unknown"' 2>/dev/null || echo "unknown")
-KNOWN_PIPELINE_ID=$(echo "$SNAPSHOT_PIPELINES" | jq '.[0].id // 0' 2>/dev/null || echo "0")
+KNOWN_PIPELINE_ID=$(echo "$SNAPSHOT_PIPELINES" | jq -r '.[0].id // "none"' 2>/dev/null || echo "none")
 
 # Track consecutive polls with no changes for BLOCKED_ON_HUMAN detection
 STALE_POLLS=0
@@ -66,8 +85,8 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
 
   # --- Check MR approval status (primary gate) ---
   APPROVALS=$(glab api "projects/:id/merge_requests/$MR_IID/approvals" 2>/dev/null || echo '{}')
-  IS_APPROVED=$(echo "$APPROVALS" | jq '.approved // false')
-  APPROVALS_LEFT=$(echo "$APPROVALS" | jq '.approvals_left // -1')
+  IS_APPROVED=$(echo "$APPROVALS" | jq '.approved // false' 2>/dev/null || echo "false")
+  APPROVALS_LEFT=$(echo "$APPROVALS" | jq '.approvals_left // -1' 2>/dev/null || echo "-1")
 
   if [ "$IS_APPROVED" = "true" ] || [ "$APPROVALS_LEFT" = "0" ]; then
     APPROVED_BY=$(echo "$APPROVALS" | jq '[.approved_by[]? | .user.username]')
@@ -78,14 +97,14 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
   # --- Check award emoji on MR (secondary gate) ---
   EMOJI=$(glab api "projects/:id/merge_requests/$MR_IID/award_emoji" 2>/dev/null || echo '[]')
   BOT_APPROVAL_COUNT=$(echo "$EMOJI" | jq "[
-    .[]
+    .[]?
     | select(.name == \"thumbsup\" or .name == \"white_check_mark\")
     | select(.user.username | test(\"$BOT_PATTERNS\"; \"i\"))
   ] | length" 2>/dev/null || echo "0")
 
   if [ "$BOT_APPROVAL_COUNT" -gt 0 ]; then
     BOT_APPROVERS=$(echo "$EMOJI" | jq "[
-      .[]
+      .[]?
       | select(.name == \"thumbsup\" or .name == \"white_check_mark\")
       | select(.user.username | test(\"$BOT_PATTERNS\"; \"i\"))
       | {user: .user.username, emoji: .name}
@@ -95,24 +114,29 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
   fi
 
   # --- Check for NEW unresolved resolvable discussions (exclude known/stale ones) ---
-  DISCUSSIONS=$(glab api "projects/:id/merge_requests/$MR_IID/discussions" 2>/dev/null || echo '[]')
+  DISCUSSIONS=$(glab api "projects/:id/merge_requests/$MR_IID/discussions" 2>/dev/null)
 
-  if [ "$DISCUSSIONS" = "[]" ] && ! echo "$DISCUSSIONS" | jq -e '.' >/dev/null 2>&1; then
+  if [ -z "$DISCUSSIONS" ] || ! echo "$DISCUSSIONS" | jq -e '.' >/dev/null 2>&1; then
     echo "[$(date +"%H:%M:%S")] POLL $POLL/$MAX_POLLS: API request failed, retrying next cycle" >&2
     continue
   fi
 
-  ALL_UNRESOLVED_IDS=$(echo "$DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | join("\n")')
-  NEW_IDS=()
+  ALL_UNRESOLVED_IDS=$(echo "$DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | .[]')
+
+  NEW_ID_COUNT=0
+  NEW_ID_FILE=$(mktemp)
+  trap "rm -f '$PIDFILE' '$NEW_ID_FILE'" EXIT INT TERM
   while IFS= read -r did; do
     [ -z "$did" ] && continue
-    if ! echo "$KNOWN_DISC_IDS" | grep -qF "$did"; then
-      NEW_IDS+=("$did")
+    if [ -z "$KNOWN_DISC_IDS" ] || ! echo "$KNOWN_DISC_IDS" | grep -qxF "$did"; then
+      echo "$did" >> "$NEW_ID_FILE"
+      NEW_ID_COUNT=$((NEW_ID_COUNT + 1))
     fi
   done <<< "$ALL_UNRESOLVED_IDS"
 
-  if [ "${#NEW_IDS[@]}" -gt 0 ]; then
-    NEW_ID_LIST=$(printf '%s\n' "${NEW_IDS[@]}" | jq -R . | jq -s .)
+  if [ "$NEW_ID_COUNT" -gt 0 ]; then
+    NEW_ID_LIST=$(jq -R . < "$NEW_ID_FILE" | jq -s .)
+    rm -f "$NEW_ID_FILE"
     UNRESOLVED=$(echo "$DISCUSSIONS" | jq --argjson ids "$NEW_ID_LIST" '[
       .[]
       | select(.notes[0].resolvable == true and .notes[0].resolved == false)
@@ -130,14 +154,15 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $UNRESOLVED_COUNT, \"discussions\": $UNRESOLVED}"
     exit 1
   fi
+  rm -f "$NEW_ID_FILE"
 
   # --- Check pipeline status (only report NEW failures) ---
   PIPELINES=$(glab api "projects/:id/merge_requests/$MR_IID/pipelines" 2>/dev/null || echo '[]')
   LATEST_STATUS=$(echo "$PIPELINES" | jq -r '.[0].status // "unknown"')
-  LATEST_PIPELINE_ID=$(echo "$PIPELINES" | jq '.[0].id // 0')
+  LATEST_PIPELINE_ID=$(echo "$PIPELINES" | jq -r '.[0].id // "none"')
 
   if [ "$LATEST_STATUS" = "failed" ] && [ "$LATEST_PIPELINE_ID" != "$KNOWN_PIPELINE_ID" ]; then
-    echo "{\"status\": \"PIPELINE_FAILED\", \"poll\": $POLL, \"pipeline_id\": $LATEST_PIPELINE_ID, \"pipeline_status\": \"$LATEST_STATUS\"}"
+    echo "{\"status\": \"PIPELINE_FAILED\", \"poll\": $POLL, \"pipeline_id\": \"$LATEST_PIPELINE_ID\", \"pipeline_status\": \"$LATEST_STATUS\"}"
     exit 3
   fi
 
@@ -146,7 +171,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
   if [ -n "$ALL_UNRESOLVED_IDS" ] && [ -n "$KNOWN_DISC_IDS" ]; then
     while IFS= read -r did; do
       [ -z "$did" ] && continue
-      if echo "$KNOWN_DISC_IDS" | grep -qF "$did"; then
+      if echo "$KNOWN_DISC_IDS" | grep -qxF "$did"; then
         HAS_STALE=true
         break
       fi
