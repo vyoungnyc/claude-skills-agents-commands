@@ -23,8 +23,8 @@ mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks
 cp -r agents/. .claude/agents/
 cp -r skills/. .claude/skills/
 cp -r commands/. .claude/commands/
-cp hooks/reinject-context.sh .claude/hooks/
-chmod +x .claude/hooks/reinject-context.sh
+cp hooks/*.sh .claude/hooks/
+chmod +x .claude/hooks/*.sh
 ```
 
 2. Merge the hook configuration into your `.claude/settings.json`:

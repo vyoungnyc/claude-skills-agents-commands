@@ -34,7 +34,7 @@ SAFE_PATTERNS=(
 
 # Reject commands containing shell metacharacters that could chain, pipe, or redirect.
 # Regex stored in variable to avoid bash syntax errors with special chars in [[ =~ ]].
-_UNSAFE_RE='&&|\|\||\||;|`|\$\(|<\(|>\(|>>|>|<'
+_UNSAFE_RE='&&|&|\|\||\||;|`|\$\(|<\(|>\(|>>|>|<'
 if [[ "$COMMAND" == *$'\n'* ]] || [[ "$COMMAND" =~ $_UNSAFE_RE ]]; then
   exit 0  # fall through to normal permission dialog
 fi

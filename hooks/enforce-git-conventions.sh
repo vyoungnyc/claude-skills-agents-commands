@@ -28,7 +28,7 @@ HAS_FORCE=false
 HAS_LEASE=false
 echo "$NORMALIZED" | grep -qE '(^|\s)--force-with-lease(\s|$)' && HAS_LEASE=true
 _STRIPPED_LEASE=$(echo "$NORMALIZED" | sed 's/--force-with-lease//g')
-echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-f(\s|$))' && HAS_FORCE=true
+echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-[a-zA-Z]*f[a-zA-Z]*(\s|$))' && HAS_FORCE=true
 
 if $HAS_FORCE; then
   if $HAS_LEASE; then
@@ -49,9 +49,9 @@ fi
 # --- Block push directly to main/master ---
 # Matches any remote (not just origin), plus refspec forms like HEAD:main,
 # full ref paths like refs/heads/main, and --delete/-d main.
-if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)\b' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)\b' || \
-   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)\b'; then
+if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)(\s|$)' || \
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)(\s|$)' || \
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
