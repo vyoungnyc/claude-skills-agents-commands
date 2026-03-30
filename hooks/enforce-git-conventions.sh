@@ -15,7 +15,8 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # Normalize: strip git global options so enforcement matches the subcommand.
 # Handles: -c key=val, --no-pager, --git-dir=path, -C path, -p, etc.
 # After stripping, NORMALIZED starts with "git <subcommand> ..."
-NORMALIZED=$(echo "$COMMAND" | sed -E 's/^(git\s+)((-[a-zA-Z](\s+\S+)?|--[a-zA-Z][a-zA-Z0-9_-]*(=\S+)?)\s+)*/\1/')
+# Note: use POSIX character classes — macOS sed does not support \s / \S in ERE
+NORMALIZED=$(echo "$COMMAND" | sed -E 's/^(git[[:space:]]+)((-[a-zA-Z]([[:space:]]+[^[:space:]]+)?|--[a-zA-Z][a-zA-Z0-9_-]*(=[^[:space:]]+)?)[[:space:]]+)*/\1/')
 
 # --- Block force push ---
 # --force overrides --force-with-lease when both are present, so block
@@ -47,7 +48,8 @@ fi
 
 # --- Block push directly to main/master ---
 # Matches any remote (not just origin), plus refspec forms like HEAD:main
-if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(\S+\s+)?(main|master)\b' || \
+# Use \S+\s+ repeated to skip flags like -u before the branch name
+if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(main|master)\b' || \
    echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(main|master)\b'; then
   jq -n '{
     hookSpecificOutput: {
@@ -72,8 +74,9 @@ if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify'; then
 fi
 
 # --- Validate conventional commit messages ---
-if echo "$COMMAND" | grep -qE 'git\s+commit'; then
-  # Extract commit message — try multiple formats:
+# Use NORMALIZED so global options (git -C repo commit ...) don't bypass the check
+if echo "$NORMALIZED" | grep -qE 'git\s+commit'; then
+  # Extract commit message from the original COMMAND (which has the full args):
   # 1. -m "message" or -m 'message'
   COMMIT_MSG=$(echo "$COMMAND" | sed -n "s/.*-m[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p" | head -1)
 
@@ -109,8 +112,9 @@ if echo "$COMMAND" | grep -qE 'git\s+commit'; then
 fi
 
 # --- Validate branch naming on checkout -b / switch -c ---
-if echo "$COMMAND" | grep -qE 'git\s+(checkout\s+-b|switch\s+-c)\s+'; then
-  BRANCH_NAME=$(echo "$COMMAND" | sed -n 's/.*\(checkout[[:space:]]*-b\|switch[[:space:]]*-c\)[[:space:]]*\([^[:space:]]*\).*/\2/p')
+# Use NORMALIZED so global options (git -C repo checkout -b ...) don't bypass the check
+if echo "$NORMALIZED" | grep -qE 'git\s+(checkout\s+-b|switch\s+-c)\s+'; then
+  BRANCH_NAME=$(echo "$NORMALIZED" | sed -En 's/.*(checkout[[:space:]]*-b|switch[[:space:]]*-c)[[:space:]]+([^[:space:]]*).*/\2/p')
   if [ -n "$BRANCH_NAME" ]; then
     if ! echo "$BRANCH_NAME" | grep -qE '^(feature|fix|refactor|hotfix|release)/[a-zA-Z0-9_.-]+$'; then
       jq -n --arg branch "$BRANCH_NAME" '{
