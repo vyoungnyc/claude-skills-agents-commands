@@ -90,7 +90,7 @@ fi
 # For -n detection on commit: only check the options portion BEFORE -m/--message
 # to avoid false positives from -n appearing inside commit message text.
 OPTS_BEFORE_MSG=$(echo "$NORMALIZED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
-if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
+if echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
    echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+commit\s+.*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
   jq -n '{
     hookSpecificOutput: {

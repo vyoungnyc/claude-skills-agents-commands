@@ -44,6 +44,10 @@ trap 'rm -f "$PIDFILE"' EXIT
 # Known bot username patterns (case-insensitive match)
 BOT_PATTERNS="bot|duo|codex|cursor|bugbot"
 
+# Snapshot unresolved discussion IDs at startup so we only report truly NEW discussions.
+# Discussions that are already unresolved (e.g. disputed/needs-clarification) are "known".
+KNOWN_DISC_IDS=$(glab api "projects/:id/merge_requests/$MR_IID/discussions" 2>/dev/null | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | join("\n")')
+
 POLL=0
 while [ "$POLL" -lt "$MAX_POLLS" ]; do
   POLL=$((POLL + 1))
@@ -79,23 +83,33 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     exit 0
   fi
 
-  # --- Check for unresolved resolvable discussions ---
+  # --- Check for NEW unresolved resolvable discussions (exclude known/stale ones) ---
   DISCUSSIONS=$(glab api "projects/:id/merge_requests/$MR_IID/discussions" 2>/dev/null || echo '[]')
-  UNRESOLVED=$(echo "$DISCUSSIONS" | jq '[
-    .[]
-    | select(.notes[0].resolvable == true and .notes[0].resolved == false)
-    | {
-        id: .id,
-        author: .notes[0].author.username,
-        path: (.notes[0].position.new_path // null),
-        line: (.notes[0].position.new_line // null),
-        body: (.notes[0].body | .[0:200]),
-        created: .notes[0].created_at
-      }
-  ]')
-  UNRESOLVED_COUNT=$(echo "$UNRESOLVED" | jq 'length')
+  ALL_UNRESOLVED_IDS=$(echo "$DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | .id] | sort | join("\n")')
+  NEW_IDS=""
+  while IFS= read -r did; do
+    [ -z "$did" ] && continue
+    if ! echo "$KNOWN_DISC_IDS" | grep -qF "$did"; then
+      NEW_IDS="${NEW_IDS}${did}\n"
+    fi
+  done <<< "$ALL_UNRESOLVED_IDS"
 
-  if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+  if [ -n "$NEW_IDS" ]; then
+    NEW_ID_LIST=$(printf '%s' "$NEW_IDS" | sed '/^$/d' | jq -R . | jq -s .)
+    UNRESOLVED=$(echo "$DISCUSSIONS" | jq --argjson ids "$NEW_ID_LIST" '[
+      .[]
+      | select(.notes[0].resolvable == true and .notes[0].resolved == false)
+      | select(.id as $did | $ids | index($did))
+      | {
+          id: .id,
+          author: .notes[0].author.username,
+          path: (.notes[0].position.new_path // null),
+          line: (.notes[0].position.new_line // null),
+          body: (.notes[0].body | .[0:200]),
+          created: .notes[0].created_at
+        }
+    ]')
+    UNRESOLVED_COUNT=$(echo "$UNRESOLVED" | jq 'length')
     echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $UNRESOLVED_COUNT, \"discussions\": $UNRESOLVED}"
     exit 1
   fi

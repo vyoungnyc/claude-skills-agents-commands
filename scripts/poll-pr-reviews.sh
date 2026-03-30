@@ -44,6 +44,20 @@ trap 'rm -f "$PIDFILE"' EXIT
 # Known bot login patterns (case-insensitive match)
 BOT_PATTERNS="bot|codex|cursor|gitlab"
 
+# Snapshot unresolved thread IDs at startup so we only report truly NEW threads.
+# Threads that are already unresolved (e.g. disputed/needs-clarification) are "known".
+KNOWN_THREAD_IDS=$(gh api graphql -f query="
+  query {
+    repository(owner: \"$OWNER\", name: \"$NAME\") {
+      pullRequest(number: $PR_NUMBER) {
+        reviewThreads(first: 100) {
+          nodes { id isResolved }
+        }
+      }
+    }
+  }
+" 2>/dev/null | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | join("\n")')
+
 POLL=0
 while [ "$POLL" -lt "$MAX_POLLS" ]; do
   POLL=$((POLL + 1))
@@ -97,22 +111,33 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     exit 0
   fi
 
-  # Check for unresolved review threads
-  UNRESOLVED=$(echo "$RESULT" | jq '[
-    .data.repository.pullRequest.reviewThreads.nodes[]
-    | select(.isResolved == false)
-    | {
-        id: .id,
-        author: .comments.nodes[0].author.login,
-        path: .comments.nodes[0].path,
-        line: .comments.nodes[0].line,
-        body: (.comments.nodes[0].body | .[0:200]),
-        created: .comments.nodes[0].createdAt
-      }
-  ]')
-  UNRESOLVED_COUNT=$(echo "$UNRESOLVED" | jq 'length')
+  # Check for NEW unresolved review threads (exclude known/stale ones)
+  ALL_UNRESOLVED_IDS=$(echo "$RESULT" | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | join("\n")')
+  NEW_IDS=""
+  while IFS= read -r tid; do
+    [ -z "$tid" ] && continue
+    if ! echo "$KNOWN_THREAD_IDS" | grep -qF "$tid"; then
+      NEW_IDS="${NEW_IDS}${tid}\n"
+    fi
+  done <<< "$ALL_UNRESOLVED_IDS"
 
-  if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
+  if [ -n "$NEW_IDS" ]; then
+    # Build JSON for only the new threads
+    NEW_ID_LIST=$(printf '%s' "$NEW_IDS" | sed '/^$/d' | jq -R . | jq -s .)
+    UNRESOLVED=$(echo "$RESULT" | jq --argjson ids "$NEW_ID_LIST" '[
+      .data.repository.pullRequest.reviewThreads.nodes[]
+      | select(.isResolved == false)
+      | select(.id as $tid | $ids | index($tid))
+      | {
+          id: .id,
+          author: .comments.nodes[0].author.login,
+          path: .comments.nodes[0].path,
+          line: .comments.nodes[0].line,
+          body: (.comments.nodes[0].body | .[0:200]),
+          created: .comments.nodes[0].createdAt
+        }
+    ]')
+    UNRESOLVED_COUNT=$(echo "$UNRESOLVED" | jq 'length')
     echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $UNRESOLVED_COUNT, \"threads\": $UNRESOLVED}"
     exit 1
   fi
