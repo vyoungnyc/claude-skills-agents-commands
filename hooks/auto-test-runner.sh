@@ -32,9 +32,12 @@ else
   TEST_CMD="npx jest --verbose 2>&1"
 fi
 
-# Run tests and capture output
-TEST_OUTPUT=$(eval "$TEST_CMD" | tail -30)
+# Run tests and capture exit code separately from output
+# (piping to tail loses the test runner's exit code)
+set -o pipefail
+TEST_OUTPUT=$(eval "$TEST_CMD" 2>&1 | tail -30)
 TEST_EXIT=$?
+set +o pipefail
 
 # Build result message
 if [ $TEST_EXIT -eq 0 ]; then

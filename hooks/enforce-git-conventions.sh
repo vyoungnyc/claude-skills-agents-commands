@@ -50,12 +50,13 @@ fi
 
 # --- Validate conventional commit messages ---
 if echo "$COMMAND" | grep -qE 'git\s+commit'; then
-  # Extract the commit message from -m flag
-  COMMIT_MSG=$(echo "$COMMAND" | grep -oP '(?<=-m\s["\x27])[^"\x27]+|(?<=-m\s")[^"]+' | head -1)
+  # Extract commit message — try multiple formats:
+  # 1. -m "message" or -m 'message'
+  COMMIT_MSG=$(echo "$COMMAND" | sed -n "s/.*-m[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p" | head -1)
 
-  # Also check heredoc-style commit messages
+  # 2. Heredoc-style: $(cat <<'EOF' ... EOF) — extract first non-blank line after EOF marker
   if [ -z "$COMMIT_MSG" ]; then
-    COMMIT_MSG=$(echo "$COMMAND" | grep -oP '(?<=EOF\n).*(?=\nEOF)' | head -1)
+    COMMIT_MSG=$(echo "$COMMAND" | sed -n "/<<[[:space:]]*['\"]\\{0,1\\}EOF['\"]\\{0,1\\}/,/^[[:space:]]*EOF/{/EOF/d;/^[[:space:]]*$/d;p;}" | head -1 | sed 's/^[[:space:]]*//')
   fi
 
   if [ -n "$COMMIT_MSG" ]; then

@@ -34,8 +34,14 @@ SAFE_PATTERNS=(
   "git stash list"
 )
 
+# Reject compound commands — chaining operators bypass the safe-pattern check
+if echo "$COMMAND" | grep -qE '&&|\|\||;|`|\$\('; then
+  exit 0  # fall through to normal permission dialog
+fi
+
 for pattern in "${SAFE_PATTERNS[@]}"; do
-  if [[ "$COMMAND" == "$pattern"* ]]; then
+  # Exact match OR safe pattern followed only by flags/args (no shell operators)
+  if [[ "$COMMAND" == "$pattern" ]] || [[ "$COMMAND" == "$pattern "* ]]; then
     echo '{"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}'
     exit 0
   fi

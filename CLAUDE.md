@@ -87,7 +87,7 @@ When 2+ implementation steps have no dependencies and touch separate file domain
   Teams use SendMessage for direct peer communication.
   No worktree isolation — file domains MUST NOT overlap.
   Gate steps (tests, security, review, docs) still run as subagents after team work.
-  Use /team-autopilot command for team-based feature workflows.
+  Use /feature-autopilot with mode=parallel for team-based feature workflows.
 ```
 
 ---

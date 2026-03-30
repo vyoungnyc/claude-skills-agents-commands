@@ -1,7 +1,7 @@
 ---
 name: documenter
 description: "Documentation & changelog writer. Records what changed, why, and how to use or operate it."
-tools: Read, Write, Grep, Glob
+tools: Read, Write, Edit, Grep, Glob
 model: haiku
 memory: project
 maxTurns: 15

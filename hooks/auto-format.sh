@@ -25,14 +25,31 @@ case "$FILE_PATH" in
     ;;
 esac
 
+# Track what ran
+FORMATTED=""
+
 # Run Prettier if available
 if [ -f "node_modules/.bin/prettier" ] || command -v prettier &>/dev/null; then
-  npx prettier --write "$FILE_PATH" 2>/dev/null
+  if npx prettier --write "$FILE_PATH" 2>/dev/null; then
+    FORMATTED="prettier"
+  fi
 fi
 
 # Run ESLint fix if available
 if [ -f "node_modules/.bin/eslint" ] || command -v eslint &>/dev/null; then
-  npx eslint --fix "$FILE_PATH" 2>/dev/null
+  if npx eslint --fix "$FILE_PATH" 2>/dev/null; then
+    FORMATTED="${FORMATTED:+$FORMATTED+}eslint"
+  fi
+fi
+
+# Report what happened
+if [ -n "$FORMATTED" ]; then
+  jq -n --arg file "$FILE_PATH" --arg tools "$FORMATTED" '{
+    hookSpecificOutput: {
+      hookEventName: "PostToolUse",
+      systemMessage: ("Auto-formatted " + $file + " (" + $tools + ")")
+    }
+  }'
 fi
 
 exit 0

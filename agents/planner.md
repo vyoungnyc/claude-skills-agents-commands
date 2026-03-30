@@ -48,5 +48,4 @@ You are one of only three agents (along with **architect** and **ui-ux**) author
 ## Skills
 
 - `derive-plan-from-spec`: create structured plan from specifications.
-- `create-fix-list-from-review-feedback`: convert review findings into fix steps.
-- `update-plan-from-review-feedback`: incorporate review feedback into the plan.
+- `update-plan-from-review-feedback`: convert review findings into fix tasks and incorporate them into the plan.

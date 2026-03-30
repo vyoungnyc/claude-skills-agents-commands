@@ -125,11 +125,7 @@ This release adds agent teams as an optional parallel execution pattern alongsid
   - Cost optimization strategies (~7x token cost vs standard sessions)
   - Limitations and risks
 
-- **`/team-autopilot` command** (`commands/team-autopilot.md`) — Team-based alternative to `/feature-autopilot`. Uses agent teams for the implementation phase when backend + frontend can be built simultaneously on non-overlapping file domains. Phases:
-  - Phase 1 (Design): subagents — architect → planner → plan approval (sequential, same as feature-autopilot)
-  - Phase 2 (Implementation): agent team — parallel teammates with file domain assignments and SendMessage coordination
-  - Phase 3 (Quality gates): subagents — tests → security → review → docs (sequential gating, same as feature-autopilot)
-  - Includes fallback criteria: when to abandon team and switch to subagents mid-workflow
+- **`/feature-autopilot` parallel mode** — `/feature-autopilot` now accepts `mode=parallel` for team-based implementation (merged from former `/team-autopilot`). Uses agent teams for the implementation phase when backend + frontend can be built simultaneously on non-overlapping file domains. Auto-detects when parallel mode is appropriate if not specified.
 
 - **Agent teams environment flag** in `hooks/settings.json` — Enables the experimental agent teams feature:
   ```json
@@ -187,7 +183,7 @@ AGENT TEAMS (Peer-to-Peer) — For parallel independent modules
 ### Migration Notes (Phase 2 → Phase 3)
 
 1. Merge the new `env` section from `hooks/settings.json` into your `.claude/settings.json`.
-2. Copy `commands/team-autopilot.md` to `.claude/commands/`.
+2. `/team-autopilot` has been merged into `/feature-autopilot` (use `mode=parallel`).
 3. Create the `docs/` directory and copy `docs/AGENT_TEAMS_GUIDE.md`.
 4. Replace `agents/orchestrator.md` with the v2.2 version.
 5. Update your `CLAUDE.md` with the new Pattern B section.

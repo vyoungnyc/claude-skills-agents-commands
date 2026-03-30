@@ -83,18 +83,16 @@ Or invoke the orchestrator directly with a task description.
 | derive-test-spec-from-requirements | Test plan from requirements |
 | summarize-diff-for-agents | Structured diff summaries for review |
 | review-changes-structured | Blocking/non-blocking review feedback |
-| create-fix-list-from-review-feedback | Convert review findings to fix steps |
-| update-plan-from-review-feedback | Incorporate feedback into plan |
+| update-plan-from-review-feedback | Convert review findings to fix tasks and incorporate into plan |
 | run-quality-gates-and-triage | Interpret test/lint logs, group failures |
 | fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
-### Commands (5)
+### Commands (4)
 
 | Command | Purpose |
 |---|---|
-| /feature-autopilot | Full automated workflow from spec to docs (subagent-based) |
-| /team-autopilot | Team-based parallel workflow for independent modules |
+| /feature-autopilot | Full automated workflow from spec to docs (sequential or parallel mode) |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
 | /frontend-test-runner | Run frontend tests, analyze results, route failures |
 | /git | Branch management, commits, PRs, feedback handling |
@@ -131,7 +129,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 **v2.2.0 (Phase 3)** — Agent teams integration:
 - Added agent teams as optional peer-to-peer parallel execution pattern
-- New `/team-autopilot` command for team-based feature workflows
+- `/feature-autopilot` now supports `mode=parallel` for team-based feature workflows (merged from `/team-autopilot`)
 - Orchestrator now has a decision framework for choosing subagents vs teams
 - Agent Teams Guide with 4 patterns: parallel modules, multi-perspective review, competing hypotheses, architecture exploration
 - Enabled `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings
@@ -168,13 +166,11 @@ agents/
 commands/
   backend-test-runner.md
   feature-autopilot.md
-  team-autopilot.md
   frontend-test-runner.md
   git.md
 docs/
   AGENT_TEAMS_GUIDE.md
 skills/
-  create-fix-list-from-review-feedback/
   derive-plan-from-spec/
   derive-test-spec-from-requirements/
   extract-requirements-from-ticket/
