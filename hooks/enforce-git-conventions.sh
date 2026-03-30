@@ -17,20 +17,34 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 GIT_PREFIX='git\s+(-[a-zA-Z]+\s+\S+\s+)*'
 
 # --- Block force push ---
-if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*(--force\b|-f\b)" && \
-   ! echo "$COMMAND" | grep -qE '\-\-force-with-lease'; then
-  jq -n '{
+# --force overrides --force-with-lease when both are present, so block
+# any command containing --force or -f (bare --force-with-lease without
+# --force is allowed as the safer alternative).
+HAS_FORCE=false
+HAS_LEASE=false
+echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*(--force\b|-f\b)" && HAS_FORCE=true
+echo "$COMMAND" | grep -qE '\-\-force-with-lease' && HAS_LEASE=true
+
+if $HAS_FORCE; then
+  if $HAS_LEASE; then
+    REASON="Cannot combine --force with --force-with-lease: --force overrides the lease safety. Use --force-with-lease alone."
+  else
+    REASON="Force push is not allowed. Use --force-with-lease if absolutely necessary, or rebase instead."
+  fi
+  jq -n --arg reason "$REASON" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: "Force push is not allowed. Use --force-with-lease if absolutely necessary, or rebase instead."
+      permissionDecisionReason: $reason
     }
   }'
   exit 0
 fi
 
 # --- Block push directly to main/master ---
-if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+(origin\s+)?(main|master)\b"; then
+# Also catches refspec forms like HEAD:main, feature/x:master
+if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+(origin\s+)?(main|master)\b" || \
+   echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*:(main|master)\b"; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -79,9 +93,9 @@ if echo "$COMMAND" | grep -qE 'git\s+commit'; then
   fi
 fi
 
-# --- Validate branch naming on checkout -b ---
-if echo "$COMMAND" | grep -qE 'git\s+checkout\s+-b\s+'; then
-  BRANCH_NAME=$(echo "$COMMAND" | sed -n 's/.*checkout[[:space:]]*-b[[:space:]]*\([^[:space:]]*\).*/\1/p')
+# --- Validate branch naming on checkout -b / switch -c ---
+if echo "$COMMAND" | grep -qE 'git\s+(checkout\s+-b|switch\s+-c)\s+'; then
+  BRANCH_NAME=$(echo "$COMMAND" | sed -n 's/.*\(checkout[[:space:]]*-b\|switch[[:space:]]*-c\)[[:space:]]*\([^[:space:]]*\).*/\2/p')
   if [ -n "$BRANCH_NAME" ]; then
     if ! echo "$BRANCH_NAME" | grep -qE '^(feature|fix|refactor|hotfix|release)/[a-zA-Z0-9_.-]+$'; then
       jq -n --arg branch "$BRANCH_NAME" '{
