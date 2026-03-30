@@ -94,7 +94,7 @@ Or invoke the orchestrator directly with a task description.
 | Command | Purpose |
 |---|---|
 | /feature-autopilot | Full automated workflow from spec to docs (sequential or parallel mode) |
-| /pr-fix-loop | Fix bot review comments, push, trigger re-review, poll until clean |
+| /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
 | /frontend-test-runner | Run frontend tests, analyze results, route failures |
 | /git | Branch management, commits, PRs, feedback handling |

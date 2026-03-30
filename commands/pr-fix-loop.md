@@ -130,13 +130,14 @@ Launch a **background agent** to poll for new review comments. The agent:
 
 2. **On each poll**, check:
    a. Unresolved review threads from any reviewer (bot or user).
-   b. Whether any bot reviewer reacted with a 👍 or ✅ emoji, or posted an approval review.
-   c. Whether 15 minutes have passed with no new comments from any reviewer.
+   b. **PR description reactions** — check if any bot reviewer reacted with 👍 or ✅ on the PR description itself (use GraphQL `pullRequest { reactions }`). This is the **mandatory approval gate**.
+   c. **Complementary approval signals** — positive text like "Didn't find any major issues", "Nice work", "LGTM", or "No issues found" in a bot's review comment or thread reply. These reinforce approval but are NOT sufficient on their own.
+   d. Whether 15 minutes have passed with no new comments from any reviewer.
 
 3. **Stop conditions** (any of these ends the loop):
-   - A bot reviewer reacted with 👍 or ✅ emoji, or posted an approval → done, PR is approved.
-   - No new comments from any reviewer for 15 consecutive minutes (excluding disputed threads awaiting response) → done.
-   - Only remaining unresolved threads are disputed (Category B/C) awaiting human input → done, but report these threads to the user so they can weigh in.
+   - **Approved:** A bot reviewer reacted with 👍 or ✅ emoji on the PR description → done, PR is approved. Complementary positive text signals (e.g. "Didn't find any major issues") further confirm approval but the emoji on the PR description is the mandatory gate.
+   - **Idle:** No new comments from any reviewer for 15 consecutive minutes (excluding disputed threads awaiting response) → done, but report that the bot has NOT formally approved (no 👍/✅ on PR description).
+   - **Blocked on human:** Only remaining unresolved threads are disputed (Category B/C) awaiting human input → done, but report these threads to the user so they can weigh in.
 
 4. **If new unresolved comments appear** (from any bot or user):
    - The polling agent reports back with the comment details.
@@ -163,7 +164,7 @@ When polling ends (any stop condition met):
    - How many review rounds were completed.
    - How many total comments were fixed (broken down by bot vs user comments).
    - How many comments were disputed (with links).
-   - Whether the reviewer gave 👍 or the loop ended due to no new comments.
+   - Whether the bot formally approved (👍/✅ on PR description), gave complementary positive signals (e.g. "No major issues"), or the loop ended due to idle timeout.
 2. If there are disputed threads awaiting human input, list each one with:
    - The original reviewer comment (summary).
    - Your reply / reasoning.
