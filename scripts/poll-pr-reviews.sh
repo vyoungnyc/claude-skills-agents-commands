@@ -76,13 +76,13 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     continue
   fi
 
-  APPROVERS=$(echo "$RESULT" | jq "[
+  BOT_APPROVERS=$(echo "$RESULT" | jq "[
     .data.repository.pullRequest.reactions.nodes[]?
     | select(.content == \"THUMBS_UP\" or .content == \"WHITE_CHECK_MARK\")
     | select(.user.login | test(\"$BOT_PATTERNS\"; \"i\"))
   ]")
-  if echo "$APPROVERS" | jq -e 'length > 0' >/dev/null 2>&1; then
-    echo "{\"status\": \"APPROVED\", \"poll\": $POLL, \"approvers\": $APPROVERS}"
+  if echo "$BOT_APPROVERS" | jq -e 'length > 0' >/dev/null 2>&1; then
+    echo "{\"status\": \"APPROVED\", \"poll\": $POLL, \"approvers\": $BOT_APPROVERS}"
     exit $EXIT_APPROVED
   fi
 
