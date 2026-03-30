@@ -143,7 +143,7 @@ After pushing fixes:
 
 ## Phase 3: Background polling
 
-Launch a **background agent** (use `model: "haiku"` to minimize token costs) to poll for new review comments and pipeline status. The agent:
+Run the polling script in the background to watch for new review comments and pipeline status. Use `scripts/poll-mr-reviews.sh` (or `"$CLAUDE_PROJECT_DIR"/.claude/scripts/poll-mr-reviews.sh`) to avoid generating inline scripts each time:
 
 1. **Polls every `{poll_interval}` minutes** (default 1) for up to `{max_poll_time}` minutes (default 15).
 

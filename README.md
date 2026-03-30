@@ -19,12 +19,13 @@ A set of agent definitions, skills, commands, and hooks that turn Claude Code in
 1. Copy the contents to your project's `.claude/` directory:
 
 ```bash
-mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks
+mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/scripts
 cp -r agents/. .claude/agents/
 cp -r skills/. .claude/skills/
 cp -r commands/. .claude/commands/
 cp hooks/*.sh .claude/hooks/
-chmod +x .claude/hooks/*.sh
+cp scripts/*.sh .claude/scripts/
+chmod +x .claude/hooks/*.sh .claude/scripts/*.sh
 ```
 
 2. Merge the hook configuration into your `.claude/settings.json`:
@@ -109,6 +110,24 @@ Or invoke the orchestrator directly with a task description.
 | auto-test-runner.sh | PostToolUse (async) | Run test suite in background after file edits |
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
+
+### Scripts (2)
+
+| Script | Platform | Purpose |
+|---|---|---|
+| poll-pr-reviews.sh | GitHub | Poll a PR for new review threads, approval emoji (👍/✅), or idle timeout. Used by `/pr-fix-loop`. |
+| poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
+
+**Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = pipeline failed (GitLab only), `10` = usage error.
+
+**Usage:**
+```bash
+# GitHub PR polling (60s interval, 15 polls max)
+scripts/poll-pr-reviews.sh owner/repo 42 60 15
+
+# GitLab MR polling (run from inside a GitLab repo)
+scripts/poll-mr-reviews.sh 42 60 15
+```
 
 ## Platform Support
 
@@ -203,6 +222,9 @@ skills/
   summarize-diff-for-agents/
   sync-docs-with-implementation/
   update-plan-from-review-feedback/
+scripts/
+  poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
+  poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
 hooks/
   reinject-context.sh        # PostCompact: re-inject standards
   auto-format.sh             # PostToolUse: Prettier + ESLint
