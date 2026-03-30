@@ -2,6 +2,25 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.2.2] - 2026-03-30
+
+### Added
+
+- **`/mr-fix-loop` command** (`commands/mr-fix-loop.md`) — GitLab counterpart to `/pr-fix-loop`. Automates the fix-review-poll loop for GitLab merge requests:
+  - Uses `glab` CLI and GitLab REST API for discussion management (list, reply, resolve)
+  - Uses GitLab MCP tools (`get_merge_request`, `get_merge_request_pipelines`, `get_pipeline_jobs`) where available
+  - **Dual approval gate:** GitLab native MR approval (`approvals_left == 0`) OR bot award emoji (`thumbsup`/`white_check_mark`) on the MR
+  - **Pipeline failure fixing:** Detects failed pipeline jobs (lint, tests, type-check, build), runs checks locally to reproduce, fixes and pushes — treated as implicit Category A comments
+  - Supports GitLab Duo, Cursor BugBot, custom CI bots, and cross-platform Codex integration
+  - Same Category A (fix) / B (push back) / C (clarify) triage logic as `/pr-fix-loop`
+  - **Never merges** — strictly scoped to review comment and pipeline failure resolution
+
+### Changed
+
+- **README.md** — Added `/mr-fix-loop` to commands table (now 6 commands), platform support matrix (GitLab-only), and directory structure listing. Updated platform support explanation to describe both commands.
+
+---
+
 ## [2.2.1] - 2026-03-30
 
 ### Phase 3.1: Hook Hardening & PR Fix Loop Enhancements

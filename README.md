@@ -89,12 +89,13 @@ Or invoke the orchestrator directly with a task description.
 | fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
-### Commands (5)
+### Commands (6)
 
 | Command | Purpose |
 |---|---|
 | /feature-autopilot | Full automated workflow from spec to docs (sequential or parallel mode) |
 | /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ on PR description (mandatory approval gate) or 15 min silence |
+| /mr-fix-loop | Fix review comments on GitLab MRs (GitLab Duo, Cursor BugBot, Codex, users) with Category A/B/C triage, fix pipeline failures locally, push, poll until MR approval or bot emoji gate or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
 | /frontend-test-runner | Run frontend tests, analyze results, route failures |
 | /git | Branch management, commits, PRs, feedback handling |
@@ -121,8 +122,9 @@ Or invoke the orchestrator directly with a task description.
 | **/frontend-test-runner** | ✅ | ✅ | No platform-specific logic |
 | **/git** | ✅ | ✅ | No platform-specific logic |
 | **/pr-fix-loop** | ✅ | ❌ | GitHub only — uses GitHub GraphQL API for review threads, thread resolution, comment replies, and PR description reactions |
+| **/mr-fix-loop** | ❌ | ✅ | GitLab only — uses GitLab discussions API, MR approvals, award emoji, and `glab` CLI |
 
-`/pr-fix-loop` is built on GitHub's review thread model (`reviewThreads`, `resolveReviewThread` mutation, PR-level emoji reactions). GitLab uses a fundamentally different discussions/approval model, so a separate `/mr-fix-loop` implementation would be needed for GitLab support.
+`/pr-fix-loop` is built on GitHub's review thread model (`reviewThreads`, `resolveReviewThread` mutation, PR-level emoji reactions). `/mr-fix-loop` is its GitLab counterpart, built on GitLab's discussion model, MR approvals API, award emoji, and the `glab` CLI. Use `/pr-fix-loop` for GitHub PRs and `/mr-fix-loop` for GitLab MRs.
 
 ## Key Design Principles
 
@@ -185,6 +187,7 @@ commands/
   feature-autopilot.md
   frontend-test-runner.md
   git.md
+  mr-fix-loop.md
   pr-fix-loop.md
 docs/
   AGENT_TEAMS_GUIDE.md
