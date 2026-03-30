@@ -46,7 +46,7 @@ Automate the cycle of: fix review comments → fix pipeline failures → push �
 2. Detect the current branch from `git branch --show-current`.
 3. Fetch the MR using MCP `get_merge_request` to confirm it exists and get its source branch.
 4. Check `git status` for uncommitted local changes.
-5. **Check for existing polling agents** — if a background polling agent from a previous `/mr-fix-loop` run is still active, stop it with `TaskStop` before proceeding. Only one polling agent should be active at a time.
+5. **Previous polling auto-cleanup** — the polling script (`scripts/poll-mr-reviews.sh`) uses a PID file to automatically kill any previous instance on startup. Only one polling process runs at a time per MR.
 
 ## Phase 0: Assess starting state
 

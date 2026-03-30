@@ -26,6 +26,21 @@ if [ -z "$MR_IID" ]; then
   exit 10
 fi
 
+# --- PID file: kill any previous polling instance ---
+# Derive a project identifier from the git remote for uniqueness
+PROJECT_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|.*[:/](.+)(\.git)?$|\1|' | tr '/' '-')
+PIDFILE="/tmp/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
+
+if [ -f "$PIDFILE" ]; then
+  OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    kill "$OLD_PID" 2>/dev/null || true
+    echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $OLD_PID)" >&2
+  fi
+fi
+echo $$ > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT
+
 # Known bot username patterns (case-insensitive match)
 BOT_PATTERNS="bot|duo|codex|cursor|bugbot"
 

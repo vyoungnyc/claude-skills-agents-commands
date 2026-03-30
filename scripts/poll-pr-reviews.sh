@@ -28,6 +28,19 @@ fi
 OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
 
+# --- PID file: kill any previous polling instance ---
+PIDFILE="/tmp/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
+
+if [ -f "$PIDFILE" ]; then
+  OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    kill "$OLD_PID" 2>/dev/null || true
+    echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $OLD_PID)" >&2
+  fi
+fi
+echo $$ > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT
+
 # Known bot login patterns (case-insensitive match)
 BOT_PATTERNS="bot|codex|cursor|gitlab"
 
