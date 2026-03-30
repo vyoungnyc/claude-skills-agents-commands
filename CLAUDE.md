@@ -18,7 +18,7 @@ Maintain a clean, type-safe, test-driven, and UI-first codebase emphasizing stru
 - **Think Independently:** Critically evaluate decisions; propose better alternatives when appropriate.
 - **Confirm Before Action:** Seek approval before structural or production-impacting work.
 - **UI-First & Test-Driven:** Validate UI early; all code must pass Jest + Playwright tests before merge.
-- **Context-Driven:** Use MCP tools (Context7 + Chunkhound) for up-to-date docs and architecture context.
+- **Context-Driven:** Agents query MCP tools (Context7, Chunkhound) directly. Tool Search handles token efficiency automatically.
 - **Security Always:** Never commit secrets or credentials; follow least-privilege and configuration best practices.
 - **No Automated Co-Authors:** Do not include “Claude” or any AI as a commit co-author.
 
@@ -57,23 +57,37 @@ CLAUDE.md                 # Project-level standards
    - `/config` — Configuration
    - `/scripts` — Utility scripts
    - `/examples` — Example code
-4. Use Claude Code’s Task tool to spawn parallel agents; MCP coordination, Claude executes.
+4. Use Claude Code’s Agent tool to spawn parallel subagents. Coders run in `isolation: worktree` for filesystem safety.
+5. For parallel independent modules, consider agent teams (see `docs/AGENT_TEAMS_GUIDE.md`). Teams require non-overlapping file domains.
+6. Context recovery is automatic via PostCompact hook + auto-memory. No manual checkpointing needed.
 
-### ⚡ Enhanced Golden Rule: Intelligent Batching
-- **Context-Aware Batching:** Group by domain boundaries, not just operation type.
-- **Dependency-Ordered Execution:** Respect logical dependencies within a batch.
-- **Error-Resilient Batching:** Include rollback/compensation steps per batch.
-- **Performance-Optimized:** Balance batch size vs. execution time and resource limits.
+### Agent Spawning Patterns
 
-### Claude Code Task Tool Pattern (Authoritative)
-```javascript
-// Single message: spawn all agents with complete instructions
-Task("Research agent",  "Analyze requirements, risks, and patterns", "researcher")
-Task("Coder agent",     "Implement core features with tests",      "coder")
-Task("Tester agent",    "Generate and execute test suites",        "tester")
-Task("Reviewer agent",  "Perform code and security review",         "reviewer")
-Task("Architect agent", "Design or validate architecture",          "system-architect")
-Task("Code Expert",     "Advanced code analysis & refactoring",     "code-expert")
+**Pattern A: Subagents (default — hub-and-spoke)**
+```
+Orchestrator dispatches to named agents in .claude/agents/:
+  architect      → design (read-only + MCP tools, opus, memory: project)
+  planner        → plan tracking (sonnet, memory: project)
+  backend-coder  → backend impl (sonnet, isolation: worktree, memory: project)
+  frontend-coder → frontend impl (sonnet, isolation: worktree, memory: project)
+  test-spec      → test design + implementation (sonnet, memory: project)
+  reviewer       → code review (opus, permissionMode: plan, memory: project)
+  security-researcher → security audit (opus, permissionMode: plan, memory: project)
+  documenter     → docs/changelog (haiku, memory: project)
+```
+
+**Pattern B: Agent teams (peer-to-peer, for parallel independent modules)**
+```
+When 2+ implementation steps have no dependencies and touch separate file domains:
+  Create an agent team with file domain assignments:
+    - Backend teammate owns src/backend/, src/services/, src/models/
+    - Frontend teammate owns src/frontend/, src/components/, src/pages/
+    - Test teammate owns tests/
+
+  Teams use SendMessage for direct peer communication.
+  No worktree isolation — file domains MUST NOT overlap.
+  Gate steps (tests, security, review, docs) still run as subagents after team work.
+  Use /team-autopilot command for team-based feature workflows.
 ```
 
 ---
