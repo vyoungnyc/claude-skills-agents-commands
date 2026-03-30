@@ -43,6 +43,12 @@ if [[ "$COMMAND" == *$'\n'* ]] || [[ "$COMMAND" =~ $_UNSAFE_RE ]]; then
   exit 0  # fall through to normal permission dialog
 fi
 
+# Destructive flags that should never be auto-approved even with a safe prefix
+_DESTRUCTIVE_RE='\s(-D|-d|--delete|-M|--move|--force|--hard|--config|--globalSetup|--plugin|--rulesdir|--require\s)'
+if [[ "$COMMAND" =~ $_DESTRUCTIVE_RE ]]; then
+  exit 0  # fall through to normal permission dialog
+fi
+
 for pattern in "${SAFE_PATTERNS[@]}"; do
   # Exact match OR safe pattern followed only by flags/args
   if [[ "$COMMAND" == "$pattern" ]] || [[ "$COMMAND" == "$pattern "* ]]; then

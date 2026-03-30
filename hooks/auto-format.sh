@@ -22,12 +22,12 @@ esac
 FORMATTED=""
 
 # Run Prettier (npx handles missing tool gracefully)
-if npx prettier --write "$FILE_PATH" 2>/dev/null; then
+if npx prettier --write -- "$FILE_PATH" 2>/dev/null; then
   FORMATTED="prettier"
 fi
 
 # Run ESLint fix (npx handles missing tool gracefully)
-if npx eslint --fix "$FILE_PATH" 2>/dev/null; then
+if npx eslint --fix -- "$FILE_PATH" 2>/dev/null; then
   FORMATTED="${FORMATTED:+$FORMATTED+}eslint"
 fi
 

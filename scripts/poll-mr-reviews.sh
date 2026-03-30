@@ -16,6 +16,7 @@ if [ -z "$MR_IID" ]; then
   echo '{"error": "Usage: poll-mr-reviews.sh <mr_iid> [poll_interval_sec] [max_polls]"}' >&2
   exit $EXIT_USAGE_ERROR
 fi
+require_positive_int "$MR_IID" "mr_iid"
 require_positive_int "$POLL_INTERVAL" "poll_interval_sec"
 require_positive_int "$MAX_POLLS" "max_polls"
 

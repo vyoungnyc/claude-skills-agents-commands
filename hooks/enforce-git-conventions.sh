@@ -29,8 +29,6 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 #   --literal-pathspecs, --glob-pathspecs, --noglob-pathspecs,
 #   --no-optional-locks, --no-lazy-fetch, --html-path, --man-path, --info-path
 NORMALIZED="$COMMAND"
-# Strip long options with = value (e.g. --git-dir=/foo)
-NORMALIZED=$(echo "$NORMALIZED" | sed -E 's/(^git[[:space:]]+)((--[a-zA-Z][a-zA-Z0-9_-]*=[^[:space:]]+[[:space:]]+)*)/\1/' )
 # Iteratively strip global options from the front (after "git ")
 while true; do
   PREV="$NORMALIZED"
@@ -44,7 +42,7 @@ while true; do
 done
 
 # --- Push-specific checks (skip for non-push commands) ---
-if echo "$NORMALIZED" | grep -qE 'git\s+push\s'; then
+if echo "$NORMALIZED" | grep -qE 'git\s+push(\s|$)'; then
 
   # Block force push
   HAS_FORCE=false
@@ -101,10 +99,13 @@ if echo "$NORMALIZED" | grep -qE 'git\s+push\s'; then
 
 fi
 
-# --- Block --no-verify / -n (commit/push only) ---
-if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s'; then
+# --- Block --no-verify / -n (commit/push) ---
+if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)(\s|$)'; then
+  # --no-verify: check full command (long form can't appear unquoted inside -m "...")
+  # -n shorthand: only check options before -m to avoid false positives in message text
+  # Note: -n means --no-verify for commit, --dry-run for push — only check commit
   OPTS_BEFORE_MSG=$(echo "$NORMALIZED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
-  if echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
+  if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
      echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+commit\s+.*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
     jq -n '{
       hookSpecificOutput: {
