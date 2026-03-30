@@ -17,8 +17,6 @@ SAFE_PATTERNS=(
   "npm run test"
   "npm run lint"
   "npm run lint:fix"
-  "npm run build"
-  "npm run dev"
   "npx jest"
   "npx vitest"
   "npx playwright test"

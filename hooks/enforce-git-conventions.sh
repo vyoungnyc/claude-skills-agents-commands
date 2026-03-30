@@ -12,9 +12,10 @@
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-# Pattern to match optional git global flags (e.g. git -c key=val push ...)
-# This prevents bypasses like: git -c user.name=x push --force
-GIT_PREFIX='git\s+(-[a-zA-Z]+\s+\S+\s+)*'
+# Normalize: strip git global options so enforcement matches the subcommand.
+# Handles: -c key=val, --no-pager, --git-dir=path, -C path, -p, etc.
+# After stripping, NORMALIZED starts with "git <subcommand> ..."
+NORMALIZED=$(echo "$COMMAND" | sed -E 's/^(git\s+)((-[a-zA-Z](\s+\S+)?|--[a-zA-Z][a-zA-Z0-9_-]*(=\S+)?)\s+)*/\1/')
 
 # --- Block force push ---
 # --force overrides --force-with-lease when both are present, so block
@@ -22,8 +23,8 @@ GIT_PREFIX='git\s+(-[a-zA-Z]+\s+\S+\s+)*'
 # --force is allowed as the safer alternative).
 HAS_FORCE=false
 HAS_LEASE=false
-echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*(--force\b|-f\b)" && HAS_FORCE=true
-echo "$COMMAND" | grep -qE '\-\-force-with-lease' && HAS_LEASE=true
+echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(--force\b|-f\b)' && HAS_FORCE=true
+echo "$NORMALIZED" | grep -qE '\-\-force-with-lease' && HAS_LEASE=true
 
 if $HAS_FORCE; then
   if $HAS_LEASE; then
@@ -42,9 +43,9 @@ if $HAS_FORCE; then
 fi
 
 # --- Block push directly to main/master ---
-# Also catches refspec forms like HEAD:main, feature/x:master
-if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+(origin\s+)?(main|master)\b" || \
-   echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*:(main|master)\b"; then
+# Matches any remote (not just origin), plus refspec forms like HEAD:main
+if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(\S+\s+)?(main|master)\b' || \
+   echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(main|master)\b'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -56,7 +57,7 @@ if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+(origin\s+)?(main|master)\b" 
 fi
 
 # --- Block --no-verify ---
-if echo "$COMMAND" | grep -qE "${GIT_PREFIX}(commit|push)\s+.*--no-verify"; then
+if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
