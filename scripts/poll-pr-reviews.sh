@@ -8,12 +8,12 @@
 #   0 — APPROVED (bot reacted with thumbsup/checkmark on PR description)
 #   1 — NEW_COMMENTS (unresolved review threads detected)
 #   2 — IDLE_TIMEOUT (no new comments within max polling window)
-#   3 — BLOCKED_ON_HUMAN (only disputed threads remain)
+#   3 — BLOCKED_ON_HUMAN (only stale disputed threads remain, no new activity)
 #   10 — Usage error
 #
 # Output: JSON on stdout describing the stop condition and relevant details.
 
-set -euo pipefail
+set -uo pipefail
 
 REPO="${1:-}"
 PR_NUMBER="${2:-}"
@@ -56,13 +56,19 @@ KNOWN_THREAD_IDS=$(gh api graphql -f query="
       }
     }
   }
-" 2>/dev/null | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | join("\n")')
+" 2>/dev/null | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | join("\n")' 2>/dev/null || true)
+
+# Track consecutive polls with no changes for BLOCKED_ON_HUMAN detection.
+# If stale threads exist but nothing new arrives, we are blocked on human.
+STALE_POLLS=0
+BLOCKED_THRESHOLD=3
 
 POLL=0
 while [ "$POLL" -lt "$MAX_POLLS" ]; do
   POLL=$((POLL + 1))
   sleep "$POLL_INTERVAL"
 
+  # Fetch PR data — on API failure, skip this cycle and retry next
   RESULT=$(gh api graphql -f query="
     query {
       repository(owner: \"$OWNER\", name: \"$NAME\") {
@@ -92,7 +98,12 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
         }
       }
     }
-  " 2>&1)
+  " 2>/dev/null)
+
+  if [ -z "$RESULT" ] || ! echo "$RESULT" | jq -e '.data' >/dev/null 2>&1; then
+    echo "[$(date +"%H:%M:%S")] POLL $POLL/$MAX_POLLS: API request failed, retrying next cycle" >&2
+    continue
+  fi
 
   # Check for approval emoji from bots on PR description
   APPROVED_COUNT=$(echo "$RESULT" | jq "[
@@ -113,17 +124,17 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
 
   # Check for NEW unresolved review threads (exclude known/stale ones)
   ALL_UNRESOLVED_IDS=$(echo "$RESULT" | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | join("\n")')
-  NEW_IDS=""
+  NEW_IDS=()
   while IFS= read -r tid; do
     [ -z "$tid" ] && continue
     if ! echo "$KNOWN_THREAD_IDS" | grep -qF "$tid"; then
-      NEW_IDS="${NEW_IDS}${tid}\n"
+      NEW_IDS+=("$tid")
     fi
   done <<< "$ALL_UNRESOLVED_IDS"
 
-  if [ -n "$NEW_IDS" ]; then
+  if [ "${#NEW_IDS[@]}" -gt 0 ]; then
     # Build JSON for only the new threads
-    NEW_ID_LIST=$(printf '%s' "$NEW_IDS" | sed '/^$/d' | jq -R . | jq -s .)
+    NEW_ID_LIST=$(printf '%s\n' "${NEW_IDS[@]}" | jq -R . | jq -s .)
     UNRESOLVED=$(echo "$RESULT" | jq --argjson ids "$NEW_ID_LIST" '[
       .data.repository.pullRequest.reviewThreads.nodes[]
       | select(.isResolved == false)
@@ -142,7 +153,39 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     exit 1
   fi
 
-  echo "[$(date +"%H:%M:%S")] POLL $POLL/$MAX_POLLS: No new comments, no approval emoji yet" >&2
+  # Check if stale (known) unresolved threads exist — track for BLOCKED_ON_HUMAN
+  HAS_STALE=false
+  if [ -n "$ALL_UNRESOLVED_IDS" ] && [ -n "$KNOWN_THREAD_IDS" ]; then
+    while IFS= read -r tid; do
+      [ -z "$tid" ] && continue
+      if echo "$KNOWN_THREAD_IDS" | grep -qF "$tid"; then
+        HAS_STALE=true
+        break
+      fi
+    done <<< "$ALL_UNRESOLVED_IDS"
+  fi
+
+  if $HAS_STALE; then
+    STALE_POLLS=$((STALE_POLLS + 1))
+    if [ "$STALE_POLLS" -ge "$BLOCKED_THRESHOLD" ]; then
+      STALE_THREADS=$(echo "$RESULT" | jq '[
+        .data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false)
+        | {
+            id: .id,
+            author: .comments.nodes[0].author.login,
+            path: .comments.nodes[0].path,
+            body: (.comments.nodes[0].body | .[0:200])
+          }
+      ]')
+      echo "{\"status\": \"BLOCKED_ON_HUMAN\", \"poll\": $POLL, \"stale_polls\": $STALE_POLLS, \"threads\": $STALE_THREADS}"
+      exit 3
+    fi
+    echo "[$(date +"%H:%M:%S")] POLL $POLL/$MAX_POLLS: Only stale unresolved threads ($STALE_POLLS/$BLOCKED_THRESHOLD toward blocked-on-human)" >&2
+  else
+    STALE_POLLS=0
+    echo "[$(date +"%H:%M:%S")] POLL $POLL/$MAX_POLLS: No new comments, no approval emoji yet" >&2
+  fi
 done
 
 echo "{\"status\": \"IDLE_TIMEOUT\", \"polls_completed\": $MAX_POLLS, \"total_seconds\": $((MAX_POLLS * POLL_INTERVAL))}"
