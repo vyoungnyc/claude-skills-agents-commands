@@ -9,7 +9,7 @@ args:
   - name: poll_interval
     type: number
     required: false
-    description: "Minutes between polls (default: 5)."
+    description: "Minutes between polls (default: 1)."
   - name: max_poll_time
     type: number
     required: false
@@ -32,7 +32,7 @@ When identifying bot review threads, match against all known bot logins above. T
 ## Inputs
 
 - `pr_number`: `{pr_number}`
-- `poll_interval`: `{poll_interval}` (default: 5 minutes)
+- `poll_interval`: `{poll_interval}` (default: 1 minute)
 - `max_poll_time`: `{max_poll_time}` (default: 15 minutes)
 
 ## Mission
@@ -124,9 +124,9 @@ After pushing fixes:
 
 ## Phase 3: Background polling
 
-Launch a **background agent** to poll for new review comments. The agent:
+Launch a **background agent** (use `model: "haiku"` to minimize token costs) to poll for new review comments. The agent:
 
-1. **Polls every `{poll_interval}` minutes** (default 5) for up to `{max_poll_time}` minutes (default 15).
+1. **Polls every `{poll_interval}` minutes** (default 1) for up to `{max_poll_time}` minutes (default 15).
 
 2. **On each poll**, check:
    a. Unresolved review threads from any reviewer (bot or user).
