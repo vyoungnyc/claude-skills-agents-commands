@@ -1,14 +1,8 @@
 #!/bin/bash
 # Poll a GitHub PR for new review comments, approval emoji, or idle timeout.
-# Used by /pr-fix-loop to avoid generating inline polling scripts.
 #
 # Usage: poll-pr-reviews.sh <owner/repo> <pr_number> [poll_interval_sec] [max_polls]
-#
-# Exit codes: see lib/poll-common.sh for constants.
-#   0=APPROVED  1=NEW_COMMENTS  2=IDLE_TIMEOUT  3=BLOCKED_ON_HUMAN
-#   10=USAGE_ERROR  11=SNAPSHOT_FAILURE
-#
-# Output: JSON on stdout describing the stop condition and relevant details.
+# Exit codes: see lib/poll-common.sh
 
 set -uo pipefail
 source "${BASH_SOURCE[0]%/*}/lib/poll-common.sh"
@@ -30,10 +24,8 @@ NAME="${REPO##*/}"
 
 acquire_pidfile "/tmp/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
 
-# Bot patterns — anchored to avoid matching human usernames like "abbott"
 BOT_PATTERNS="\\[bot\\]$|-bot-|^chatgpt-codex|^cursor-bugbot|^gitlab-copilot"
 
-# Snapshot unresolved thread IDs at startup
 SNAPSHOT=$(gh api graphql -f query="
   query {
     repository(owner: \"$OWNER\", name: \"$NAME\") {
@@ -52,9 +44,6 @@ if [ -z "$SNAPSHOT" ] || ! echo "$SNAPSHOT" | jq -e '.data.repository.pullReques
 fi
 
 KNOWN_IDS=$(echo "$SNAPSHOT" | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | .[]')
-
-STALE_POLLS=0
-BLOCKED_THRESHOLD=3
 
 POLL=0
 while [ "$POLL" -lt "$MAX_POLLS" ]; do
@@ -87,27 +76,21 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     continue
   fi
 
-  # Check approval — single jq call extracts array, derive count from length
   APPROVERS=$(echo "$RESULT" | jq "[
     .data.repository.pullRequest.reactions.nodes[]?
     | select(.content == \"THUMBS_UP\" or .content == \"WHITE_CHECK_MARK\")
     | select(.user.login | test(\"$BOT_PATTERNS\"; \"i\"))
   ]")
-  APPROVED_COUNT=$(echo "$APPROVERS" | jq 'length')
-
-  if [ "$APPROVED_COUNT" -gt 0 ]; then
+  if [ "$(echo "$APPROVERS" | jq 'length')" -gt 0 ]; then
     echo "{\"status\": \"APPROVED\", \"poll\": $POLL, \"approvers\": $APPROVERS}"
     exit $EXIT_APPROVED
   fi
 
-  # Detect new unresolved threads via jq set-difference (no tempfiles or grep loops)
-  KNOWN_IDS_JSON=$(echo "$KNOWN_IDS" | jq -R . | jq -s .)
   ALL_UNRESOLVED_IDS=$(echo "$RESULT" | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | .[]')
-
   NEW_IDS=$(find_new_ids "$ALL_UNRESOLVED_IDS" "$KNOWN_IDS")
 
   if [ "$_NEW_COUNT" -gt 0 ]; then
-    NEW_ID_LIST=$(echo "$NEW_IDS" | jq -R . | jq -s .)
+    NEW_ID_LIST=$(echo "$NEW_IDS" | jq -R '[., inputs]')
     UNRESOLVED=$(echo "$RESULT" | jq --argjson ids "$NEW_ID_LIST" '[
       .data.repository.pullRequest.reviewThreads.nodes[]
       | select(.isResolved == false)
@@ -125,7 +108,6 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
     exit $EXIT_NEW_COMMENTS
   fi
 
-  # Track stale threads for BLOCKED_ON_HUMAN
   if has_known_ids "$ALL_UNRESOLVED_IDS" "$KNOWN_IDS"; then
     STALE_POLLS=$((STALE_POLLS + 1))
     if [ "$STALE_POLLS" -ge "$BLOCKED_THRESHOLD" ]; then
@@ -135,7 +117,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
         | { id: .id, author: .comments.nodes[0].author.login, path: .comments.nodes[0].path, body: (.comments.nodes[0].body | .[0:200]) }
       ]')
       echo "{\"status\": \"BLOCKED_ON_HUMAN\", \"poll\": $POLL, \"stale_polls\": $STALE_POLLS, \"threads\": $STALE_THREADS}"
-      exit $EXIT_BLOCKED_ON_HUMAN_PR
+      exit $EXIT_BLOCKED_ON_HUMAN
     fi
     echo "[$(date +"%H:%M:%S")] POLL $POLL/$MAX_POLLS: Only stale unresolved threads ($STALE_POLLS/$BLOCKED_THRESHOLD toward blocked-on-human)" >&2
   else
@@ -144,5 +126,4 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
   fi
 done
 
-echo "{\"status\": \"IDLE_TIMEOUT\", \"polls_completed\": $MAX_POLLS, \"total_seconds\": $((MAX_POLLS * POLL_INTERVAL))}"
-exit $EXIT_IDLE_TIMEOUT
+emit_idle_timeout
