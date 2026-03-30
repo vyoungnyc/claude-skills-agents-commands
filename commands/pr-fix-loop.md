@@ -78,14 +78,15 @@ This means `/pr-fix-loop` works on:
 
    ### Category B: Disagree — push back
    The comment is wrong, conflicts with a previous fix, misunderstands the code, or would introduce a regression. **Do NOT fix it.** Instead:
-   - Reply to the thread explaining why you disagree, what your current solution does, and why it's correct (or better).
+   - If from Codex: reply with your explanation of why you disagree, what your current solution does, and why it's correct (or better), then end with `@codex review the feedback`.
+   - If from another bot or a human user: reply with your explanation of why you disagree, what your current solution does, and why it's correct (or better).
    - Include specific reasoning: what the reviewer missed, what constraint they didn't account for, or how their suggestion conflicts with another fix.
    - **Do NOT resolve the thread.** Leave it open for the user or reviewer to respond.
    - Tag the comment internally as "disputed" so you track it.
 
    ### Category C: Unclear — ask for clarification
    The comment is ambiguous, could be interpreted multiple ways, or you're not sure if the fix would break something else. **Do NOT fix it.** Instead:
-   - If from Codex: reply with `@codex address that feedback` followed by your analysis of the issue, the options you see, and what you need clarified.
+   - If from Codex: reply with `@codex review the feedback` followed by your analysis of the issue, the options you see, and what you need clarified.
    - If from another bot (Cursor BugBot, GitLab Copilot, etc.): reply with your analysis and what you need clarified.
    - If from a human user: reply with your analysis and what you need clarified.
    - **Do NOT resolve the thread.** Leave it open.
@@ -95,9 +96,11 @@ This means `/pr-fix-loop` works on:
 
 3. **If there are NO unresolved threads**: skip to Phase 3 (poll).
 
-4. **Check for user/reviewer follow-ups on disputed threads:**
+4. **Check for bot/user follow-ups on disputed threads:**
    On each poll cycle, also check unresolved threads you previously replied to (Category B or C). Look for new replies:
-   - If a reply provides clarification or instructions **related to the original issue**, follow those instructions and fix accordingly.
+   - If a bot responds with a new comment that addresses your feedback and satisfies your concerns (e.g. concedes your point, provides a valid explanation, or the issue is resolved by context), **resolve the thread**.
+   - If a bot responds but its reply does NOT satisfy your concerns, re-triage the reply as Category B (push back again) or Category C (ask for further clarification) and continue the loop.
+   - If a user provides clarification or instructions **related to the original issue**, follow those instructions and fix accordingly.
    - If a reply is unrelated to the issue at hand (e.g. a different topic, a new feature request), ignore it — it's not a follow-up.
    - If the reviewer concedes or agrees with your pushback, resolve the thread.
    - If the user overrides your pushback with explicit instructions, implement what they asked.
