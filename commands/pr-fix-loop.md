@@ -45,6 +45,7 @@ Automate the cycle of: fix review comments → push → poll for new comments �
 2. Detect the current branch from `git branch --show-current`.
 3. Fetch the PR to confirm it exists and get its head branch.
 4. Check `git status` for uncommitted local changes.
+5. **Check for existing polling agents** — if a background polling agent from a previous `/pr-fix-loop` run is still active, stop it with `TaskStop` before proceeding. Only one polling agent should be active at a time.
 
 ## Phase 0: Assess starting state
 
