@@ -48,14 +48,29 @@ if echo "$NORMALIZED" | grep -qE 'git\s+push\s'; then
 
   # Block force push
   HAS_FORCE=false
+  HAS_FORCE_FLAG=false
+  HAS_PLUS_REFSPEC=false
   HAS_LEASE=false
-  echo "$NORMALIZED" | grep -qE '(^|\s)--force-with-lease(\s|$)' && HAS_LEASE=true
-  _STRIPPED_LEASE=$(echo "$NORMALIZED" | sed 's/--force-with-lease//g')
-  echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-[a-zA-Z]*f[a-zA-Z]*(\s|$))' && HAS_FORCE=true
+  echo "$NORMALIZED" | grep -qE '(^|[[:space:]])--force-with-lease([=[:space:]]|$)' && HAS_LEASE=true
+  _STRIPPED_LEASE=$(echo "$NORMALIZED" | sed -E 's/--force-with-lease(=[^[:space:]]+)?//g')
+  echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-[a-zA-Z]*f[a-zA-Z]*(\s|$))' && { HAS_FORCE=true; HAS_FORCE_FLAG=true; }
+
+  # Detect + refspec prefix (per-ref force push)
+  _PUSH_ARGS=$(echo "$NORMALIZED" | sed -E 's/^git[[:space:]]+push[[:space:]]*//')
+  if echo "$_PUSH_ARGS" | grep -qE '(^|[[:space:]])\+[^[:space:]]+'; then
+    HAS_FORCE=true
+    HAS_PLUS_REFSPEC=true
+  fi
 
   if $HAS_FORCE; then
-    if $HAS_LEASE; then
+    if $HAS_FORCE_FLAG && $HAS_LEASE; then
       REASON="Cannot combine --force with --force-with-lease: --force overrides the lease safety. Use --force-with-lease alone."
+    elif $HAS_PLUS_REFSPEC; then
+      if $HAS_LEASE; then
+        REASON="Force push via + refspec prefix overrides --force-with-lease safety. Remove the + prefix and rely on --force-with-lease instead."
+      else
+        REASON="Force push via + refspec prefix is not allowed. Use --force-with-lease if absolutely necessary, or rebase instead."
+      fi
     else
       REASON="Force push is not allowed. Use --force-with-lease if absolutely necessary, or rebase instead."
     fi
