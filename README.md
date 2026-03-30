@@ -19,13 +19,14 @@ A set of agent definitions, skills, commands, and hooks that turn Claude Code in
 1. Copy the contents to your project's `.claude/` directory:
 
 ```bash
-mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/scripts
+mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/scripts/lib
 cp -r agents/. .claude/agents/
 cp -r skills/. .claude/skills/
 cp -r commands/. .claude/commands/
 cp hooks/*.sh .claude/hooks/
+cp scripts/lib/*.sh .claude/scripts/lib/
 cp scripts/*.sh .claude/scripts/
-chmod +x .claude/hooks/*.sh .claude/scripts/*.sh
+chmod +x .claude/hooks/*.sh .claude/scripts/*.sh .claude/scripts/lib/*.sh
 ```
 
 2. Merge the hook configuration into your `.claude/settings.json`:
@@ -223,6 +224,7 @@ skills/
   sync-docs-with-implementation/
   update-plan-from-review-feedback/
 scripts/
+  lib/poll-common.sh         # Shared functions: PID file, validation, set-diff
   poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
 hooks/
