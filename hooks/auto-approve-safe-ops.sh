@@ -33,10 +33,9 @@ SAFE_PATTERNS=(
 )
 
 # Reject commands containing shell metacharacters that could chain, pipe, or redirect.
-# Newline check first (bash pattern), then all operators via regex.
-# Order matters: \|\| (||) must precede \| (|) so || isn't partially consumed.
-if [[ "$COMMAND" == *$'\n'* ]] || \
-   [[ "$COMMAND" =~ \&\&|\|\||\||;|\`|\$\(|\<\(|\>\(|\>\>|\>|\< ]]; then
+# Regex stored in variable to avoid bash syntax errors with special chars in [[ =~ ]].
+_UNSAFE_RE='&&|\|\||\||;|`|\$\(|<\(|>\(|>>|>|<'
+if [[ "$COMMAND" == *$'\n'* ]] || [[ "$COMMAND" =~ $_UNSAFE_RE ]]; then
   exit 0  # fall through to normal permission dialog
 fi
 

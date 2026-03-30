@@ -82,9 +82,21 @@ if echo "$COMMAND" | grep -qE 'git\s+commit'; then
     COMMIT_MSG=$(echo "$COMMAND" | sed -n "/<<[[:space:]]*['\"]\\{0,1\\}EOF['\"]\\{0,1\\}/,/^[[:space:]]*EOF/{/EOF/d;/^[[:space:]]*$/d;p;}" | head -1 | sed 's/^[[:space:]]*//')
   fi
 
-  if [ -n "$COMMIT_MSG" ]; then
-    # Check conventional commit format: type(scope): subject
-    if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|test|docs|chore|ci|perf|build|style|revert)(\([a-zA-Z0-9_-]+\))?(!)?:\s+.+'; then
+  if [ -z "$COMMIT_MSG" ]; then
+    # No message extractable — editor-based commit or --amend without -m.
+    # Deny so the user provides an inline message we can validate.
+    jq -n '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "Commit must include an inline message (-m or heredoc) so conventional format can be validated. Use: git commit -m \"type(scope): subject\""
+      }
+    }'
+    exit 0
+  fi
+
+  # Check conventional commit format: type(scope): subject
+  if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|test|docs|chore|ci|perf|build|style|revert)(\([a-zA-Z0-9_-]+\))?(!)?:\s+.+'; then
       jq -n --arg msg "$COMMIT_MSG" '{
         hookSpecificOutput: {
           hookEventName: "PreToolUse",

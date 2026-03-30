@@ -89,11 +89,12 @@ Or invoke the orchestrator directly with a task description.
 | fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
-### Commands (4)
+### Commands (5)
 
 | Command | Purpose |
 |---|---|
 | /feature-autopilot | Full automated workflow from spec to docs (sequential or parallel mode) |
+| /pr-fix-loop | Fix bot review comments, push, trigger re-review, poll until clean |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
 | /frontend-test-runner | Run frontend tests, analyze results, route failures |
 | /git | Branch management, commits, PRs, feedback handling |
@@ -169,6 +170,7 @@ commands/
   feature-autopilot.md
   frontend-test-runner.md
   git.md
+  pr-fix-loop.md
 docs/
   AGENT_TEAMS_GUIDE.md
 skills/
