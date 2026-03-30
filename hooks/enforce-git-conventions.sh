@@ -17,7 +17,8 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 GIT_PREFIX='git\s+(-[a-zA-Z]+\s+\S+\s+)*'
 
 # --- Block force push ---
-if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*--force|${GIT_PREFIX}push\s+.*-f\b"; then
+if echo "$COMMAND" | grep -qE "${GIT_PREFIX}push\s+.*(--force\b|-f\b)" && \
+   ! echo "$COMMAND" | grep -qE '\-\-force-with-lease'; then
   jq -n '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
