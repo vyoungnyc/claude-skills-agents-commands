@@ -10,6 +10,10 @@
 # 5. Block --no-verify
 
 INPUT=$(cat)
+
+# Fast path: skip jq parsing entirely for non-git commands
+[[ "$INPUT" == *'"git '* ]] || exit 0
+
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 # Normalize: strip git global options so enforcement matches the subcommand.

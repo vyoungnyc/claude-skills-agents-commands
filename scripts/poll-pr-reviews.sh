@@ -24,7 +24,7 @@ NAME="${REPO##*/}"
 
 acquire_pidfile "/tmp/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
 
-BOT_PATTERNS="$BASE_BOT_PATTERNS|^gitlab-copilot"
+BOT_PATTERNS="$BASE_BOT_PATTERNS"
 
 SNAPSHOT=$(gh api graphql -f query="
   query {

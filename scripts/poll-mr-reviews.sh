@@ -19,7 +19,12 @@ fi
 require_positive_int "$POLL_INTERVAL" "poll_interval_sec"
 require_positive_int "$MAX_POLLS" "max_polls"
 
-PROJECT_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|\.git$||' | sed -E 's|^.*://[^/]+/||; s|^[^:]+:||' | tr '/' '-')
+REMOTE_URL=$(git remote get-url origin 2>/dev/null | sed -E 's|\.git$||')
+if [[ "$REMOTE_URL" == *"://"* ]]; then
+  PROJECT_SLUG=$(echo "$REMOTE_URL" | sed -E 's|^[a-z]+://[^/]+/||' | tr '/' '-')
+else
+  PROJECT_SLUG=$(echo "$REMOTE_URL" | sed -E 's|^[^:]+:||' | tr '/' '-')
+fi
 acquire_pidfile "/tmp/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
 
 BOT_PATTERNS="$BASE_BOT_PATTERNS|^gitlab-duo|^gitlab-code-review"

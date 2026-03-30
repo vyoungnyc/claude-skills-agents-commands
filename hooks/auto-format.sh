@@ -21,18 +21,14 @@ esac
 # Track what ran
 FORMATTED=""
 
-# Run Prettier if available
-if [ -f "node_modules/.bin/prettier" ] || command -v prettier &>/dev/null; then
-  if npx prettier --write "$FILE_PATH" 2>/dev/null; then
-    FORMATTED="prettier"
-  fi
+# Run Prettier (npx handles missing tool gracefully)
+if npx prettier --write "$FILE_PATH" 2>/dev/null; then
+  FORMATTED="prettier"
 fi
 
-# Run ESLint fix if available
-if [ -f "node_modules/.bin/eslint" ] || command -v eslint &>/dev/null; then
-  if npx eslint --fix "$FILE_PATH" 2>/dev/null; then
-    FORMATTED="${FORMATTED:+$FORMATTED+}eslint"
-  fi
+# Run ESLint fix (npx handles missing tool gracefully)
+if npx eslint --fix "$FILE_PATH" 2>/dev/null; then
+  FORMATTED="${FORMATTED:+$FORMATTED+}eslint"
 fi
 
 # Report what happened
