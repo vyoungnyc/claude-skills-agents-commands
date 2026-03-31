@@ -40,8 +40,8 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
    - If user provides a file path:
      - Read the file.
      - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
-     - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
-     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), **verify the PRD exists at the canonical path before proceeding**, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), **verify the PRD exists at the canonical path before proceeding**, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
      - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
    - If user says no (or just provides a topic): proceed to step 2.
 
@@ -350,9 +350,10 @@ if [ -z "$FEATURE_ID" ] || [[ ! "$FEATURE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
   exit 1
 fi
 
-# Guard: verify resolved path stays under docs/features/
-RESOLVED=$(cd "$(dirname "$PRD_PATH")" 2>/dev/null && pwd)
-if [[ "$RESOLVED" != *"/docs/features/"* ]]; then
+# Guard: verify PRD_PATH is the canonical form (defense-in-depth — FEATURE_ID already validated above)
+# Uses prefix match anchored to repo root, not substring match. Does not cd (dir may not exist yet).
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+if [[ "$REPO_ROOT/$PRD_PATH" != "$REPO_ROOT/docs/features/$FEATURE_ID/"* ]]; then
   echo '{"verdict":"error","summary":"PRD_PATH resolves outside docs/features/","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
   exit 1
 fi
@@ -392,15 +393,19 @@ Output strict JSON:
 }"
 
 if [ -n "$CODEX" ]; then
-  OUTPUT=$(node "$CODEX" adversarial-review "$FOCUS" 2>/dev/null)
+  # Pass FOCUS via temp file to avoid shell expansion risks with multi-line positional arguments
+  FOCUS_FILE=$(mktemp "${TMPDIR:-/tmp}/prd-review-focus.XXXXXX")
+  printf '%s' "$FOCUS" > "$FOCUS_FILE"
+  OUTPUT=$(node "$CODEX" adversarial-review "$FOCUS_FILE" 2>/dev/null)
   EXIT=$?
+  rm -f "$FOCUS_FILE"
   if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "$OUTPUT"
   else
     echo "{\"verdict\":\"error\",\"summary\":\"Codex adversarial review failed (exit $EXIT)\",\"findings\":[],\"missing_acceptance_tests\":[],\"open_questions\":[]}"
   fi
 else
-  echo "CODEX_UNAVAILABLE"
+  echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
 fi
 ```
 
@@ -423,7 +428,7 @@ fi
 - `block` / `reject` / `fail` → `block`
 - Any unrecognized verdict → treat as `block` (fail closed)
 
-If `verdict` is `approve` (or no findings), state: "Adversarial review passed — no material issues found." and proceed immediately.
+If `verdict` is `approve` **and** the `findings`, `missing_acceptance_tests`, and `open_questions` arrays are all empty, state: "Adversarial review passed — no material issues found." and proceed immediately. If `verdict` is `approve` but any of those arrays contain entries, present them as informational findings and ask the user to acknowledge before proceeding.
 
 For `needs_revision` or `block`, present each finding grouped by severity (high → medium → low):
 
@@ -447,6 +452,8 @@ Update the PRD at the canonical path (`docs/features/{feature_id}/PRD.md`) on di
 Do NOT proceed to `/execute-prd` until every finding has been explicitly addressed, deferred, or rejected.
 If `verdict` is `block`, resolve all high-severity findings before allowing `needs_revision` items to be deferred.
 
+**Re-approval after adversarial edits:** If the PRD was modified during adversarial review (any finding was addressed or deferred with edits), present the final PRD diff and require explicit user re-approval: "The PRD was modified during adversarial review. Here are the changes: [show diff]. Do you approve the updated PRD?" Do NOT invoke `/execute-prd` until the user explicitly re-approves the modified document.
+
 ---
 
 ## Approval gate
@@ -455,8 +462,8 @@ After presenting the full PRD:
 
 1. Ask: "Does this accurately capture what we're building? Any changes before I save it?"
 2. Iterate on feedback until the user explicitly approves: "Yes", "Approved", "Looks good", "Ship it", etc.
-3. On approval: run the **Adversarial Review Gate** above.
-4. After all adversarial findings are resolved: invoke `/execute-prd`:
+3. On approval: save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed), create branch if not already on one (verify `git checkout -b` succeeds), then run the **Adversarial Review Gate** above.
+4. After all adversarial findings are resolved and user re-approves the final PRD: invoke `/execute-prd`:
    ```
    /execute-prd {feature_id} docs/features/{feature_id}/PRD.md
    ```

@@ -46,7 +46,7 @@ Before launching reviewers:
 
 ## Step 3: Launch all 7 reviewers in parallel
 
-In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff and CLAUDE.md file paths to each.
+In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, and any clarified intent context from Step 2 to each.
 
 ---
 
@@ -132,9 +132,9 @@ fi
 ```
 `Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
-**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, read the Codex background task outputs. If a Codex task is still running, wait for it before proceeding to dedup. If `verdict` is `"error"`, note it in the final summary as a skipped reviewer — do not treat errors as clean approvals. Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
+**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, check the Codex background task outputs. If Codex tasks are still running, proceed to dedup and initial presentation with Claude findings only — Codex results will be integrated incrementally per Step 6. If `verdict` is `"error"`, note it in the final summary as a skipped reviewer — do not treat errors as clean approvals. Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
 
-**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed.
+**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed. **Exception:** "Codex companion not found" is a **skipped** reviewer (optional dependency not installed), not a failed one — do not count it toward the failure threshold or downgrade the verdict. Only count runtime errors or timeouts from an installed Codex as failures.
 
 **Codex output format:** Codex may return structured JSON (with `confidence` 0–1 per finding) or rendered markdown. Handle both:
 - **JSON output:** Extract `confidence` per finding, compute `score = confidence × 100`.
@@ -171,6 +171,7 @@ Before dedup, normalize Codex findings (#6 and #7) so they have the same `score`
 - **Markdown output without `confidence`:** assign `score` from severity: `[P0]`/`blocker` → 100, `[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40. Fail closed on unknown severities — assign 85 and flag for manual review.
 - Add the `score` field to each Codex finding object.
 - All findings from all 7 agents **must** have a `score` (0–100) field before entering Step 5.
+- **Scope tagging:** If the user-specified scope is narrower than branch-vs-default, tag each Codex finding with `scope: "branch-wide"`. These findings are excluded from dedup and the primary verdict in Step 5 — present them in a separate section per Step 6.
 
 ## Step 5: Deduplicate and merge
 
@@ -185,7 +186,7 @@ Instructions for the haiku agent:
 
 Sort findings by `score` descending. **Show everything — do not filter.** The user decides which items to fix.
 
-Present Claude agent findings (#1–#5) and any scoped Codex findings immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have.
+Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have. Codex findings will be added incrementally once background tasks complete (see Incremental Codex results below).
 
 ```
 ## Review: <short description of what changed>
@@ -208,6 +209,7 @@ Description and recommendation.
 <Only shown when user scope is narrower than branch-vs-default. Omit section if all Codex findings are in scope.>
 
 ### Verdict: `approve` | `approve-with-nits` | `changes-requested`
+<If Codex reviews are still pending, label as: "Verdict (preliminary — Codex pending): ..." and note that the user should not act on a preliminary verdict. Present the final verdict after all reviewers complete.>
 ```
 
 **Incremental Codex results:** When Codex background tasks complete (after initial presentation), normalize their findings per Step 4.5, deduplicate against existing findings, and **append new Codex findings to the presented list**. Update the verdict if new high-confidence findings change it. Clearly mark additions: "Codex review completed — N new findings added."

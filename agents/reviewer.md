@@ -57,6 +57,8 @@ Use this mode when reviewing a full diff or PR. Runs 5 independent parallel Clau
 
 > **Note:** Codex reviewers (#6 and #7) are intentionally excluded from this agent — they require the Codex plugin and are user-facing. The 7-angle variant (5 Claude + 2 Codex) is available via the `/codereview` command. If adding Codex here in the future, also normalize Codex `confidence` (0–1) to `score` (0–100) before the dedup step, matching the approach in `codereview.md`.
 
+> **Read-only constraint:** The `Agent` tool is granted solely for spawning review sub-agents in PR Review Mode. All spawned sub-agents must use `permissionMode: plan` or `model: haiku` — never spawn write-capable agents (no `Edit`, `Write`, or `NotebookEdit` tools). The reviewer must not use `Agent` to spawn implementation agents (`backend-coder`, `frontend-coder`, etc.).
+
 ### Step 1: Gather context
 
 - Get the full diff
@@ -92,7 +94,7 @@ Return `[]` if no findings. Never include: pre-existing issues, style issues a l
 
 **Agent #2 — Bug scan (changed lines only)**
 
-> You are a shallow bug scanner. Read only the changed lines in the diff. Look for: logic errors, off-by-ones, null/undefined dereferences, broken error handling, race conditions, data loss risks. Focus only on changed lines — do not read extra context. Report large bugs only. Return a JSON array of findings. Return [] if no bugs found.
+> You are a shallow bug scanner. Read only the changed lines in the diff. Look for: logic errors, off-by-ones, null/undefined dereferences, broken error handling, race conditions, data loss risks. Focus only on changed lines. Report large bugs only. Exception: you may flag issues on unchanged lines if you can show direct causal linkage to the diff (e.g., a changed function signature breaks an unchanged caller). Return a JSON array of findings. Return [] if no bugs found.
 
 **Agent #3 — Git blame and history**
 
@@ -126,7 +128,7 @@ Each haiku agent returns: `{"score": <0-100>, "reasoning": "<one sentence>"}`
 
 Spawn a **single haiku agent** with all scored findings.
 
-> Deduplicate findings from 5 independent reviewers. All input findings must have a numeric `score` field (0–100) — reject any finding missing this field. Group findings describing the same issue (same file + overlapping lines, or semantically equivalent problem). For each group: combine body text, union source labels, keep highest severity, keep highest score. Return deduplicated JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments).
+> Deduplicate findings from 5 independent reviewers. All input findings must have a numeric `score` field (0–100). If a finding is missing its score field (e.g., haiku scoring agent failed), assign it a default score of 75 and mark it with `score_source: "fallback"` — do not silently drop findings. Group findings describing the same issue (same file + overlapping lines, or semantically equivalent problem). For each group: combine body text, union source labels, keep highest severity, keep highest score. Return deduplicated JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments).
 
 ### Step 5: Return all findings
 
@@ -136,6 +138,8 @@ Sort by `score` descending. Return **all findings** — do not filter. Include t
 - Any `critical` or `high` at score ≥ 75 → `changes-requested`
 - Only `medium`/`low` or all scores < 75 → `approve-with-nits`
 - No findings → `approve`
+
+**Reviewer failure adjustment:** If any sub-agent errors or returns no valid JSON, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 sub-agents failed, force `changes-requested` with a note that the review had insufficient coverage.
 
 ---
 
