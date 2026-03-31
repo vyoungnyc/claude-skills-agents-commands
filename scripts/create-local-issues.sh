@@ -89,7 +89,7 @@ if ! jq -e '.' <<< "$PLAN_STEPS" >/dev/null 2>&1; then
   exit $EXIT_USAGE
 fi
 STEP_COUNT=$(jq 'length' <<< "$PLAN_STEPS")
-ISSUE_MAP="{}"
+ISSUE_MAP_FILE=$(mktemp)
 TASK_LIST=""
 DATE=$(date +%Y-%m-%d)
 
@@ -107,19 +107,14 @@ for i in $(seq 0 $((STEP_COUNT - 1))); do
   ISSUE_NUM=$((i + 1))
   ISSUE_FILE="$PLANS_DIR/issue-$(printf '%04d' $ISSUE_NUM).md"
 
-  STEP=$(echo "$PLAN_STEPS" | jq ".[$i]")
-  STEP_ID=$(echo "$STEP" | jq -r '.step_id')
-  TITLE=$(echo "$STEP" | jq -r '.title')
-  COMPLEXITY=$(echo "$STEP" | jq -r '.complexity // "medium"')
-  BATCH_HINT=$(echo "$STEP" | jq -r '.batch_hint // "general"')
-  FILE_DOMAIN=$(echo "$STEP" | jq -r '.file_domain | join(", ")')
-  DEPS=$(echo "$STEP" | jq -r '.dependencies | if length > 0 then join(", ") else "none" end')
+  # Extract all fields in one jq call (avoids 7 separate jq forks per step)
+  eval "$(jq -r --argjson i "$i" '.[$i] | @sh "STEP_ID=\(.step_id) TITLE=\(.title) COMPLEXITY=\(.complexity // "medium") BATCH_HINT=\(.batch_hint // "general") FILE_DOMAIN=\(.file_domain | join(", ")) DEPS=\(.dependencies | if length > 0 then join(", ") else "none" end)"' <<< "$PLAN_STEPS")"
 
   TITLE_ESCAPED=$(yaml_escape "$TITLE")
   STEP_ID_ESCAPED=$(yaml_escape "$STEP_ID")
 
   # Build acceptance criteria checkboxes
-  AC_LINES=$(echo "$STEP" | jq -r '.acceptance_criteria[]? | "- [ ] " + .')
+  AC_LINES=$(jq -r --argjson i "$i" '.[$i].acceptance_criteria[]? | "- [ ] " + .' <<< "$PLAN_STEPS")
   if [ -z "$AC_LINES" ]; then
     AC_LINES="- [ ] (no acceptance criteria defined)"
   fi
@@ -150,8 +145,8 @@ ${AC_LINES}
 _Implementation notes and progress will be added here._
 ISSUE_EOF
 
-  # Add to issue map
-  ISSUE_MAP=$(echo "$ISSUE_MAP" | jq --arg sid "$STEP_ID" --arg path "$ISSUE_FILE" '. + {($sid): $path}')
+  # Add to issue map (file-based accumulation avoids O(n²) jq rebuild)
+  echo "\"$STEP_ID\": \"$ISSUE_FILE\"" >> "$ISSUE_MAP_FILE"
 
   # Add to epic task list
   TASK_LIST="${TASK_LIST}
@@ -167,18 +162,11 @@ if [ -n "$ROADMAP_FILE" ] && [ -f "$ROADMAP_FILE" ]; then
 | Phase | Status | Summary |
 |-------|--------|---------|"
   ROADMAP_DATA=$(cat "$ROADMAP_FILE")
-  PHASE_COUNT=$(echo "$ROADMAP_DATA" | jq 'length')
-  for j in $(seq 0 $((PHASE_COUNT - 1))); do
-    PHASE_NAME=$(echo "$ROADMAP_DATA" | jq -r ".[$j].phase")
-    PHASE_SUMMARY=$(echo "$ROADMAP_DATA" | jq -r ".[$j].summary")
-    if [ "$j" -eq 0 ]; then
-      ROADMAP_SECTION="${ROADMAP_SECTION}
-| ${PHASE_NAME} | In Progress | ${PHASE_SUMMARY} |"
-    else
-      ROADMAP_SECTION="${ROADMAP_SECTION}
-| ${PHASE_NAME} | Planned | ${PHASE_SUMMARY} |"
-    fi
-  done
+  ROADMAP_ROWS=$(jq -r 'to_entries | .[] | "| \(.value.phase) | \(if .key == 0 then "In Progress" else "Planned" end) | \(.value.summary) |"' <<< "$ROADMAP_DATA" 2>/dev/null || true)
+  if [ -n "$ROADMAP_ROWS" ]; then
+    ROADMAP_SECTION="${ROADMAP_SECTION}
+${ROADMAP_ROWS}"
+  fi
 fi
 
 # Create epic (issue-0000.md)
@@ -211,5 +199,9 @@ ${ROADMAP_SECTION}
 _Updated automatically as issues are closed._
 EPIC_EOF
 
+# Build ISSUE_MAP from accumulated entries (avoids O(n²) jq rebuilding per iteration)
+ISSUE_MAP=$(jq -n "{ $(paste -sd',' "$ISSUE_MAP_FILE") }")
+rm -f "$ISSUE_MAP_FILE"
+
 # Output JSON (same shape as create-github-issues.sh)
-echo "$ISSUE_MAP" | jq --arg epic "$EPIC_FILE" '{epic: $epic, issues: .}'
+jq -n --arg epic "$EPIC_FILE" --argjson issues "$ISSUE_MAP" '{epic: $epic, issues: $issues}'

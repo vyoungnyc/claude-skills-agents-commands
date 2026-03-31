@@ -71,12 +71,12 @@ if [ ! -f "$PLAN_STEPS_FILE" ]; then
 fi
 
 PLAN_STEPS=$(cat "$PLAN_STEPS_FILE")
-if ! echo "$PLAN_STEPS" | jq -e '.' >/dev/null 2>&1; then
+if ! jq -e '.' <<< "$PLAN_STEPS" >/dev/null 2>&1; then
   echo '{"error": "Plan steps file is not valid JSON"}' >&2
   exit $EXIT_USAGE
 fi
 
-STEP_COUNT=$(echo "$PLAN_STEPS" | jq 'length')
+STEP_COUNT=$(jq 'length' <<< "$PLAN_STEPS")
 if [ "$STEP_COUNT" -lt 1 ]; then
   echo '{"error": "Plan steps must contain at least one step"}' >&2
   exit $EXIT_USAGE
@@ -133,11 +133,10 @@ parse_issue_number() {
 
 echo "[$(date +"%H:%M:%S")] Ensuring labels exist on $REPO..." >&2
 LABELS_TO_CREATE=("epic" "feature:${FEATURE_ID}")
-for i in $(seq 0 $((STEP_COUNT - 1))); do
-  BATCH_HINT=$(jq -r --argjson i "$i" '.[$i].batch_hint // "general"' <<< "$PLAN_STEPS")
-  COMPLEXITY=$(jq -r --argjson i "$i" '.[$i].complexity // "medium"' <<< "$PLAN_STEPS")
-  LABELS_TO_CREATE+=("domain:${BATCH_HINT}" "complexity:${COMPLEXITY}")
-done
+readarray -t STEP_LABELS < <(
+  jq -r '[.[] | "domain:\(.batch_hint // "general")", "complexity:\(.complexity // "medium")"] | unique | .[]' <<< "$PLAN_STEPS"
+)
+LABELS_TO_CREATE+=("${STEP_LABELS[@]}")
 # Deduplicate and create
 printf '%s\n' "${LABELS_TO_CREATE[@]}" | sort -u | while IFS= read -r label; do
   gh label create "$label" --repo "$REPO" --force 2>/dev/null || true

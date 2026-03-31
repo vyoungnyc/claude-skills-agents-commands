@@ -109,12 +109,12 @@ if [ ! -f "$BATCH_CONFIG_FILE" ]; then
 fi
 
 BATCH_CONFIG=$(cat "$BATCH_CONFIG_FILE")
-if ! echo "$BATCH_CONFIG" | jq -e '.' >/dev/null 2>&1; then
+if ! jq -e '.' <<< "$BATCH_CONFIG" >/dev/null 2>&1; then
   echo '{"error": "Batch config file is not valid JSON"}' >&2
   exit $EXIT_USAGE
 fi
 
-BATCH_COUNT=$(echo "$BATCH_CONFIG" | jq 'length')
+BATCH_COUNT=$(jq 'length' <<< "$BATCH_CONFIG")
 if [ "$BATCH_COUNT" -lt 1 ]; then
   echo '{"error": "Batch config must contain at least one batch"}' >&2
   exit $EXIT_USAGE
