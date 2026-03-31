@@ -142,15 +142,54 @@ Collect both outputs before proceeding. If blocking issues are found:
 - Dispatch a new swarm batch (or subagents) for just the fix steps.
 - Re-run streaming review after fixes are applied.
 
-### 6. maxTurns recovery
+### 6. Failure recovery (tiered)
 
-After swarm dispatch, monitor for session failures:
-- Check the TaskList for tasks that are `in_progress` but have no recent activity (abandoned tasks).
-- For abandoned tasks:
-  - If the session JSON result contains a `session_id`: use `claude --resume "session-id" -p "Continue where you left off"` to recover.
-  - If no session ID is available: create a new continuation task from the last known good state and spawn a new session.
-- Reset abandoned tasks to `pending` before spawning recovery sessions.
-- Spawn the recovery batch as a new swarm batch.
+After swarm dispatch, inspect the JSON output for failed sessions. Each session includes `failure_reason` and `model` fields. Apply recovery based on the failure type:
+
+#### a) `max_turns` — ran out of turns before completing
+
+Upgrade to a better model and retry:
+```
+haiku  → retry with sonnet (30 turns)
+sonnet → retry with opus (40 turns)
+opus   → escalate to user (task may need scope reduction)
+```
+Respawn as a new swarm batch with the upgraded model and the same step/issue context.
+
+#### b) `tool_error` — unrecoverable tool failure (git conflict, build error, test loop)
+
+Escalate to the user immediately via `AskUserQuestion`:
+- Report which batch failed, the error output, and the steps involved.
+- Ask the user to resolve the underlying issue or adjust the plan.
+- Do not retry automatically — tool errors indicate a problem the model cannot fix alone.
+
+#### c) `context_overflow` — session exhausted its context window
+
+Retry with `opus` using the 1M token context model:
+```
+Any model → retry with opus (1M context, 40 turns)
+```
+If already running opus and still overflowing, escalate to the user — the task scope needs splitting into smaller steps.
+
+#### d) `infrastructure` — network timeout, API rate limit, CLI crash
+
+Resume the existing session if possible:
+```
+claude --resume "{session_id}" -p "Continue where you left off"
+```
+If resume fails (no session ID or second failure), escalate to the user — the infrastructure issue needs manual resolution.
+
+#### Recovery flow summary
+```
+Session fails → check failure_reason:
+  max_turns      → upgrade model (haiku→sonnet→opus) → retry
+                   already opus? → escalate to user
+  tool_error     → escalate to user immediately
+  context_overflow → retry with opus 1M
+                     already opus? → escalate to user
+  infrastructure → claude --resume (same model)
+                   fails again? → escalate to user
+```
 
 ### 7. Documentation (after gate steps pass)
 
@@ -220,7 +259,7 @@ Dispatch decision:
   2 steps → parallel subagents (worktree isolation each)
   3+ steps → swarm: scripts/swarm-dispatch.sh
   ↓
-[maxTurns recovery if any session fails]
+[tiered recovery: max_turns→upgrade model, tool_error→user, context_overflow→opus 1M, infra→resume]
   ↓
 reviewer + security-researcher (parallel) — streaming review
   ↓

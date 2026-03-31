@@ -206,10 +206,14 @@ The script:
 
 **Dependent batches** (steps with dependencies on the above): run as a second swarm round after the first merges cleanly.
 
-**maxTurns recovery:** if any session fails or shows abandoned tasks:
-- Check the TaskList for `in_progress` tasks with no recent activity.
-- If session JSON has `session_id`: `claude --resume "session-id" -p "Continue where you left off"`.
-- Otherwise: reset task to `pending`, spawn a new session for just that step.
+**Failure recovery (tiered):** The swarm JSON output includes `failure_reason` and `model` per session. Apply recovery based on the failure type:
+
+| `failure_reason` | Action |
+|---|---|
+| `max_turns` | Upgrade model (haiku→sonnet→opus) and retry. If already opus, escalate to user. |
+| `tool_error` | Escalate to user immediately — unrecoverable without human input. |
+| `context_overflow` | Retry with opus (1M context). If already opus, escalate to user. |
+| `infrastructure` | `claude --resume "{session_id}"` with same model. If fails again, escalate to user. |
 
 ---
 

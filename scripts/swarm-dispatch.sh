@@ -192,8 +192,57 @@ select_turns() {
 
 declare -a SESSION_PIDS=()
 declare -a SESSION_NAMES=()
+declare -a SESSION_MODELS=()
 declare -a WORKTREE_PATHS=()
 declare -a WORKTREE_BRANCHES=()
+
+# ---------------------------------------------------------------------------
+# Failure classification — examines session output + logs to determine cause
+# ---------------------------------------------------------------------------
+
+classify_failure() {
+  local exit_code="$1" output_file="$2" log_file="$3" turns="$4"
+  local output="" logs=""
+
+  [ -f "$output_file" ] && output=$(cat "$output_file" 2>/dev/null || true)
+  [ -f "$log_file" ] && logs=$(cat "$log_file" 2>/dev/null || true)
+  local combined="$output $logs"
+
+  # Context window overflow — look for token/context limit signals
+  if echo "$combined" | grep -qiE '(context.*(window|limit|overflow|exceeded)|token.*(limit|exceeded|maximum)|too.*(long|large).*context)'; then
+    echo "context_overflow"
+    return
+  fi
+
+  # Infrastructure — network, API, or CLI errors
+  if echo "$combined" | grep -qiE '(ECONNREFUSED|ETIMEDOUT|ENOTFOUND|network.error|connection.refused|rate.limit|503|502|429|API.error|socket.hang.up|fetch.failed)'; then
+    echo "infrastructure"
+    return
+  fi
+
+  # maxTurns exhaustion — session ran out of turns (non-zero exit, high turn usage)
+  # The claude CLI exits non-zero when max turns is reached
+  local turn_count
+  turn_count=$(echo "$output" | jq -r '.num_turns // 0' 2>/dev/null || echo "0")
+  if [ "$exit_code" -ne 0 ] && [ "$turn_count" -ge "$turns" ]; then
+    echo "max_turns"
+    return
+  fi
+
+  # Also classify as max_turns if the output mentions it
+  if echo "$combined" | grep -qiE '(max.?turns|turn.limit|reached.*maximum.*turns)'; then
+    echo "max_turns"
+    return
+  fi
+
+  # Tool error — anything else with non-zero exit
+  if [ "$exit_code" -ne 0 ]; then
+    echo "tool_error"
+    return
+  fi
+
+  echo "success"
+}
 
 for i in $(seq 0 $((BATCH_COUNT - 1))); do
   BATCH=$(echo "$BATCH_CONFIG" | jq ".[$i]")
@@ -249,6 +298,7 @@ for i in $(seq 0 $((BATCH_COUNT - 1))); do
 
   SESSION_PIDS+=($!)
   SESSION_NAMES+=("$BATCH_NAME")
+  SESSION_MODELS+=("$MODEL")
   WORKTREE_PATHS+=("$WORKTREE_PATH")
   WORKTREE_BRANCHES+=("$WORKTREE_BRANCH")
 done
@@ -370,10 +420,16 @@ for i in "${!SESSION_NAMES[@]}"; do
   COST=$(echo "$SESSION_JSON" | jq -r '.cost_usd // null' 2>/dev/null || echo "null")
   DURATION=$(echo "$SESSION_JSON" | jq -r '.duration_ms // null' 2>/dev/null || echo "null")
   RESULT=$(echo "$SESSION_JSON" | jq -r '.result // null' 2>/dev/null || echo "null")
+  MODEL_USED="${SESSION_MODELS[$i]:-unknown}"
+
+  # Classify failure reason for tiered recovery
+  LOG_FILE="${WORK_DIR}/session_${i}_${NAME}.log"
+  TURNS_USED=$(select_turns "$(echo "$BATCH_CONFIG" | jq -r ".[$i].complexity // \"medium\"")")
+  FAILURE_REASON=$(classify_failure "$ACTUAL_EXIT" "$OUTPUT_FILE" "$LOG_FILE" "$TURNS_USED")
 
   MERGE_RESULT="${MERGE_RESULTS[$i]:-{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"unknown\"}}"
 
-  ENTRY="{\"batch\": \"$NAME\", \"exit_code\": $ACTUAL_EXIT, \"session_id\": \"$SESSION_ID\", \"cost_usd\": $COST, \"duration_ms\": $DURATION, \"result\": $(echo "$RESULT" | jq -Rs 'if . == "null\n" then null else . end'), \"merge\": $MERGE_RESULT}"
+  ENTRY="{\"batch\": \"$NAME\", \"exit_code\": $ACTUAL_EXIT, \"model\": \"$MODEL_USED\", \"failure_reason\": \"$FAILURE_REASON\", \"session_id\": \"$SESSION_ID\", \"cost_usd\": $COST, \"duration_ms\": $DURATION, \"result\": $(echo "$RESULT" | jq -Rs 'if . == "null\n" then null else . end'), \"merge\": $MERGE_RESULT}"
 
   if [ $i -gt 0 ]; then
     RESULTS_JSON="${RESULTS_JSON},"
