@@ -83,6 +83,12 @@ ISSUE_MAP="{}"
 TASK_LIST=""
 DATE=$(date +%Y-%m-%d)
 
+# Refuse to overwrite existing issue files unless FORCE_OVERWRITE=1
+if [ "${FORCE_OVERWRITE:-0}" != "1" ] && ls "$PLANS_DIR"/issue-*.md &>/dev/null; then
+  echo "{\"error\": \"Issue files already exist in $PLANS_DIR/. Set FORCE_OVERWRITE=1 to overwrite, or delete them first.\"}" >&2
+  exit 1
+fi
+
 # Create child issues first (issue-0001.md, issue-0002.md, ...)
 for i in $(seq 0 $((STEP_COUNT - 1))); do
   ISSUE_NUM=$((i + 1))

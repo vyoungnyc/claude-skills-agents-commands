@@ -280,13 +280,18 @@ for i in $(seq 0 $((BATCH_COUNT - 1))); do
   # Register worktree for cleanup on unexpected exit (removed after merge)
   register_cleanup "$WORKTREE_PATH"
 
-  # Remove stale worktree if it exists from a prior run
+  # Remove stale worktree/branch from a prior run — warn if the branch had unique commits
   if [ -d "$WORKTREE_PATH" ]; then
     echo "[$(date +"%H:%M:%S")] Removing stale worktree at $WORKTREE_PATH" >&2
     git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_PATH" 2>/dev/null || rm -rf "$WORKTREE_PATH"
   fi
-  # Remove stale worktree branch if it exists
-  git -C "$REPO_ROOT" branch -D "$WORKTREE_BRANCH" 2>/dev/null || true
+  if git -C "$REPO_ROOT" rev-parse --verify "refs/heads/$WORKTREE_BRANCH" >/dev/null 2>&1; then
+    STALE_AHEAD=$(git -C "$REPO_ROOT" rev-list "$FEATURE_BRANCH..$WORKTREE_BRANCH" --count 2>/dev/null || echo "0")
+    if [ "$STALE_AHEAD" -gt 0 ]; then
+      echo "[$(date +"%H:%M:%S")] WARNING: Deleting stale branch '$WORKTREE_BRANCH' with $STALE_AHEAD unmerged commit(s)" >&2
+    fi
+    git -C "$REPO_ROOT" branch -D "$WORKTREE_BRANCH" 2>/dev/null || true
+  fi
 
   # Create worktree off the feature branch
   if ! git -C "$REPO_ROOT" worktree add -b "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$FEATURE_BRANCH" 2>&1 | tee -a "$LOG_FILE" >&2; then
@@ -375,6 +380,21 @@ for i in "${!WORKTREE_BRANCHES[@]}"; do
   if [ "$EXIT_CODE" -ne 0 ]; then
     echo "[$(date +"%H:%M:%S")] Skipping merge for '$NAME' — session exited with code $EXIT_CODE" >&2
     MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"session_failed\", \"exit_code\": $EXIT_CODE}")
+    git -C "$REPO_ROOT" worktree remove --force "$PATH_WT" 2>/dev/null || rm -rf "$PATH_WT"
+    continue
+  fi
+
+  # Check for uncommitted changes in the worktree — auto-commit so edits aren't silently dropped
+  if ! git -C "$PATH_WT" diff --quiet 2>/dev/null || ! git -C "$PATH_WT" diff --cached --quiet 2>/dev/null; then
+    echo "[$(date +"%H:%M:%S")] Worktree '$NAME' has uncommitted changes — auto-committing" >&2
+    git -C "$PATH_WT" add -A 2>/dev/null
+    git -C "$PATH_WT" commit -m "swarm(${FEATURE_ID}): auto-commit uncommitted changes from batch '${NAME}'" 2>/dev/null || true
+  fi
+
+  # Skip merge if the worktree branch has no new commits vs the feature branch
+  if [ "$(git -C "$REPO_ROOT" rev-parse "$BRANCH")" = "$(git -C "$REPO_ROOT" merge-base "$BRANCH" "$FEATURE_BRANCH")" ]; then
+    echo "[$(date +"%H:%M:%S")] Skipping merge for '$NAME' — no new commits on worktree branch" >&2
+    MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"no_changes\"}")
     git -C "$REPO_ROOT" worktree remove --force "$PATH_WT" 2>/dev/null || rm -rf "$PATH_WT"
     continue
   fi
