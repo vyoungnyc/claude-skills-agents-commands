@@ -343,10 +343,17 @@ if [[ "$PRD_PATH" == *"{"* ]]; then
   exit 1
 fi
 
-# Guard: enforce feature_id sanitization (alphanumeric, hyphens, underscores only)
-FEATURE_DIR=$(basename "$(dirname "$PRD_PATH")")
-if [[ ! "$FEATURE_DIR" =~ ^[A-Za-z0-9_-]+$ ]]; then
-  echo '{"verdict":"error","summary":"feature_id contains unsafe characters","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+# Guard: extract and validate feature_id from PRD_PATH (must be alphanumeric, hyphens, underscores only — no slashes, no path traversal)
+FEATURE_ID=$(echo "$PRD_PATH" | sed -n 's|^docs/features/\([^/]*\)/PRD\.md$|\1|p')
+if [ -z "$FEATURE_ID" ] || [[ ! "$FEATURE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo '{"verdict":"error","summary":"PRD_PATH does not match canonical pattern docs/features/<safe_id>/PRD.md","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+  exit 1
+fi
+
+# Guard: verify resolved path stays under docs/features/
+RESOLVED=$(cd "$(dirname "$PRD_PATH")" 2>/dev/null && pwd)
+if [[ "$RESOLVED" != *"/docs/features/"* ]]; then
+  echo '{"verdict":"error","summary":"PRD_PATH resolves outside docs/features/","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
   exit 1
 fi
 
@@ -385,7 +392,7 @@ Output strict JSON:
 }"
 
 if [ -n "$CODEX" ]; then
-  OUTPUT=$(node "$CODEX" adversarial-review --wait "$FOCUS" 2>/dev/null)
+  OUTPUT=$(node "$CODEX" adversarial-review "$FOCUS" 2>/dev/null)
   EXIT=$?
   if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "$OUTPUT"
@@ -407,8 +414,14 @@ fi
 ### Step 3: Present findings and address them
 
 **Parse the output.** Codex may return structured JSON (with `verdict` and `findings`) or rendered markdown. Handle both:
-- **JSON:** Parse directly and branch on `verdict`.
-- **Markdown:** Extract the verdict from the report header (e.g., "Verdict: needs-attention" → `needs_revision`) and parse findings from the bullet list. Map severity labels (`[critical]` → critical, `[high]` → high, `[medium]` → medium, `[low]` → low).
+- **JSON:** Parse directly. Normalize the verdict through the shared mapping below before branching.
+- **Markdown:** Extract the verdict from the report header and parse findings from the bullet list. Map severity labels (`[critical]` → critical, `[high]` → high, `[medium]` → medium, `[low]` → low).
+
+**Verdict normalization (apply to both JSON and markdown):**
+- `approve` / `pass` → `approve`
+- `needs_revision` / `needs-revision` / `needs-attention` → `needs_revision`
+- `block` / `reject` / `fail` → `block`
+- Any unrecognized verdict → treat as `block` (fail closed)
 
 If `verdict` is `approve` (or no findings), state: "Adversarial review passed — no material issues found." and proceed immediately.
 

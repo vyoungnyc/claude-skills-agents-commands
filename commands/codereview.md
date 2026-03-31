@@ -102,7 +102,7 @@ Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
-  OUTPUT=$(node "$CODEX" review --wait 2>/dev/null)
+  OUTPUT=$(node "$CODEX" review 2>/dev/null)
   EXIT=$?
   if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "$OUTPUT"
@@ -119,7 +119,7 @@ fi
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
-  OUTPUT=$(node "$CODEX" adversarial-review --wait 2>/dev/null)
+  OUTPUT=$(node "$CODEX" adversarial-review 2>/dev/null)
   EXIT=$?
   if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "$OUTPUT"
@@ -168,44 +168,49 @@ Assign the returned score to its finding.
 
 Before dedup, normalize Codex findings (#6 and #7) so they have the same `score` field as Claude findings:
 - **JSON output with `confidence`:** compute `score = confidence × 100` (e.g., 0.85 → 85).
-- **Markdown output without `confidence`:** assign `score` from severity: `[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40.
+- **Markdown output without `confidence`:** assign `score` from severity: `[P0]`/`blocker` → 100, `[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40. Fail closed on unknown severities — assign 85 and flag for manual review.
 - Add the `score` field to each Codex finding object.
 - All findings from all 7 agents **must** have a `score` (0–100) field before entering Step 5.
 
 ## Step 5: Deduplicate and merge
 
-Spawn a **single haiku agent** with ALL normalized findings from agents #1–#7 (each with its `score` and source label).
+Spawn a **single haiku agent** with all normalized **scoped** findings (agents #1–#5, plus Codex findings that are NOT tagged `scope: "branch-wide"`).
 
 Instructions for the haiku agent:
-> You are deduplicating a list of code review findings from 7 independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial).
+> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial).
+
+**Branch-wide Codex findings** (tagged `scope: "branch-wide"` in Step 3) are excluded from dedup and the primary verdict. Present them in a separate section after the main findings (see Step 6).
 
 ## Step 6: Present all findings
 
 Sort findings by `score` descending. **Show everything — do not filter.** The user decides which items to fix.
+
+Present Claude agent findings (#1–#5) and any scoped Codex findings immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have.
 
 ```
 ## Review: <short description of what changed>
 
 ### Summary
 <1-3 sentences: what changed and overall signal from the reviewers>
-<Note any skipped reviewers, e.g. "Codex unavailable — ran 5-angle Claude review only">
+<Note any skipped/pending reviewers, e.g. "Codex reviews still running — findings will be added when they complete">
 
 ### Findings
 
 [95] [critical] src/foo.ts:42–45 — Null dereference on empty response
-Sources: claude-bugs · codex · codex-adversarial
+Sources: claude-bugs
 Description and recommendation.
 
 [67] [medium] src/bar.ts:12 — Deviates from error-handling pattern in CLAUDE.md
 Sources: claude-compliance · claude-history
 Description and recommendation.
 
-[22] [low] src/baz.ts:8 — Prior PR #14 flagged similar usage
-Sources: claude-pr-comments
-Description and recommendation.
+### Branch-wide Codex findings (informational — excluded from verdict)
+<Only shown when user scope is narrower than branch-vs-default. Omit section if all Codex findings are in scope.>
 
 ### Verdict: `approve` | `approve-with-nits` | `changes-requested`
 ```
+
+**Incremental Codex results:** When Codex background tasks complete (after initial presentation), normalize their findings per Step 4.5, deduplicate against existing findings, and **append new Codex findings to the presented list**. Update the verdict if new high-confidence findings change it. Clearly mark additions: "Codex review completed — N new findings added."
 
 Verdict is based on the presence of high-confidence findings (score ≥ 75):
 - Any critical/high at ≥ 75 → `changes-requested`
@@ -220,9 +225,11 @@ If questions arise while reviewing findings (after Step 6), ask the user:
 
 Do NOT ask about things determinable from the code or docs. Major intent questions should be caught in Step 2's intent gate, not here.
 
-## Step 8: Offer to fix
+## Step 8: Wait for user approval before fixing
 
-After presenting findings, ask: **"Which findings should I fix?"** — the user can specify by score range, severity, source, or item. Apply fixes directly. Run available tests and linters after fixing to verify.
+After presenting findings, ask: **"Which findings should I fix?"** Do **not** apply any fixes until the user explicitly approves. The user can specify by score range, severity, source, or item number. Wait for their response.
+
+Once approved, apply only the user-approved fixes. Run available tests and linters after fixing to verify.
 
 ## Rules
 
@@ -231,4 +238,4 @@ After presenting findings, ask: **"Which findings should I fix?"** — the user 
 3. Blocking findings must have concrete evidence — not just "this could theoretically fail."
 4. Don't flag style issues a formatter or linter would catch.
 5. Trust user-provided intent context.
-6. False positives to ignore: pre-existing issues, linter-catchable issues, lines not in the diff, changes that are intentional per user context, real issues on lines the user didn't modify.
+6. False positives to ignore: pre-existing issues, linter-catchable issues, lines not in the diff, changes that are intentional per user context. Exception: findings on unchanged lines are valid when the reviewer can show causal linkage to the diff (e.g., changed function signature breaks unchanged callers, modified type breaks unchanged consumers).
