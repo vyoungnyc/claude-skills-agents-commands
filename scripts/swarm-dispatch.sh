@@ -141,9 +141,16 @@ if [ -z "$REPO_ROOT" ]; then
   exit $EXIT_FATAL
 fi
 
-# Verify feature branch exists
-if ! git -C "$REPO_ROOT" rev-parse --verify "refs/heads/$FEATURE_BRANCH" >/dev/null 2>&1 && \
-   ! git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/$FEATURE_BRANCH" >/dev/null 2>&1; then
+# Verify feature branch exists; create local tracking branch if only remote ref exists
+if git -C "$REPO_ROOT" rev-parse --verify "refs/heads/$FEATURE_BRANCH" >/dev/null 2>&1; then
+  : # Local branch exists
+elif git -C "$REPO_ROOT" rev-parse --verify "refs/remotes/origin/$FEATURE_BRANCH" >/dev/null 2>&1; then
+  echo "[$(date +"%H:%M:%S")] Creating local tracking branch for 'origin/$FEATURE_BRANCH'" >&2
+  git -C "$REPO_ROOT" checkout -b "$FEATURE_BRANCH" "origin/$FEATURE_BRANCH" 2>/dev/null || {
+    echo "{\"error\": \"Failed to create local tracking branch for '$FEATURE_BRANCH'\"}" >&2
+    exit $EXIT_FATAL
+  }
+else
   echo "{\"error\": \"Feature branch '$FEATURE_BRANCH' not found locally or on origin\"}" >&2
   exit $EXIT_FATAL
 fi
@@ -273,6 +280,12 @@ done
 
 declare -a MERGE_RESULTS=()
 
+# Require a clean working tree before checkout/merge to avoid stomping local changes
+if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
+  echo "{\"error\": \"Working tree has uncommitted changes — cannot safely merge. Commit or stash before running swarm-dispatch.\"}" >&2
+  exit $EXIT_FATAL
+fi
+
 # Ensure we're on the feature branch before merging
 git -C "$REPO_ROOT" checkout "$FEATURE_BRANCH" 2>/dev/null || {
   echo "{\"error\": \"Failed to checkout feature branch '$FEATURE_BRANCH' before merging\"}" >&2
@@ -287,6 +300,14 @@ for i in "${!WORKTREE_BRANCHES[@]}"; do
 
   if [ -z "$BRANCH" ] || [ -z "$PATH_WT" ]; then
     MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"worktree_not_created\"}")
+    continue
+  fi
+
+  # Skip merge for failed sessions — don't pull incomplete work into the feature branch
+  if [ "$EXIT_CODE" -ne 0 ]; then
+    echo "[$(date +"%H:%M:%S")] Skipping merge for '$NAME' — session exited with code $EXIT_CODE" >&2
+    MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"session_failed\", \"exit_code\": $EXIT_CODE}")
+    git -C "$REPO_ROOT" worktree remove --force "$PATH_WT" 2>/dev/null || rm -rf "$PATH_WT"
     continue
   fi
 

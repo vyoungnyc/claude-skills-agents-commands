@@ -56,17 +56,19 @@ if [ -n "$REPO_ROOT" ]; then
   cd "$REPO_ROOT"
 fi
 
-# Ensure plans/ is in .gitignore
-GITIGNORE=".gitignore"
-if [ -f "$GITIGNORE" ]; then
-  if ! grep -qxF 'plans/' "$GITIGNORE"; then
+# Ensure plans/ is gitignored — skip if already ignored (check git directly to handle nested .gitignore)
+if ! git check-ignore -q "plans/" 2>/dev/null; then
+  GITIGNORE=".gitignore"
+  if [ -f "$GITIGNORE" ]; then
     echo "" >> "$GITIGNORE"
     echo "# Local issue tracking (not committed)" >> "$GITIGNORE"
     echo "plans/" >> "$GITIGNORE"
+    echo "[create-local-issues] Added plans/ to .gitignore" >&2
+  else
+    echo "# Local issue tracking (not committed)" > "$GITIGNORE"
+    echo "plans/" >> "$GITIGNORE"
+    echo "[create-local-issues] Created .gitignore with plans/" >&2
   fi
-else
-  echo "# Local issue tracking (not committed)" > "$GITIGNORE"
-  echo "plans/" >> "$GITIGNORE"
 fi
 
 # Create plans directory
@@ -90,6 +92,11 @@ for i in $(seq 0 $((STEP_COUNT - 1))); do
   FILE_DOMAIN=$(jq -r ".[$i].file_domain | join(\", \")" < "$PLAN_STEPS_FILE")
   DEPS=$(jq -r ".[$i].dependencies | if length > 0 then join(\", \") else \"none\" end" < "$PLAN_STEPS_FILE")
 
+  # Escape YAML scalars — wrap in single quotes, escape internal single quotes
+  yaml_escape() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+  TITLE_ESCAPED=$(yaml_escape "$TITLE")
+  STEP_ID_ESCAPED=$(yaml_escape "$STEP_ID")
+
   # Build acceptance criteria checkboxes
   AC_LINES=$(jq -r ".[$i].acceptance_criteria[]? | \"- [ ] \" + ." < "$PLAN_STEPS_FILE")
   if [ -z "$AC_LINES" ]; then
@@ -98,8 +105,8 @@ for i in $(seq 0 $((STEP_COUNT - 1))); do
 
   cat > "$ISSUE_FILE" << ISSUE_EOF
 ---
-step_id: ${STEP_ID}
-title: "${TITLE}"
+step_id: ${STEP_ID_ESCAPED}
+title: ${TITLE_ESCAPED}
 status: open
 complexity: ${COMPLEXITY}
 domain: ${BATCH_HINT}
