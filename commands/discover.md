@@ -329,36 +329,78 @@ Save the current PRD to `docs/features/{feature_id}/PRD.md` (create directory if
 
 ### Step 2: Run Codex adversarial review
 
+Construct the focus prompt with the actual PRD path substituted for `{prd_path}`, then run:
+
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
+PRD_PATH="docs/features/{feature_id}/PRD.md"
+FOCUS="Read \`./$PRD_PATH\` (even if untracked) and perform an adversarial PRD review.
+
+Review as a skeptical staff PM/architect. Find:
+- invalid assumptions
+- contradictory requirements
+- missing edge/failure/abuse modes
+- untestable or ambiguous acceptance criteria
+- hidden dependencies and rollout risks
+- missing observability, migration, and rollback requirements
+
+Output strict JSON:
+{
+  \"verdict\": \"approve|needs_revision|block\",
+  \"findings\": [
+    {
+      \"severity\": \"high|medium|low\",
+      \"category\": \"assumption|contradiction|edge_case|testability|dependency|operational_risk|security|compliance\",
+      \"section\": \"<heading path>\",
+      \"evidence_quote\": \"<short quote from PRD>\",
+      \"risk\": \"<what fails and why>\",
+      \"recommendation\": \"<specific rewrite or added requirement>\",
+      \"confidence\": 0.0
+    }
+  ],
+  \"missing_acceptance_tests\": [\"...\"],
+  \"open_questions\": [\"...\"]
+}"
+
 if [ -n "$CODEX" ]; then
-  node "$CODEX" adversarial-review --wait "review the PRD for: invalid assumptions, missing failure modes, scope gaps that would block launch, auth/permission risks, data loss or irreversible state risks, acceptance criteria that are untestable, and requirements that contradict each other" 2>/dev/null
+  node "$CODEX" adversarial-review --wait "$FOCUS" 2>/dev/null
 else
   echo "CODEX_UNAVAILABLE"
 fi
 ```
 
-**If Codex is unavailable or errors:** run an inline adversarial pass yourself using this stance:
-- Default to skepticism — assume the PRD can fail in high-cost or user-visible ways
-- Attack the assumptions: what has to be true for each requirement to work?
-- Look for: missing error states, rollback safety gaps, untestable ACs, contradicting requirements, auth/permission holes, irreversible operations without safeguards, requirements that are secretly 3x larger than they appear
-- Report only material findings — not style or nitpicks
+**If Codex is unavailable or errors:** run an inline adversarial pass yourself using the same rubric and output the same JSON structure:
+- Read the PRD at `docs/features/{feature_id}/PRD.md`
+- Review as a skeptical staff PM/architect
+- Find: invalid assumptions, contradicting requirements, missing edge/failure/abuse modes, untestable ACs, hidden dependencies, missing observability/migration/rollback requirements
+- Cite by section heading + evidence quote — not line numbers
+- Report only material findings
 
 ### Step 3: Present findings and address them
 
-For each finding from the adversarial review:
+Parse the JSON output. If `verdict` is `approve`, state: "Adversarial review passed — no material issues found." and proceed immediately.
 
-1. Present it clearly: what the concern is, which requirement it affects, and the risk if unaddressed.
-2. Ask the user to choose:
-   - **Address it** — update the relevant requirement, AC, constraint, or risk section in the PRD
-   - **Defer it** — add it as an Open Question or a risk with a mitigation note
-   - **Reject it** — if the finding is a false positive or already handled, note why
+For `needs_revision` or `block`, present each finding grouped by severity (high → medium → low):
 
-3. Update the PRD on disk after each decision.
+```
+[high] Requirements > Must Have > REQ-003
+"users can delete their account at any time"
+Risk: No mention of cascading deletes, active subscription cancellation, or data retention obligations.
+Recommendation: Add explicit AC for subscription cancellation flow, data purge timeline, and regulatory hold exceptions.
+Confidence: 0.9
+```
+
+Also surface `missing_acceptance_tests` and `open_questions` as separate lists.
+
+For each finding, ask the user to choose:
+- **Address it** — update the relevant section, requirement, or AC in the PRD on disk
+- **Defer it** — add it as an Open Question or risk with a mitigation note
+- **Reject it** — if already handled or a false positive, note why and move on
+
+Update `docs/features/{feature_id}/PRD.md` on disk after each decision.
 
 Do NOT proceed to `/execute-prd` until every finding has been explicitly addressed, deferred, or rejected.
-
-If there are no findings, state: "Adversarial review passed — no material issues found." and proceed immediately.
+If `verdict` is `block`, resolve all high-severity findings before allowing `needs_revision` items to be deferred.
 
 ---
 
