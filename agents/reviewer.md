@@ -100,7 +100,7 @@ Return `[]` if no findings. Never include: pre-existing issues, style issues a l
 
 **Agent #4 — Prior PR/MR comments**
 
-> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` to find prior PRs that touched the same files, and read their comments. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` with a note that PR history was unavailable. Look for review comments that apply to what is currently being changed. Return relevant findings as a JSON array, noting the prior PR number in the body. Return [] if no relevant prior comments found.
+> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` to find prior PRs that touched the same files, and read their comments. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` (the unavailability will be reported separately via reviewer status). Look for review comments that apply to what is currently being changed. Return relevant findings as a JSON array, noting the prior PR number in the body. Return [] if no relevant prior comments found.
 
 **Agent #5 — Code comments compliance**
 

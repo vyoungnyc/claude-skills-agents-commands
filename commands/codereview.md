@@ -84,7 +84,7 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 **Agent #4 — Prior PR/MR comments**
 
-> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` to find prior PRs that touched the same files, and read their comments. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` with a note that PR history was unavailable. Look for review comments or patterns that apply to what is currently being changed. Return any relevant findings as a JSON array using the schema provided, noting the prior PR number in the body. Return [] if no relevant prior comments found.
+> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` to find prior PRs that touched the same files, and read their comments. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` (the unavailability will be reported separately via reviewer status). Look for review comments or patterns that apply to what is currently being changed. Return any relevant findings as a JSON array using the schema provided, noting the prior PR number in the body. Return [] if no relevant prior comments found.
 
 **Agent #5 — Code comments compliance**
 
@@ -96,7 +96,7 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
 
-**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1. If the user specified a non-default scope (e.g., a single file or a specific commit range), note this discrepancy in the final output — Codex findings may cover a broader or different diff than Claude agents.
+**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1. If the user specified a non-default scope (e.g., a single file or a specific commit range), note this discrepancy in the final output — Codex findings may cover a broader or different diff than Claude agents. **When the user's scope is narrower than branch-vs-default**, tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict calculation — present them in a separate "Branch-wide Codex findings" section so they don't inflate the scoped verdict.
 
 **Codex #6 — Standard review:**
 ```bash
@@ -133,6 +133,8 @@ fi
 `Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
 **Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, read the Codex background task outputs. If a Codex task is still running, wait for it before proceeding to dedup. If `verdict` is `"error"`, note it in the final summary as a skipped reviewer — do not treat errors as clean approvals. Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
+
+**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed.
 
 **Codex output format:** Codex may return structured JSON (with `confidence` 0–1 per finding) or rendered markdown. Handle both:
 - **JSON output:** Extract `confidence` per finding, compute `score = confidence × 100`.

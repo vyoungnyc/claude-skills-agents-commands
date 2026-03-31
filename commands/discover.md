@@ -40,8 +40,8 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
    - If user provides a file path:
      - Read the file.
      - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
-     - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), create branch, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
-     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), create branch, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
      - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
    - If user says no (or just provides a topic): proceed to step 2.
 
@@ -343,9 +343,16 @@ if [[ "$PRD_PATH" == *"{"* ]]; then
   exit 1
 fi
 
+# Guard: enforce feature_id sanitization (alphanumeric, hyphens, underscores only)
+FEATURE_DIR=$(basename "$(dirname "$PRD_PATH")")
+if [[ ! "$FEATURE_DIR" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo '{"verdict":"error","summary":"feature_id contains unsafe characters","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+  exit 1
+fi
+
 # Guard: abort if PRD file does not exist
 if [ ! -f "$PRD_PATH" ]; then
-  echo '{"verdict":"error","summary":"PRD file not found at '$PRD_PATH'","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+  echo "{\"verdict\":\"error\",\"summary\":\"PRD file not found at $PRD_PATH\",\"findings\":[],\"missing_acceptance_tests\":[],\"open_questions\":[]}"
   exit 1
 fi
 
@@ -383,7 +390,7 @@ if [ -n "$CODEX" ]; then
   if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
     echo "$OUTPUT"
   else
-    echo '{"verdict":"error","summary":"Codex adversarial review failed (exit '$EXIT')","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+    echo "{\"verdict\":\"error\",\"summary\":\"Codex adversarial review failed (exit $EXIT)\",\"findings\":[],\"missing_acceptance_tests\":[],\"open_questions\":[]}"
   fi
 else
   echo "CODEX_UNAVAILABLE"
