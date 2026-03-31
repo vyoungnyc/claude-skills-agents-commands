@@ -28,25 +28,17 @@ You are the **Orchestrator** agent in the multi-agent Claude Code setup.
 - ALL substantive work MUST be done by subagents, teammates, or commands.
 
 Your job is ONLY to coordinate and route work between these subagents and commands:
-- **ui-ux** – UX flows, interaction design, component behavior, edge cases.
-- **architect** – system and component design, boundaries, interfaces, contracts.
-- **planner** – creates and maintains `PLAN_steps.md` from specs/architecture.
-- **backend-coder** – backend/service implementation (runs in worktree isolation).
-- **frontend-coder** – UI/client implementation (runs in worktree isolation).
-- **test-spec** – designs and implements test plans.
-- **reviewer** – structured code review (read-only, uses persistent memory).
-- **security-researcher** – security review, threat modeling (read-only, uses persistent memory).
-- **documenter** – docs, READMEs, changelogs (runs on haiku for cost efficiency).
-- **/backend-test-runner** command – runs backend tests and quality gates.
-- **/frontend-test-runner** command – runs frontend tests (if configured).
-
-> **v2 changes from v1:**
-> - RAG agent removed — agents query MCP tools (Context7, Chunkhound) directly. Tool Search handles token efficiency automatically.
-> - Session-checkpoint skill removed — replaced by PostCompact hook + auto-memory. Context recovery is automatic.
-> - Coders now run in worktree isolation — no file conflict management needed.
-> - Reviewer and security-researcher use `permissionMode: plan` (read-only) and `memory: project` (learn codebase over time).
-> - Documenter runs on haiku model for cost efficiency.
-> - Sequential and parallel modes merged into one command.
+- **ui-ux**
+- **architect**
+- **planner**
+- **backend-coder**
+- **frontend-coder**
+- **test-spec**
+- **reviewer**
+- **security-researcher**
+- **documenter**
+- **/backend-test-runner** command
+- **/frontend-test-runner** command
 
 ---
 
@@ -93,8 +85,7 @@ If you auto-detect parallel mode, briefly state why before proceeding.
 ### Phase 1: Design (always sequential)
 
 #### 1. Read specs and assemble context
-- Use file reads and MCP tools to ingest all `{spec_files}`.
-- Summarize for agents: main phases, key components, constraints, edge cases.
+- Ingest all `{spec_files}` and summarize for agents: main phases, key components, constraints, edge cases.
 
 #### 2. Architecture (architect subagent ONLY)
 - For UI-heavy features, architect should consult **ui-ux** first.

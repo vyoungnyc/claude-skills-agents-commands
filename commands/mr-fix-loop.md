@@ -176,16 +176,12 @@ After pushing fixes:
 
 ## Rules
 
-1. **Never force-push or use --no-verify.**
-2. **Never merge the MR.** This command is strictly for fixing review comments and pipeline failures. The user decides when and whether to merge.
-3. **Use conventional commit messages** (e.g. `fix(hooks): description`).
-4. **Read files before editing** — understand current code before changing it.
-5. **Only fix review comments and pipeline failures** (bot or user) — do not modify code beyond what the review requests or the pipeline requires.
-6. **Reply to every fixed discussion** — explain what was changed and reference the commit.
-7. **Resolve discussions only after the fix is pushed** — not before. Never resolve disputed or needs-clarification discussions.
-8. **Timestamp awareness** — track when the last batch of comments was created so you don't re-process old resolved comments in the next poll cycle.
-9. **Exercise judgment on reviewer feedback** — not every bot comment is correct. If the suggestion would break something, conflict with a prior fix, or misunderstand the code, push back with a clear explanation rather than blindly implementing it.
-10. **Follow-up relevance** — when checking for replies on disputed discussions, only act on responses that are directly related to the original issue. Ignore tangential or unrelated comments.
+1. **Only fix review comments and pipeline failures** (bot or user) — do not modify code beyond what the review requests or the pipeline requires.
+2. **Reply to every fixed discussion** — explain what was changed and reference the commit.
+3. **Resolve discussions only after the fix is pushed** — not before. Never resolve disputed or needs-clarification discussions.
+4. **Timestamp awareness** — track when the last batch of comments was created so you don't re-process old resolved comments in the next poll cycle.
+5. **Exercise judgment on reviewer feedback** — not every bot comment is correct. If the suggestion would break something, conflict with a prior fix, or misunderstand the code, push back with a clear explanation rather than blindly implementing it.
+6. **Follow-up relevance** — when checking for replies on disputed discussions, only act on responses that are directly related to the original issue. Ignore tangential or unrelated comments.
 
 ## Stop and notify
 

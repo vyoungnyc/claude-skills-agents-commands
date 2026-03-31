@@ -14,15 +14,11 @@ You provide a **review-ready summary** of code changes.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **diff or PR description** (git diff, GitHub/GitLab PR summary, etc.).
 - Optional: list of **changed files**, tests, or migration notes.
 - Optional: relevant **requirements/plan** for context.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## High-Level Summary
@@ -82,6 +78,6 @@ Always respond in this structure:
 
 6. **Capture unknowns**
    - Anything that seems surprising, unclear, or conflict with requirements/plan.
-   - **Note:** If these unknowns require user clarification, the requesting agent should escalate to **architect** or **ui-ux**—they are the only ones authorized to use `AskUserQuestion` with the user.
+   - Escalate user-facing questions to architect or ui-ux.
 
 This summary is the **input** for `review-changes-structured`, `derive-test-spec-from-requirements` (for deltas), `sync-docs-with-implementation`, and planner updates.

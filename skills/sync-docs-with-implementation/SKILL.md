@@ -14,15 +14,11 @@ You keep documentation aligned with the implementation.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **diff summary** (from `summarize-diff-for-agents`).
 - The relevant **docs content or excerpts** (API docs, guides, ADRs, PLAN docs).
 - Optional: requirements and release notes templates.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Doc Impact Summary
@@ -72,6 +68,4 @@ Always respond in this structure:
 5. **Flag unresolved questions**
    - Any ambiguity about how something should be documented.
    - These go back to product/owner or documenter.
-   - **Note:** If these questions require user clarification, escalate to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.
-
-This skill helps **documenter and orchestrator** ensure docs and code move together.
+   - Escalate user-facing questions to architect or ui-ux.

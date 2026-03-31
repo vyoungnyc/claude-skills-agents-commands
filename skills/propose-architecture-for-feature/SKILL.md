@@ -14,15 +14,11 @@ You draft a **concrete but lightweight architecture** for a feature.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **requirements** (ideally from `extract-requirements-from-ticket`).
 - Output from `scan-feature-context` (files, docs, prior work).
 - Any known **architecture guidelines** or constraints.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Architecture Summary
@@ -74,6 +70,4 @@ Always respond in this structure:
 5. **Identify open questions**
    - Point out where more information is needed.
    - These feed back to planner/architect/product.
-   - **Note:** If these questions require user input, the **architect** agent will use `AskUserQuestion` to clarify—do not ask the user directly from this skill.
-
-This is the **primary artifact** for coders and reviewers to align on before deep implementation.
+   - Escalate user-facing questions to architect or ui-ux.

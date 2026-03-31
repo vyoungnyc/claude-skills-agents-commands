@@ -14,15 +14,11 @@ You create a **test playbook** for a feature.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **requirements** (must-haves, constraints).
 - Optional: the **architecture proposal**.
 - Optional: diff summary if focusing on incremental coverage.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Test Strategy Summary
@@ -76,6 +72,6 @@ Always respond in this structure:
 
 6. **Call out deferred tests**
    - Anything too expensive or out of scope for this phase, with a rationale.
-   - **Note:** If test requirements are unclear and need user clarification, escalate to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.
+   - Escalate user-facing questions to architect or ui-ux.
 
 This spec guides **test-spec, coder, test-runner, and reviewer** in evaluating coverage.

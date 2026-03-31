@@ -14,15 +14,11 @@ You are the **core review skill**. You do not create plans; you emit feedback.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **diff / PR** and any **diff summary** from `summarize-diff-for-agents`.
 - The relevant **requirements** / **plan** if available.
-- Optional: notes from `security-surface-scan` or other checks.
+- Optional: notes from security-researcher agent or other checks.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Overall Assessment
@@ -84,4 +80,4 @@ Always respond in this structure:
 7. **Do NOT plan**
    - Do not invent step sequences or modify plans directly.
    - Your output is **input** for `update-plan-from-review-feedback`.
-   - **Note:** If you have open questions that require user clarification, escalate them to **architect** or **ui-ux** agents—they are the only ones authorized to use `AskUserQuestion` with the user.
+   - Escalate user-facing questions to architect or ui-ux.

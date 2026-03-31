@@ -14,14 +14,10 @@ You help coders understand and resolve lint/TS issues safely.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **lint/TS error output** (as text).
 - Relevant **code snippets** around failures if available.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Error Groups
@@ -70,6 +66,6 @@ Always respond in this structure:
 
 5. **Coordinate with planner if needed**
    - If a group suggests deeper refactors, mention that planners might need a plan step.
-   - **Note:** If lint/TS errors reveal ambiguous design decisions that need user clarification, escalate to **architect**—they are authorized to use `AskUserQuestion` with the user.
+   - Escalate user-facing questions to architect or ui-ux.
 
 Your goal is to keep the codebase **type-safe and lint-clean**, not just “green”.

@@ -15,15 +15,11 @@ You generate a **structured, phased plan** for implementing a feature.
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **requirements output** (ideally from `extract-requirements-from-ticket`).
 - Any **feature/task_id** and owner information if available.
 - Any existing **process templates** (e.g., implementation → tests → security review → review → docs).
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Plan Summary
@@ -93,6 +89,6 @@ If you don’t know `task_id`, use a generic placeholder like `"feature.step_01_
    - In the summary, mention:
      - High risk areas (unknown dependencies, big refactors).
      - Assumptions that could break the plan.
-   - **Note:** If assumptions need user clarification, the **planner** agent will coordinate with **architect** or **ui-ux** to use `AskUserQuestion`—do not ask the user directly from this skill.
+   - Escalate user-facing questions to architect or ui-ux.
 
 This plan should be something the **planner updates**, and coders/reviewers treat as the single source of truth for work sequencing.

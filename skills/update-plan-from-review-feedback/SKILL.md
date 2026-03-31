@@ -14,15 +14,11 @@ You translate review output into **fix tasks** and then modify the existing plan
 
 ## Inputs you expect
 
-The calling agent should provide:
-
 - The **review output** (ideally from `review-changes-structured`).
 - The current **plan** (steps, dependencies, DoD).
 - Optional: current statuses of steps.
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Fix Summary
@@ -94,6 +90,6 @@ Always respond in this structure:
 
 11. **Summarize changes** — Clearly list: new steps added, steps whose DoD changed, steps whose dependencies changed, fixes moved to backlog.
 
-**Note:** If plan changes require user clarification on scope or priority, the **planner** agent may coordinate with **architect** or **ui-ux** to use `AskUserQuestion`.
+Escalate user-facing questions to architect or ui-ux.
 
 Planner uses you to keep the plan as the **source of truth** after review rounds.
