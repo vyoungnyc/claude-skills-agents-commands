@@ -74,4 +74,4 @@ You create a **test playbook** for a feature.
    - Anything too expensive or out of scope for this phase, with a rationale.
    - Escalate user-facing questions to architect or ui-ux.
 
-This spec guides **test-spec, coder, test-runner, and reviewer** in evaluating coverage.
+This spec guides **coder, test-runner, and reviewer** in evaluating coverage.

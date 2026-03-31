@@ -45,7 +45,7 @@ You draft a **concrete but lightweight architecture** for a feature.
 - Versioning / backward compatibility considerations.
 
 ## Open Design Questions
-- Topics that need planner/architect/product input.
+- Topics that need orchestrator/architect/product input.
 ```
 
 ## Process
@@ -69,5 +69,5 @@ You draft a **concrete but lightweight architecture** for a feature.
 
 5. **Identify open questions**
    - Point out where more information is needed.
-   - These feed back to planner/architect/product.
+   - These feed back to orchestrator/architect/product.
    - Escalate user-facing questions to architect or ui-ux.

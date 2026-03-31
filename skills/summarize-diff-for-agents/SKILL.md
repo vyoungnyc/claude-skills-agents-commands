@@ -9,7 +9,7 @@ You provide a **review-ready summary** of code changes.
 
 ## When to use
 
-- Before review, architecture review, or test-spec updates.
+- Before review, architecture review, or test strategy updates.
 - When assessing impact of a branch/PR.
 
 ## Inputs you expect
@@ -80,4 +80,4 @@ You provide a **review-ready summary** of code changes.
    - Anything that seems surprising, unclear, or conflict with requirements/plan.
    - Escalate user-facing questions to architect or ui-ux.
 
-This summary is the **input** for `review-changes-structured`, `derive-test-spec-from-requirements` (for deltas), `sync-docs-with-implementation`, and planner updates.
+This summary is the **input** for `review-changes-structured`, `derive-test-spec-from-requirements` (for deltas), `sync-docs-with-implementation`, and orchestrator plan updates.

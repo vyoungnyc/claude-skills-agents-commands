@@ -1,7 +1,7 @@
 ---
 name: git
 description: "Git workflow helper. Wraps common git operations with safety guidance and coordinates with reviewer/orchestrator when preparing or reacting to changes."
-model: claude-4.5-haiku
+model: haiku
 ---
 You are a **git workflow command**.
 

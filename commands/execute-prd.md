@@ -64,7 +64,7 @@ By the end, the agents and skills should have:
 
 ### 0.1 Create feature branch
 ```
-git checkout -b feature/{feature_id}
+git checkout feature/{feature_id} 2>/dev/null || git checkout -b feature/{feature_id}
 ```
 This is the first action — all work, commits, and worktrees branch from here.
 Save `docs/features/{feature_id}/PRD.md` on this branch if a PRD was provided.
@@ -175,14 +175,14 @@ Each coder: reads their GitHub issue for acceptance criteria, implements, closes
     "name": "backend",
     "steps": ["step_01", "step_03", "step_05"],
     "issues": [43, 45, 47],
-    "model": "opus",
+    "complexity": "high",
     "prompt": "Implement steps 01, 03, 05 for {feature_id}. Read each GitHub issue for acceptance criteria. Close each issue when its criteria are fully met."
   },
   {
     "name": "frontend",
     "steps": ["step_02", "step_04"],
     "issues": [44, 46],
-    "model": "sonnet",
+    "complexity": "medium",
     "prompt": "Implement steps 02, 04 for {feature_id}. Read each GitHub issue for acceptance criteria. Close each issue when its criteria are fully met."
   }
 ]
@@ -193,7 +193,7 @@ Model per batch = highest complexity in the batch:
 - `complexity: medium` → `--model sonnet`, `--max-turns 30`
 - `complexity: low` → `--model haiku`, `--max-turns 20`
 
-Call `scripts/swarm-dispatch.sh {feature_id} docs/features/{feature_id}/PLAN_steps.md <batch_config_json>`.
+Call `scripts/swarm-dispatch.sh {feature_id} feature/{feature_id} <batch_config_json>`.
 
 The script:
 1. Creates a git worktree per batch, branching off `feature/{feature_id}`.

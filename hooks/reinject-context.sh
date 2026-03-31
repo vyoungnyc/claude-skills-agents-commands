@@ -16,7 +16,7 @@ cat <<'CONTEXT'
 
 ### Workflow
 - All structural changes require plan approval via PLAN_steps.md
-- Only architect, ui-ux, and planner may ask the user clarifying questions
+- Only architect and ui-ux may ask the user clarifying questions
 - Orchestrator never writes code — always delegate to the appropriate agent
 - For parallel work: use subagents (default) or agent teams (when file domains are separable)
 - Agent teams require non-overlapping file domains — no worktree isolation in teams

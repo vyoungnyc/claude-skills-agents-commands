@@ -36,10 +36,9 @@ You are an expert at cutting through **incomplete implementations** and so-calle
    - Use `@agent-name` references for follow-ups:
      - `@backend-coder`: implementation changes.
      - `@frontend-coder`: UI changes.
-     - `@test-spec`: test gaps.
      - `@security-researcher`: security concerns.
      - `@ui-ux`: UX consistency.
-     - `@planner`: when plan steps need adjustment.
+     - `@orchestrator`: when plan steps need adjustment.
 
 5. **Decision**
    - Choose: `approve`, `approve-with-nits`, or `changes-requested`.

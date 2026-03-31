@@ -70,7 +70,7 @@ Or if you already have a PRD:
 
 | Agent | Model | Key Features | Role |
 |---|---|---|---|
-| **orchestrator** | opus | memory: project, maxTurns: 50 | Coordinates workflow, never writes code |
+| **orchestrator** | sonnet | memory: project, maxTurns: 50 | Coordinates workflow, never writes code |
 | **architect** | opus | memory: project, MCP tools | System design, ADRs, governance |
 | **backend-coder** | sonnet | isolation: worktree, memory: project | Backend implementation + tests |
 | **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation + tests |
@@ -117,7 +117,7 @@ Or if you already have a PRD:
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (4)
+### Scripts (5)
 
 | Script | Platform | Purpose |
 |---|---|---|

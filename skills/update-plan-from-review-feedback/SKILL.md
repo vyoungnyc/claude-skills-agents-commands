@@ -72,7 +72,7 @@ You translate review output into **fix tasks** and then modify the existing plan
    - Backend logic → `backend-coder`
    - UI/UX → `frontend-coder` or `ui-ux`
    - Cross-cutting/architecture → `architect`
-   - Docs → `documenter`
+   - Docs → `orchestrator` (via sync-docs-with-implementation skill)
 
 5. **Link to requirements** where possible. If inferred, label clearly.
 
@@ -92,4 +92,4 @@ You translate review output into **fix tasks** and then modify the existing plan
 
 Escalate user-facing questions to architect or ui-ux.
 
-Planner uses you to keep the plan as the **source of truth** after review rounds.
+Orchestrator uses you to keep the plan as the **source of truth** after review rounds.

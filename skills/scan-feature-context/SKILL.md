@@ -9,7 +9,7 @@ You help agents quickly understand **where in the repo and docs a feature lives*
 
 ## When to use
 
-- At feature kickoff (planner, architect, coder, reviewer).
+- At feature kickoff (orchestrator, architect, coder, reviewer).
 - Before planning, architecture, implementation, or review.
 - When a feature touches unknown or cross-cutting areas.
 
@@ -75,7 +75,7 @@ You help agents quickly understand **where in the repo and docs a feature lives*
 
 6. **Surface risks and unknowns**
    - Mention potential regressions (shared types, shared tables, shared APIs).
-   - List explicit questions a planner/architect should resolve.
+   - List explicit questions an orchestrator/architect should resolve.
    - Escalate user-facing questions to architect or ui-ux.
 
-Stay concise but **structured**; the planner/architect should be able to use your output as the "context section" of their own work.
+Stay concise but **structured**; the orchestrator/architect should be able to use your output as the "context section" of their own work.

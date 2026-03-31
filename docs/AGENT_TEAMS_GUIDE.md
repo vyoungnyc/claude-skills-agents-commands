@@ -154,7 +154,7 @@ Default → Use subagents
 Agent teams are an **additional pattern**, not a replacement for the orchestrator's subagent dispatch. The standard workflow remains:
 
 1. Orchestrator receives task
-2. Architect designs → Planner creates PLAN_steps.md
+2. Architect designs → Orchestrator creates PLAN_steps.md (via derive-plan-from-spec skill)
 3. **Decision point**: orchestrator evaluates whether team or subagents are better
 4. Execute via chosen pattern
 5. Gate checks (tests, security, review, docs) still run regardless of pattern used

@@ -45,7 +45,7 @@ You **do not run commands**; you interpret their output.
 1. Group name – why it should be fixed first.
 2. ...
 
-## Notes for Planner
+## Notes for Orchestrator
 - Any large work items that might need explicit plan steps.
 ```
 
@@ -67,6 +67,6 @@ You **do not run commands**; you interpret their output.
    - Recommend a fix order that unblocks the most stuff earliest (e.g., compilation/lint issues before tests).
    - Make suggestions actionable but not overly prescriptive.
 
-5. **Flag planner-relevant items**
-   - If fixing a group of failures clearly requires new tasks or a refactor, mention that planners should add plan steps.
+5. **Flag orchestrator-relevant items**
+   - If fixing a group of failures clearly requires new tasks or a refactor, mention that the orchestrator should add plan steps.
    - Escalate user-facing questions to architect or ui-ux.

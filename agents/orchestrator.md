@@ -113,7 +113,7 @@ Parallelizable coder steps:
 **C) Swarm dispatch** — 3+ parallelizable steps:
 1. Group plan steps by `file_domain` and `batch_hint` into domain batches.
 2. Build batch config JSON: step IDs, issue numbers, prompts, acceptance criteria.
-3. Call `scripts/swarm-dispatch.sh <feature_id> <plan_file> <batch_config_json>` via Bash.
+3. Call `scripts/swarm-dispatch.sh <feature_id> feature/<feature_id> <batch_config_json>` via Bash.
 4. Script launches N parallel `claude` sessions, each in its own worktree.
 5. Each session can spawn an agent team (using `coder` agents) for work-stealing within its batch.
 6. Wait for all sessions to complete; parse JSON results (success/failure, costs, session IDs).

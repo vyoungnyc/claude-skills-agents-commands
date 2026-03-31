@@ -32,9 +32,9 @@
 #   8. Outputs combined results as JSON to stdout
 #
 # Model selection from complexity:
-#   high   → claude-opus-4-5   --max-turns 40
-#   medium → claude-sonnet-4-5 --max-turns 30
-#   low    → claude-haiku-3-5  --max-turns 20
+#   high   → opus   --max-turns 40
+#   medium → sonnet --max-turns 30
+#   low    → haiku  --max-turns 20
 #
 # Exit codes:
 #   0 — all sessions merged successfully (some may have failed internally)
@@ -49,9 +49,9 @@ set -uo pipefail
 
 ALLOWED_TOOLS="Read,Edit,Write,Grep,Glob,Bash,Agent,TaskList,TaskGet,TaskUpdate"
 
-MODEL_HIGH="claude-opus-4-5"
-MODEL_MEDIUM="claude-sonnet-4-5"
-MODEL_LOW="claude-haiku-3-5"
+MODEL_HIGH="opus"
+MODEL_MEDIUM="sonnet"
+MODEL_LOW="haiku"
 
 TURNS_HIGH=40
 TURNS_MEDIUM=30
@@ -273,6 +273,12 @@ done
 
 declare -a MERGE_RESULTS=()
 
+# Ensure we're on the feature branch before merging
+git -C "$REPO_ROOT" checkout "$FEATURE_BRANCH" 2>/dev/null || {
+  echo "{\"error\": \"Failed to checkout feature branch '$FEATURE_BRANCH' before merging\"}" >&2
+  exit $EXIT_FATAL
+}
+
 for i in "${!WORKTREE_BRANCHES[@]}"; do
   BRANCH="${WORKTREE_BRANCHES[$i]}"
   PATH_WT="${WORKTREE_PATHS[$i]}"
@@ -326,13 +332,14 @@ for i in "${!SESSION_NAMES[@]}"; do
     ACTUAL_EXIT="$EXIT_CODE"
   fi
 
-  # Parse session JSON output
+  # Parse session JSON output (read once to avoid double I/O)
   SESSION_JSON=""
   if [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
-    if echo "$(cat "$OUTPUT_FILE")" | jq -e '.' >/dev/null 2>&1; then
-      SESSION_JSON=$(cat "$OUTPUT_FILE")
+    RAW_OUTPUT=$(cat "$OUTPUT_FILE")
+    if echo "$RAW_OUTPUT" | jq -e '.' >/dev/null 2>&1; then
+      SESSION_JSON="$RAW_OUTPUT"
     else
-      SESSION_JSON="{\"raw\": $(cat "$OUTPUT_FILE" | jq -Rs '.')}"
+      SESSION_JSON="{\"raw\": $(echo "$RAW_OUTPUT" | jq -Rs '.')}"
     fi
   else
     SESSION_JSON="{}"

@@ -45,7 +45,7 @@ You are the **core review skill**. You do not create plans; you emit feedback.
 - Where it diverges (intentional or accidental).
 
 ## Open Questions
-- [Q-001] Question that needs clarification from author, planner, or architect.
+- [Q-001] Question that needs clarification from author, orchestrator, or architect.
 
 ## Security & Operational Notes (if applicable)
 - Any suspected security issues or operational risks.
@@ -74,7 +74,7 @@ You are the **core review skill**. You do not create plans; you emit feedback.
    - You can point to `security-researcher` for deeper analysis.
 
 6. **Structure feedback**
-   - Use IDs `[B-XXX]`, `[NB-XXX]`, `[Q-XXX]` so planners can map to tasks.
+   - Use IDs `[B-XXX]`, `[NB-XXX]`, `[Q-XXX]` so the orchestrator can map to tasks.
    - Be concise, specific, and actionable.
 
 7. **Do NOT plan**

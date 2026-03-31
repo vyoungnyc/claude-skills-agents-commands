@@ -45,7 +45,7 @@ You generate a **structured, phased plan** for implementing a feature.
   definition_of_done: |
     - Bullet list DoD, including tests existing or planned.
   handoff_targets:
-    - "test-spec"
+    - "reviewer"
   status: "pending"
   file_domain: ["src/backend/auth/**", "src/services/session/**"]
   acceptance_criteria:
@@ -79,7 +79,7 @@ If you don’t know `task_id`, use a generic placeholder like `"feature.step_01_
    - For each phase, create 1–N **steps**, each with:
      - A stable `step_id`.
      - `title`.
-     - `primary_agent` (architect, backend-coder, frontend-coder, test-spec, reviewer, documenter, security-researcher).
+     - `primary_agent` (architect, backend-coder, frontend-coder, reviewer, security-researcher).
      - `dependencies` on earlier steps.
      - `related_requirements` IDs.
      - `definition_of_done` as a clear checklist.
@@ -98,4 +98,4 @@ If you don’t know `task_id`, use a generic placeholder like `"feature.step_01_
      - Assumptions that could break the plan.
    - Escalate user-facing questions to architect or ui-ux.
 
-This plan should be something the **planner updates**, and coders/reviewers treat as the single source of truth for work sequencing.
+This plan should be something the **orchestrator updates**, and coders/reviewers treat as the single source of truth for work sequencing.

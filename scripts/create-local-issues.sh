@@ -50,6 +50,12 @@ if [ ! -f "$PLAN_STEPS_FILE" ]; then
   exit 1
 fi
 
+# Operate from git repo root so plans/ and .gitignore are in the right place
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$REPO_ROOT" ]; then
+  cd "$REPO_ROOT"
+fi
+
 # Ensure plans/ is in .gitignore
 GITIGNORE=".gitignore"
 if [ -f "$GITIGNORE" ]; then

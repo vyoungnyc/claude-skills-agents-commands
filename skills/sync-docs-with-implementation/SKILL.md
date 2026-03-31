@@ -67,5 +67,5 @@ You keep documentation aligned with the implementation.
 
 5. **Flag unresolved questions**
    - Any ambiguity about how something should be documented.
-   - These go back to product/owner or documenter.
+   - These go back to product/owner or orchestrator.
    - Escalate user-facing questions to architect or ui-ux.
