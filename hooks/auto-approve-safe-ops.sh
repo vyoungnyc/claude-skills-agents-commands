@@ -44,8 +44,8 @@ if [[ "$COMMAND" == *$'\n'* ]] || [[ "$COMMAND" =~ $_UNSAFE_RE ]]; then
 fi
 
 # Destructive flags that should never be auto-approved even with a safe prefix
-_DESTRUCTIVE_RE='\s(-D|-d|--delete|-M|--move|--force|--hard|--config|--globalSetup|--plugin|--rulesdir|--require\s)'
-if [[ "$COMMAND" =~ $_DESTRUCTIVE_RE ]]; then
+_DESTRUCTIVE_RE='[[:space:]](-D|-d|--delete|-M|--move|--force|--hard|--config|--globalSetup|--plugin|--rulesdir|--require)([[:space:]]|$)'
+if [[ " $COMMAND " =~ $_DESTRUCTIVE_RE ]]; then
   exit 0  # fall through to normal permission dialog
 fi
 

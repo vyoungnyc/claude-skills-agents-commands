@@ -35,8 +35,8 @@ POLL_DIR=$(mktemp -d)
 register_cleanup "$POLL_DIR"
 
 # Snapshot at startup (parallel)
-glab api "projects/:id/merge_requests/$MR_IID/discussions" > "$POLL_DIR/discussions.json" 2>/dev/null &
-glab api "projects/:id/merge_requests/$MR_IID/pipelines" > "$POLL_DIR/pipelines.json" 2>/dev/null &
+glab api "projects/:id/merge_requests/$MR_IID/discussions?per_page=100" > "$POLL_DIR/discussions.json" 2>/dev/null &
+glab api "projects/:id/merge_requests/$MR_IID/pipelines?per_page=100" > "$POLL_DIR/pipelines.json" 2>/dev/null &
 wait
 
 SNAPSHOT_DISCUSSIONS=$(cat "$POLL_DIR/discussions.json" 2>/dev/null)
@@ -54,9 +54,9 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
 
   # Fetch all endpoints in parallel (reuse POLL_DIR)
   glab api "projects/:id/merge_requests/$MR_IID/approvals" > "$POLL_DIR/approvals.json" 2>/dev/null &
-  glab api "projects/:id/merge_requests/$MR_IID/award_emoji" > "$POLL_DIR/emoji.json" 2>/dev/null &
-  glab api "projects/:id/merge_requests/$MR_IID/discussions" > "$POLL_DIR/discussions.json" 2>/dev/null &
-  glab api "projects/:id/merge_requests/$MR_IID/pipelines" > "$POLL_DIR/pipelines.json" 2>/dev/null &
+  glab api "projects/:id/merge_requests/$MR_IID/award_emoji?per_page=100" > "$POLL_DIR/emoji.json" 2>/dev/null &
+  glab api "projects/:id/merge_requests/$MR_IID/discussions?per_page=100" > "$POLL_DIR/discussions.json" 2>/dev/null &
+  glab api "projects/:id/merge_requests/$MR_IID/pipelines?per_page=100" > "$POLL_DIR/pipelines.json" 2>/dev/null &
   wait
 
   # Single jq call for approval data
