@@ -2,6 +2,25 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.3.1] - 2026-03-30
+### Phase 5: Swarm Architecture & Discovery
+
+### Added
+- /discover command — interactive PRD discovery with codebase analysis, web research, scope management
+- swarm-dispatch.sh — parallel claude sessions in git worktrees with complexity-based model selection
+- create-github-issues.sh — GitHub epic + child issues from plan steps
+- coder.md agent — general-purpose swarm coder with TaskList work-stealing and GitHub issue validation
+- Pattern C (Swarm) in CLAUDE.md and Pattern 5 in AGENT_TEAMS_GUIDE.md
+
+### Changed
+- orchestrator.md — model downgraded to sonnet, swarm dispatch logic, GitHub issue creation, PRD review gate, streaming review
+- feature-autopilot.md — Phase 0 branch+PRD review, Phase 2 swarm dispatch, Phase 5 PR creation, always parallel
+- derive-plan-from-spec skill — new fields: file_domain, acceptance_criteria, batch_hint, complexity
+- Agent count: 7 → 8 (added coder)
+- Command count: 6 → 7 (added /discover)
+
+---
+
 ## [2.3.0] - 2026-03-30
 
 ### Phase 4: Agent Architecture Simplification

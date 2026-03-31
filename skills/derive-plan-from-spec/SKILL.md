@@ -47,6 +47,13 @@ You generate a **structured, phased plan** for implementing a feature.
   handoff_targets:
     - "test-spec"
   status: "pending"
+  file_domain: ["src/backend/auth/**", "src/services/session/**"]
+  acceptance_criteria:
+    - "JWT endpoint returns 200 with new token"
+    - "Token expiry handled gracefully (401 → refresh → retry)"
+    - "Unit tests cover all auth flows"
+  batch_hint: "backend"
+  complexity: "medium"
 
 - `step_id`: "<task_id>.step_02_tests"
   ...

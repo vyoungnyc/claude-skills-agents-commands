@@ -51,6 +51,16 @@ After coders finish implementation, reviewer and security-researcher run in para
 Both agents run concurrently with no dependencies, then results are merged.
 ```
 
+**Pattern C: Swarm (parallel claude sessions in worktrees, 3+ steps)**
+```
+Orchestrator groups steps into domain batches with complexity ratings.
+swarm-dispatch.sh launches N claude sessions, each in its own worktree.
+Model per session: opus (high complexity), sonnet (medium), haiku (low).
+Each session can spawn an agent team for work-stealing within its batch.
+Coders validate against GitHub issue acceptance criteria, close issues when done.
+Results merged via git merge after all sessions complete.
+```
+
 ## Task Tracking
 - [ ] Incomplete or not started
 - [✅] Completed

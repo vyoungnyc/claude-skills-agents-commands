@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.2.0
+**Version:** 2.3.1
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -60,7 +60,7 @@ Or invoke the orchestrator directly with a task description.
 
 ## Architecture
 
-### Agents (7)
+### Agents (8)
 
 | Agent | Model | Key Features | Role |
 |---|---|---|---|
@@ -68,6 +68,7 @@ Or invoke the orchestrator directly with a task description.
 | **architect** | opus | memory: project, MCP tools | System design, ADRs, governance |
 | **backend-coder** | sonnet | isolation: worktree, memory: project | Backend implementation + tests |
 | **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation + tests |
+| **coder** | sonnet | memory: project | General-purpose swarm implementer |
 | **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system, user research |
 | **reviewer** | opus | permissionMode: plan, memory: project | Read-only code review, runs in parallel with security-researcher |
 | **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit, runs in parallel with reviewer |
@@ -88,11 +89,12 @@ Or invoke the orchestrator directly with a task description.
 | fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
-### Commands (6)
+### Commands (7)
 
 | Command | Purpose |
 |---|---|
 | /feature-autopilot | Full automated workflow from spec to docs (sequential or parallel mode) |
+| /discover | Interactive PRD discovery — structured conversation → PRD |
 | /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ on PR description (mandatory approval gate) or 15 min silence |
 | /mr-fix-loop | Fix review comments on GitLab MRs (GitLab Duo, Cursor BugBot, Codex, users) with Category A/B/C triage, fix pipeline failures locally, push, poll until MR approval or bot emoji gate or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
@@ -109,12 +111,14 @@ Or invoke the orchestrator directly with a task description.
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (2)
+### Scripts (4)
 
 | Script | Platform | Purpose |
 |---|---|---|
 | poll-pr-reviews.sh | GitHub | Poll a PR for new review threads, approval emoji (👍/✅), or idle timeout. Used by `/pr-fix-loop`. |
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
+| swarm-dispatch.sh | Any | Launch N parallel claude sessions in git worktrees with complexity-based model selection; merge results. Used by orchestrator for 3+ step swarms. |
+| create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
 
@@ -163,6 +167,15 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
+**v2.3.1 (Phase 5)** — Swarm architecture and discovery:
+- Added `/discover` command — interactive PRD discovery through structured conversation, produces PRD for `/feature-autopilot`
+- Added `swarm-dispatch.sh` — launches N parallel claude sessions in git worktrees, complexity-based model selection (opus/sonnet/haiku), merges results
+- Added `create-github-issues.sh` — creates GitHub epic + child issues from plan steps with acceptance criteria
+- Added `coder.md` agent — general-purpose swarm coder with TaskList work-stealing and GitHub issue validation
+- Added Pattern C (Swarm) in CLAUDE.md and Pattern 5 in AGENT_TEAMS_GUIDE.md
+- `derive-plan-from-spec` skill now outputs `file_domain`, `acceptance_criteria`, `batch_hint`, and `complexity` fields per step
+- Agent count: 7 → 8; Command count: 6 → 7
+
 **v2.3.0 (Phase 4)** — Agent architecture simplification:
 - Removed planner, test-spec, and documenter agents (demoted to skills)
 - Orchestrator now invokes `derive-plan-from-spec`, `derive-test-spec-from-requirements`, and `sync-docs-with-implementation` skills directly
@@ -193,6 +206,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 agents/
   architect.md
   backend-coder.md
+  coder.md
   frontend-coder.md
   orchestrator.md
   reviewer.md
@@ -200,6 +214,7 @@ agents/
   ui-ux.md
 commands/
   backend-test-runner.md
+  discover.md
   feature-autopilot.md
   frontend-test-runner.md
   git.md
@@ -223,6 +238,8 @@ scripts/
   lib/poll-common.sh         # Shared functions: PID file, validation, set-diff
   poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
+  swarm-dispatch.sh          # Parallel claude sessions in worktrees for /feature-autopilot swarm
+  create-github-issues.sh    # GitHub epic + child issues from plan steps
 hooks/
   reinject-context.sh        # PostCompact: re-inject standards
   auto-format.sh             # PostToolUse: Prettier + ESLint

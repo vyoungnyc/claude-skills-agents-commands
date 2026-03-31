@@ -160,3 +160,28 @@ Agent teams are an **additional pattern**, not a replacement for the orchestrato
 5. Gate checks (tests, security, review, docs) still run regardless of pattern used
 
 Teams integrate at step 3-4. All other workflow stages (planning, gating, documentation) continue unchanged.
+
+### Pattern 5: Swarm Implementation (Parallel Worktree Sessions)
+
+**When to use:** 3+ parallelizable implementation steps, want maximum throughput with automatic load balancing.
+
+**How it works:** The orchestrator groups plan steps into domain batches (backend, frontend, infra, tests). `swarm-dispatch.sh` launches N parallel claude sessions, each in its own git worktree. Each session can use agent teams for work-stealing within its batch. Sessions run as background processes (`&` + `wait`) with `--output-format json` for structured results.
+
+**Model selection:** Complexity-based per batch:
+- `high` (novel architecture, security-critical, complex integrations) → opus, 40 turns
+- `medium` (standard features, known patterns, moderate integration) → sonnet, 30 turns
+- `low` (boilerplate, config, simple CRUD, well-understood patterns) → haiku, 20 turns
+
+Model per session = max complexity in the batch (highest wins).
+
+**GitHub integration:** Each session receives its GitHub issue numbers. Coders read acceptance criteria via `gh issue view`, validate each criterion before completing, and close issues with a commit reference: `gh issue close N -c "Fixed in abc123. All criteria met."` The orchestrator tracks progress via `gh issue list --label "feature:{id}"`.
+
+**Merge:** `git merge --no-ff` each worktree branch back into the feature branch after all sessions complete. If conflicts occur, the orchestrator spawns a conflict-resolution session.
+
+**Recovery:** If a session exhausts `maxTurns`, the orchestrator reads the `session_id` from JSON output and resumes via `claude --resume "session-id" -p "Continue where you left off"`. In-progress work is preserved in the worktree's commits.
+
+**When NOT to use:**
+- Fewer than 3 steps — subagents are cheaper and simpler
+- Tight interdependencies between steps (one step's output is another's input)
+- Heavy file overlap across batches (worktrees can't share files without conflicts)
+- Steps that require human approval gates between them
