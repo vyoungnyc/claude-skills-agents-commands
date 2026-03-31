@@ -3,21 +3,94 @@
 All notable changes to this multi-agent orchestration system are documented in this file.
 
 ## [2.3.1] - 2026-03-30
-### Phase 5: Swarm Architecture & Discovery
+
+### Phase 5: Swarm Architecture, Discovery & Issue Tracking
+
+True swarm implementation with parallel claude sessions in git worktrees, interactive PRD discovery, and platform-aware issue tracking (GitHub Issues or local file-based fallback for GitLab).
 
 ### Added
-- /discover command — interactive PRD discovery with codebase analysis, web research, scope management
-- swarm-dispatch.sh — parallel claude sessions in git worktrees with complexity-based model selection
-- create-github-issues.sh — GitHub epic + child issues from plan steps
-- coder.md agent — general-purpose swarm coder with TaskList work-stealing and GitHub issue validation
-- Pattern C (Swarm) in CLAUDE.md and Pattern 5 in AGENT_TEAMS_GUIDE.md
+
+- **`/discover` command** (`commands/discover.md`) — Interactive PRD creation through structured conversation:
+  - Phase 0: Codebase analysis (scan existing patterns, find similar features, identify conventions)
+  - Phase 1: Problem & Users (grounded in codebase findings)
+  - Phase 1.5: Research & Prior Art (web search for examples, dig into vague references)
+  - Phase 2-7: User stories, scope boundaries, acceptance criteria, technical constraints, non-functional/risks, priority (MoSCoW)
+  - Uses opus for complex multi-turn reasoning
+  - Scope management: refuses PRDs > 8 plan steps, proposes incremental v1/v2/v3 splits, creates roadmap in epic
+  - Output: structured PRD with acceptance criteria that feed directly into plan steps and GitHub issues
+
+- **`scripts/swarm-dispatch.sh`** — Launch N parallel `claude` sessions, each in its own git worktree:
+  - Complexity-based model selection per batch: opus (high), sonnet (medium), haiku (low)
+  - Each session can spawn its own agent team for work-stealing within its batch
+  - Worktrees branch off `feature/{feature_id}`, merged back after all sessions complete
+  - JSON output with session IDs, costs, durations, merge conflict reports
+  - PID file management for re-run cleanup
+
+- **`scripts/create-github-issues.sh`** — Create GitHub epic (tracking issue) + child issues from plan steps:
+  - Epic body: task list with auto-progress bar, quality gates, roadmap table for multi-phase features
+  - Child issues: acceptance criteria checkboxes, file domain, complexity label, dependencies
+  - Output: `{"epic": N, "issues": {"step_01": M, ...}}` for swarm sessions
+
+- **`scripts/create-local-issues.sh`** — Fallback for non-GitHub repos (GitLab, local):
+  - Creates `plans/{feature_id}/issue-0000.md` (epic) + `issue-0001.md` through `issue-NNNN.md`
+  - Frontmatter with status, complexity, domain for programmatic access
+  - `plans/` auto-added to `.gitignore` (tracking artifacts not committed)
+  - Same JSON output shape as GitHub script for pipeline interchangeability
+
+- **`agents/coder.md`** — General-purpose swarm coder for team mode:
+  - TaskList work loop: claim → context → implement → validate → checkpoint → complete → next
+  - File-domain conflict avoidance (checks in-progress tasks before claiming)
+  - Validates against GitHub issue or local issue file acceptance criteria
+  - Closes issues with commit SHA evidence on completion
+  - 5-turn progress checkpointing for maxTurns recovery
+
+- **Pattern C (Swarm)** in `CLAUDE.md` — Parallel worktree sessions with complexity-based model selection
+- **Pattern 5 (Swarm Implementation)** in `docs/AGENT_TEAMS_GUIDE.md` — Full documentation of the swarm pattern
 
 ### Changed
-- orchestrator.md — model downgraded to sonnet, swarm dispatch logic, GitHub issue creation, PRD review gate, streaming review
-- feature-autopilot.md — Phase 0 branch+PRD review, Phase 2 swarm dispatch, Phase 5 PR creation, always parallel
-- derive-plan-from-spec skill — new fields: file_domain, acceptance_criteria, batch_hint, complexity
-- Agent count: 7 → 8 (added coder)
-- Command count: 6 → 7 (added /discover)
+
+- **`agents/orchestrator.md`** — Major update:
+  - Model downgraded from opus to sonnet (pure coordination, no complex reasoning)
+  - PRD review gate: architect checks incoming specs for gaps/scope before proceeding
+  - GitHub issue creation integrated into Phase 1 (auto-detects GitHub vs local fallback)
+  - Swarm dispatch: 1 step → subagent, 2 steps → parallel subagents, 3+ steps → swarm
+  - Streaming review: reviewer + security-researcher in parallel after merge
+  - maxTurns recovery: detect abandoned tasks, resume sessions or respawn
+  - Phase 5: PR creation, epic closes only on PR merge
+
+- **`commands/feature-autopilot.md`** — Full pipeline rewrite:
+  - Phase 0: Branch creation (`feature/{feature_id}`) + PRD review gate
+  - Phase 1: Requirements, architecture, plan (with new fields), test strategy, GitHub/local issues, mandatory user approval with epic/issue links
+  - Phase 2: Swarm dispatch with complexity-based model selection, worktree isolation per batch
+  - Phase 3: Parallel quality gates (reviewer + security-researcher)
+  - Phase 4: Documentation via skill
+  - Phase 5: PR creation, `/pr-fix-loop` if needed, epic closes on merge
+  - Auto-detects GitHub vs non-GitHub for issue tracking
+
+- **`skills/derive-plan-from-spec/SKILL.md`** — New fields per plan step:
+  - `file_domain`: glob patterns for files touched
+  - `acceptance_criteria`: checkable list from spec requirements
+  - `batch_hint`: suggested swarm grouping (backend, frontend, infra, tests)
+  - `complexity`: high/medium/low (drives model selection and turn budget)
+
+- **`README.md`** — Updated: 8 agents, 7 commands, 5 scripts, swarm documentation
+- **`.gitignore`** — Added `plans/` for local issue tracking artifacts
+
+### Full Pipeline
+
+```
+/discover → PRD → /feature-autopilot → Epic+Issues → Plan → User approval
+  → Swarm (worktrees, complexity-based models) → Merge → Review → Docs → PR
+  → Merge → Close Epic
+```
+
+### Migration Notes
+
+1. Copy new files: `commands/discover.md`, `agents/coder.md`, `scripts/swarm-dispatch.sh`, `scripts/create-github-issues.sh`, `scripts/create-local-issues.sh`
+2. Replace: `agents/orchestrator.md`, `commands/feature-autopilot.md`
+3. Update: `skills/derive-plan-from-spec/SKILL.md`, `docs/AGENT_TEAMS_GUIDE.md`, `CLAUDE.md`
+4. Ensure `gh` CLI is authenticated for GitHub issue tracking, or local fallback activates automatically
+5. `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` must be set in `hooks/settings.json` for swarm team mode inside sessions
 
 ---
 

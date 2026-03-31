@@ -137,16 +137,19 @@ scripts/poll-mr-reviews.sh 42 60 15
 | Component | GitHub | GitLab | Notes |
 |---|---|---|---|
 | **Hooks** (all 5) | ✅ | ✅ | Platform-agnostic — operates at the git level |
-| **Agents** (all 10) | ✅ | ✅ | No platform-specific logic |
-| **Skills** (all 12) | ✅ | ✅ | No platform-specific logic |
-| **/feature-autopilot** | ✅ | ✅ | No platform-specific logic |
+| **Agents** (all 8) | ✅ | ✅ | No platform-specific logic |
+| **Skills** (all 11) | ✅ | ✅ | No platform-specific logic |
+| **/discover** | ✅ | ✅ | Platform-agnostic — produces PRD files |
+| **/feature-autopilot** | ✅ | ✅ | Auto-detects GitHub vs local issue tracking |
 | **/backend-test-runner** | ✅ | ✅ | No platform-specific logic |
 | **/frontend-test-runner** | ✅ | ✅ | No platform-specific logic |
 | **/git** | ✅ | ✅ | No platform-specific logic |
-| **/pr-fix-loop** | ✅ | ❌ | GitHub only — uses GitHub GraphQL API for review threads, thread resolution, comment replies, and PR description reactions |
-| **/mr-fix-loop** | ❌ | ✅ | GitLab only — uses GitLab discussions API, MR approvals, award emoji, and `glab` CLI |
+| **/pr-fix-loop** | ✅ | ❌ | GitHub only — uses GitHub GraphQL API |
+| **/mr-fix-loop** | ❌ | ✅ | GitLab only — uses GitLab discussions API and `glab` CLI |
+| **Issue tracking** | ✅ GitHub Issues | ✅ Local files | Auto-detected: `gh` + GitHub remote → GitHub Issues; otherwise → `plans/` files (gitignored) |
+| **Swarm dispatch** | ✅ | ✅ | Platform-agnostic — uses git worktrees and `claude` CLI |
 
-`/pr-fix-loop` is built on GitHub's review thread model (`reviewThreads`, `resolveReviewThread` mutation, PR-level emoji reactions). `/mr-fix-loop` is its GitLab counterpart, built on GitLab's discussion model, MR approvals API, award emoji, and the `glab` CLI. Use `/pr-fix-loop` for GitHub PRs and `/mr-fix-loop` for GitLab MRs.
+`/pr-fix-loop` is built on GitHub's review thread model. `/mr-fix-loop` is its GitLab counterpart. Issue tracking auto-detects: GitHub repos get epic + child issues via `gh` CLI; non-GitHub repos get file-based tracking in `plans/` (gitignored).
 
 ## Key Design Principles
 
@@ -158,7 +161,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 **AskUserQuestion routing** — Only architect and ui-ux can ask the user clarifying questions. Other agents escalate through them.
 
-**Dual parallel patterns** — Subagents (hub-and-spoke, with worktree isolation) for standard workflows. Agent teams (peer-to-peer, with SendMessage) for truly independent parallel modules. The orchestrator chooses based on file domain separability and task characteristics.
+**Three parallel patterns** — Subagents (hub-and-spoke, worktree isolation) for 1-2 steps. Agent teams (peer-to-peer, SendMessage, work-stealing) for peer collaboration. Swarm (parallel claude sessions in worktrees, complexity-based model selection) for 3+ steps. The orchestrator auto-selects based on step count and domain separability.
 
 **Persistent memory** — Agents accumulate knowledge across sessions, getting better at reviewing your specific codebase over time.
 
@@ -168,14 +171,14 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
-**v2.3.1 (Phase 5)** — Swarm architecture and discovery:
-- Added `/discover` command — interactive PRD discovery through structured conversation, produces PRD for `/feature-autopilot`
-- Added `swarm-dispatch.sh` — launches N parallel claude sessions in git worktrees, complexity-based model selection (opus/sonnet/haiku), merges results
-- Added `create-github-issues.sh` — creates GitHub epic + child issues from plan steps with acceptance criteria
-- Added `coder.md` agent — general-purpose swarm coder with TaskList work-stealing and GitHub issue validation
-- Added Pattern C (Swarm) in CLAUDE.md and Pattern 5 in AGENT_TEAMS_GUIDE.md
-- `derive-plan-from-spec` skill now outputs `file_domain`, `acceptance_criteria`, `batch_hint`, and `complexity` fields per step
-- Agent count: 7 → 8; Command count: 6 → 7
+**v2.3.1 (Phase 5)** — Swarm architecture, discovery, and issue tracking:
+- `/discover` command — interactive PRD creation with codebase analysis, web research, scope management, incremental splits
+- Swarm dispatch — parallel claude sessions in worktrees, complexity-based model selection (opus/sonnet/haiku)
+- GitHub Issues integration — epic + child issues with acceptance criteria, progress bars, roadmap tables
+- Local issue fallback — file-based `plans/` tracking for GitLab/non-GitHub repos (gitignored)
+- `coder.md` agent — general-purpose swarm coder with work-stealing and issue validation
+- Full pipeline: `/discover` → PRD → `/feature-autopilot` → Epic+Issues → Swarm → Review → PR
+- Agent count: 7 → 8; Command count: 6 → 7; Script count: 3 → 5
 
 **v2.3.0 (Phase 4)** — Agent architecture simplification:
 - Removed planner, test-spec, and documenter agents (demoted to skills)
