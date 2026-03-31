@@ -89,6 +89,10 @@ if ! jq -e '.' <<< "$PLAN_STEPS" >/dev/null 2>&1; then
   exit $EXIT_USAGE
 fi
 STEP_COUNT=$(jq 'length' <<< "$PLAN_STEPS")
+if [ "$STEP_COUNT" -lt 1 ]; then
+  echo '{"error": "Plan steps must contain at least one step"}' >&2
+  exit $EXIT_USAGE
+fi
 ISSUE_MAP_FILE=$(mktemp)
 trap 'rm -f "$ISSUE_MAP_FILE"' EXIT
 TASK_LIST=""
