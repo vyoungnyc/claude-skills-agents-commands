@@ -4,7 +4,7 @@ A practical guide for using Claude Code's agent teams feature with this orchestr
 
 ## When to Use Agent Teams vs Subagents
 
-Your system supports **two** multi-agent patterns. Choose based on the task:
+Your system supports **three** multi-agent patterns. Choose based on the task:
 
 ### Use Subagents (Default — Hub-and-Spoke)
 
@@ -117,7 +117,10 @@ The orchestrator uses this decision framework:
 Is work sequential with strict gating?
   → YES → Use standard subagent dispatch (default)
 
-Are there 2+ independent modules that can be built in parallel?
+Are there 3+ independent steps across separate file domains?
+  → YES → Use swarm dispatch (Pattern 5 — parallel worktrees)
+
+Are there 2 independent modules that can be built in parallel?
   → YES → Are the file domains clearly separable?
     → YES → Consider agent team (Pattern 1)
     → NO  → Use subagents with worktree isolation

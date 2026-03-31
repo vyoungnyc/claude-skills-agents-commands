@@ -296,7 +296,7 @@ epic closes on PR merge
 3. **Always run reviewer and security-researcher in parallel**, never sequentially.
 4. **Always run parallel where dependencies allow** — no sequential mode.
 5. Do not bypass gate steps (review, security) even when parallel implementation finishes cleanly.
-6. **Always create the feature branch first** (`git checkout -b feature/{feature_id}` off main) before any work begins.
+6. **Always ensure you are on the feature branch** (`git checkout feature/{feature_id} 2>/dev/null || git checkout -b feature/{feature_id}`) before any work begins.
 
 ## Skills invoked directly by orchestrator
 

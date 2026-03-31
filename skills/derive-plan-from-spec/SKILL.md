@@ -44,8 +44,6 @@ You generate a **structured, phased plan** for implementing a feature.
   related_requirements: ["R-001", "R-002"]
   definition_of_done: |
     - Bullet list DoD, including tests existing or planned.
-  handoff_targets:
-    - "reviewer"
   status: "pending"
   file_domain: ["src/backend/auth/**", "src/services/session/**"]
   acceptance_criteria:

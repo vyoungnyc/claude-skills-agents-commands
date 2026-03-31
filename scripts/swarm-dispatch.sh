@@ -80,10 +80,6 @@ register_cleanup() {
 }
 
 # ---------------------------------------------------------------------------
-# Args
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
 # Preflight: required binaries
 # ---------------------------------------------------------------------------
 
@@ -237,23 +233,29 @@ classify_failure() {
     return
   fi
 
+  # Convert to lowercase once for all pattern checks (avoids repeated grep forks)
+  local lc_combined="${combined,,}"
+
   # Checked first: context overflow can co-occur with max_turns signals
-  if echo "$combined" | grep -qiE '(context.*(window|limit|overflow|exceeded)|token.*(limit|exceeded|maximum)|too.*(long|large).*context)'; then
+  if [[ "$lc_combined" =~ context.*(window|limit|overflow|exceeded) ]] || \
+     [[ "$lc_combined" =~ token.*(limit|exceeded|maximum) ]] || \
+     [[ "$lc_combined" =~ too.*(long|large).*context ]]; then
     echo "context_overflow"
     return
   fi
 
   # Checked before max_turns: a rate-limited session might also hit turn limits
-  if echo "$combined" | grep -qiE '(ECONNREFUSED|ETIMEDOUT|ENOTFOUND|network.error|connection.refused|rate.limit|503|502|429|API.error|socket.hang.up|fetch.failed)'; then
+  if [[ "$lc_combined" =~ (econnrefused|etimedout|enotfound|network.error|connection.refused|rate.limit|socket.hang.up|fetch.failed) ]] || \
+     [[ "$lc_combined" =~ (503|502|429|api.error) ]]; then
     echo "infrastructure"
     return
   fi
 
   # Check structured JSON first, then fall back to string matching for non-JSON output
   local turn_count
-  turn_count=$(echo "$output_content" | jq -r '.num_turns // 0' 2>/dev/null || echo "0")
+  turn_count=$(jq -r '.num_turns // 0' <<< "$output_content" 2>/dev/null || echo "0")
   if [ "$exit_code" -ne 0 ]; then
-    if [ "$turn_count" -ge "$max_turns" ] || echo "$combined" | grep -qiE '(max.?turns|turn.limit|reached.*maximum.*turns)'; then
+    if [ "$turn_count" -ge "$max_turns" ] || [[ "$lc_combined" =~ (max.?turns|turn.limit|reached.*maximum.*turns) ]]; then
       echo "max_turns"
       return
     fi
@@ -268,12 +270,9 @@ classify_failure() {
 }
 
 for i in $(seq 0 $((BATCH_COUNT - 1))); do
-  BATCH=$(echo "$BATCH_CONFIG" | jq ".[$i]")
-  BATCH_NAME=$(echo "$BATCH" | jq -r '.name')
-  COMPLEXITY=$(echo "$BATCH" | jq -r '.complexity // "medium"')
-  PROMPT=$(echo "$BATCH" | jq -r '.prompt')
-  STEPS=$(echo "$BATCH" | jq -r '.steps | join(",")')
-  ISSUES=$(echo "$BATCH" | jq -r '.issues | join(",")')
+  # Extract all fields in one jq call (avoids 6 separate jq forks per batch)
+  eval "$(jq -r --argjson i "$i" '.[$i] | @sh "BATCH_NAME=\(.name) COMPLEXITY=\(.complexity // "medium") STEPS=\(.steps | join(",")) ISSUES=\(.issues | join(","))"' <<< "$BATCH_CONFIG")"
+  PROMPT=$(jq -r --argjson i "$i" '.[$i].prompt' <<< "$BATCH_CONFIG")
 
   MODEL=$(select_model "$COMPLEXITY")
   TURNS=$(select_turns "$COMPLEXITY")
@@ -323,7 +322,7 @@ for i in $(seq 0 $((BATCH_COUNT - 1))); do
       --allowedTools "$ALLOWED_TOOLS" \
       --permission-mode auto \
       > "$OUTPUT_FILE" 2>> "$LOG_FILE"
-    echo $? > "${OUTPUT_FILE}.exit"
+    EXIT=$?; echo $EXIT > "${OUTPUT_FILE}.exit"; exit $EXIT
   ) &
 
   SESSION_PIDS+=($!)
@@ -458,7 +457,9 @@ done
 # Build combined JSON results output
 # ---------------------------------------------------------------------------
 
-RESULTS_JSON="["
+RESULTS_JSONL="${WORK_DIR}/results.jsonl"
+: > "$RESULTS_JSONL"
+
 for i in "${!SESSION_NAMES[@]}"; do
   NAME="${SESSION_NAMES[$i]}"
   EXIT_CODE="${SESSION_EXIT_CODES[$i]}"
@@ -473,23 +474,20 @@ for i in "${!SESSION_NAMES[@]}"; do
   fi
 
   # Parse session JSON output (read once to avoid double I/O)
-  SESSION_JSON=""
   RAW_OUTPUT=""
   if [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
     RAW_OUTPUT=$(cat "$OUTPUT_FILE")
-    if echo "$RAW_OUTPUT" | jq -e '.' >/dev/null 2>&1; then
-      SESSION_JSON="$RAW_OUTPUT"
-    else
-      SESSION_JSON="{\"raw\": $(echo "$RAW_OUTPUT" | jq -Rs '.')}"
+    if ! jq -e '.' <<< "$RAW_OUTPUT" >/dev/null 2>&1; then
+      RAW_OUTPUT=$(jq -Rs '{"raw": .}' <<< "$RAW_OUTPUT")
     fi
   else
-    SESSION_JSON="{}"
+    RAW_OUTPUT="{}"
   fi
 
-  SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.session_id // "unknown"' 2>/dev/null || echo "unknown")
-  COST=$(echo "$SESSION_JSON" | jq -r '.cost_usd // null' 2>/dev/null || echo "null")
-  DURATION=$(echo "$SESSION_JSON" | jq -r '.duration_ms // null' 2>/dev/null || echo "null")
-  RESULT=$(echo "$SESSION_JSON" | jq -r '.result // null' 2>/dev/null || echo "null")
+  # Extract all session fields in one jq call (avoids 4 separate forks)
+  read -r SESSION_ID COST DURATION RESULT < <(
+    jq -r '[.session_id // "unknown", .cost_usd // "null", .duration_ms // "null", .result // "null"] | @tsv' <<< "$RAW_OUTPUT" 2>/dev/null || echo "unknown	null	null	null"
+  )
   MODEL_USED="${SESSION_MODELS[$i]:-unknown}"
   MAX_TURNS="${SESSION_TURNS[$i]:-30}"
 
@@ -499,18 +497,26 @@ for i in "${!SESSION_NAMES[@]}"; do
 
   MERGE_RESULT="${MERGE_RESULTS[$i]:-{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"unknown\"}}"
 
-  ENTRY="{\"batch\": \"$NAME\", \"exit_code\": $ACTUAL_EXIT, \"model\": \"$MODEL_USED\", \"failure_reason\": \"$FAILURE_REASON\", \"session_id\": \"$SESSION_ID\", \"cost_usd\": $COST, \"duration_ms\": $DURATION, \"result\": $(echo "$RESULT" | jq -Rs 'if . == "null\n" then null else . end'), \"merge\": $MERGE_RESULT}"
-
-  if [ $i -gt 0 ]; then
-    RESULTS_JSON="${RESULTS_JSON},"
-  fi
-  RESULTS_JSON="${RESULTS_JSON}${ENTRY}"
+  # Build entry via jq for proper escaping (avoids fragile string concatenation)
+  jq -n -c \
+    --arg batch "$NAME" \
+    --argjson exit_code "$ACTUAL_EXIT" \
+    --arg model "$MODEL_USED" \
+    --arg failure_reason "$FAILURE_REASON" \
+    --arg session_id "$SESSION_ID" \
+    --argjson cost "${COST:-null}" \
+    --argjson duration "${DURATION:-null}" \
+    --arg result "$RESULT" \
+    --argjson merge "$MERGE_RESULT" \
+    '{batch: $batch, exit_code: $exit_code, model: $model, failure_reason: $failure_reason, session_id: $session_id, cost_usd: $cost, duration_ms: $duration, result: (if $result == "null" then null else $result end), merge: $merge}' \
+    >> "$RESULTS_JSONL"
 done
-RESULTS_JSON="${RESULTS_JSON}]"
 
-# Count successes and failures
-SUCCESS_COUNT=$(echo "$RESULTS_JSON" | jq '[.[] | select(.exit_code == 0)] | length')
-FAILURE_COUNT=$(echo "$RESULTS_JSON" | jq '[.[] | select(.exit_code != 0)] | length')
-MERGE_CONFLICT_COUNT=$(echo "$RESULTS_JSON" | jq '[.[] | select(.merge.conflicts == true)] | length')
+RESULTS_JSON=$(jq -s '.' "$RESULTS_JSONL")
+
+# Count successes, failures, conflicts in a single jq pass
+read -r SUCCESS_COUNT FAILURE_COUNT MERGE_CONFLICT_COUNT < <(
+  jq -r '[ ([.[] | select(.exit_code == 0)] | length), ([.[] | select(.exit_code != 0)] | length), ([.[] | select(.merge.conflicts == true)] | length) ] | @tsv' <<< "$RESULTS_JSON"
+)
 
 echo "{\"feature_id\": \"$FEATURE_ID\", \"feature_branch\": \"$FEATURE_BRANCH\", \"total\": $BATCH_COUNT, \"succeeded\": $SUCCESS_COUNT, \"failed\": $FAILURE_COUNT, \"merge_conflicts\": $MERGE_CONFLICT_COUNT, \"sessions\": $RESULTS_JSON}"

@@ -99,26 +99,65 @@ if ! command -v jq >/dev/null 2>&1; then
   exit $EXIT_FATAL
 fi
 
+# ---------------------------------------------------------------------------
+# Repo detection — GH_REPO env var, or auto-detect from gh
+# ---------------------------------------------------------------------------
+
+REPO="${GH_REPO:-}"
+if [ -z "$REPO" ]; then
+  REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)
+fi
+
+if [ -z "$REPO" ]; then
+  echo '{"error": "Could not determine target repo — set GH_REPO=owner/repo or run from a directory with a GitHub remote"}' >&2
+  exit $EXIT_FATAL
+fi
+
+echo "[$(date +"%H:%M:%S")] Target repo: $REPO" >&2
+
+# Temp file for capturing gh stderr separately from stdout
+GH_STDERR=$(mktemp)
+trap 'rm -f "$GH_STDERR"' EXIT
+
+# ---------------------------------------------------------------------------
+# Helper: extract issue number from gh issue create URL output
+# ---------------------------------------------------------------------------
+
+parse_issue_number() {
+  grep -oE 'issues/[0-9]+' <<< "$1" | head -1 | grep -oE '[0-9]+'
+}
+
+# ---------------------------------------------------------------------------
+# Ensure required labels exist (idempotent — gh label create --force is a no-op if present)
+# ---------------------------------------------------------------------------
+
+echo "[$(date +"%H:%M:%S")] Ensuring labels exist on $REPO..." >&2
+LABELS_TO_CREATE=("epic" "feature:${FEATURE_ID}")
+for i in $(seq 0 $((STEP_COUNT - 1))); do
+  BATCH_HINT=$(jq -r --argjson i "$i" '.[$i].batch_hint // "general"' <<< "$PLAN_STEPS")
+  COMPLEXITY=$(jq -r --argjson i "$i" '.[$i].complexity // "medium"' <<< "$PLAN_STEPS")
+  LABELS_TO_CREATE+=("domain:${BATCH_HINT}" "complexity:${COMPLEXITY}")
+done
+# Deduplicate and create
+printf '%s\n' "${LABELS_TO_CREATE[@]}" | sort -u | while IFS= read -r label; do
+  gh label create "$label" --repo "$REPO" --force 2>/dev/null || true
+done
+
 echo "[$(date +"%H:%M:%S")] Creating GitHub issues for feature '$FEATURE_ID' ($STEP_COUNT steps)..." >&2
 
 # ---------------------------------------------------------------------------
 # Step 1: Create child issues
 # ---------------------------------------------------------------------------
 
-# Accumulate {"step_id": issue_number, ...} mapping
-ISSUE_MAP="{}"
+# Accumulate issue map entries (assembled into JSON object after loop)
+ISSUE_MAP_FILE=$(mktemp)
 
 # Build task list lines for epic (populated as we create issues)
 TASK_LIST_LINES=()
 
 for i in $(seq 0 $((STEP_COUNT - 1))); do
-  STEP=$(echo "$PLAN_STEPS" | jq ".[$i]")
-  STEP_ID=$(echo "$STEP" | jq -r '.step_id')
-  TITLE=$(echo "$STEP" | jq -r '.title')
-  COMPLEXITY=$(echo "$STEP" | jq -r '.complexity // "medium"')
-  BATCH_HINT=$(echo "$STEP" | jq -r '.batch_hint // "general"')
-  FILE_DOMAIN=$(echo "$STEP" | jq -r '.file_domain | join(", ")')
-  DEPS_RAW=$(echo "$STEP" | jq -r '.dependencies // [] | join(", ")')
+  # Extract all fields in one jq call (avoids 7 separate jq forks per step)
+  eval "$(jq -r --argjson i "$i" '.[$i] | @sh "STEP_ID=\(.step_id) TITLE=\(.title) COMPLEXITY=\(.complexity // "medium") BATCH_HINT=\(.batch_hint // "general") FILE_DOMAIN=\(.file_domain | join(", ")) DEPS_RAW=\(.dependencies // [] | join(", "))"' <<< "$PLAN_STEPS")"
 
   if [ -z "$DEPS_RAW" ]; then
     DEPS_LINE="_None_"
@@ -127,7 +166,7 @@ for i in $(seq 0 $((STEP_COUNT - 1))); do
   fi
 
   # Build acceptance criteria checkboxes
-  AC_CHECKBOXES=$(echo "$STEP" | jq -r '.acceptance_criteria // [] | .[] | "- [ ] \(.)"' | sed 's/^//')
+  AC_CHECKBOXES=$(jq -r --argjson i "$i" '.[$i].acceptance_criteria // [] | .[] | "- [ ] \(.)"' <<< "$PLAN_STEPS")
   if [ -z "$AC_CHECKBOXES" ]; then
     AC_CHECKBOXES="- [ ] No acceptance criteria specified"
   fi
@@ -148,35 +187,40 @@ ${AC_CHECKBOXES}
   echo "[$(date +"%H:%M:%S")] Creating child issue for $STEP_ID: $TITLE..." >&2
 
   ISSUE_URL=$(gh issue create \
+    --repo "$REPO" \
     --title "${STEP_ID}: ${TITLE}" \
     --body "$ISSUE_BODY" \
     --label "feature:${FEATURE_ID}" \
     --label "domain:${BATCH_HINT}" \
     --label "complexity:${COMPLEXITY}" \
-    2>&1)
+    2>"$GH_STDERR")
+  CREATE_EXIT=$?
 
-  if [ $? -ne 0 ]; then
-    echo "[$(date +"%H:%M:%S")] WARNING: Failed to create issue for $STEP_ID — gh error: $ISSUE_URL" >&2
-    # Continue; we'll note the failure in the mapping
-    ISSUE_MAP=$(echo "$ISSUE_MAP" | jq --arg sid "$STEP_ID" --argjson num "null" '. + {($sid): $num}')
+  if [ "$CREATE_EXIT" -ne 0 ]; then
+    GH_ERR=$(cat "$GH_STDERR")
+    echo "[$(date +"%H:%M:%S")] WARNING: Failed to create issue for $STEP_ID — gh error: $GH_ERR" >&2
+    echo "\"$STEP_ID\": null" >> "$ISSUE_MAP_FILE"
     TASK_LIST_LINES+=("- [ ] (failed) ${STEP_ID}: ${TITLE}")
     continue
   fi
 
-  # Extract issue number from the URL (last path segment is always the number)
-  ISSUE_NUMBER=$(basename "$ISSUE_URL" 2>/dev/null | tr -cd '0-9')
+  ISSUE_NUMBER=$(parse_issue_number "$ISSUE_URL")
 
   if [ -z "$ISSUE_NUMBER" ]; then
     echo "[$(date +"%H:%M:%S")] WARNING: Could not parse issue number from: $ISSUE_URL" >&2
-    ISSUE_MAP=$(echo "$ISSUE_MAP" | jq --arg sid "$STEP_ID" --argjson num "null" '. + {($sid): $num}')
+    echo "\"$STEP_ID\": null" >> "$ISSUE_MAP_FILE"
     TASK_LIST_LINES+=("- [ ] (unknown) ${STEP_ID}: ${TITLE}")
     continue
   fi
 
   echo "[$(date +"%H:%M:%S")] Created #${ISSUE_NUMBER} for $STEP_ID" >&2
-  ISSUE_MAP=$(echo "$ISSUE_MAP" | jq --arg sid "$STEP_ID" --argjson num "$ISSUE_NUMBER" '. + {($sid): $num}')
+  echo "\"$STEP_ID\": $ISSUE_NUMBER" >> "$ISSUE_MAP_FILE"
   TASK_LIST_LINES+=("- [ ] #${ISSUE_NUMBER} ${STEP_ID}: ${TITLE}")
 done
+
+# Build ISSUE_MAP from accumulated entries (avoids O(n^2) jq rebuilding per iteration)
+ISSUE_MAP=$(jq -n "{ $(paste -sd',' "$ISSUE_MAP_FILE") }")
+rm -f "$ISSUE_MAP_FILE"
 
 # ---------------------------------------------------------------------------
 # Step 2: Build epic body
@@ -231,22 +275,23 @@ ${ROADMAP_SECTION}"
 echo "[$(date +"%H:%M:%S")] Creating epic tracking issue..." >&2
 
 EPIC_URL=$(gh issue create \
+  --repo "$REPO" \
   --title "Epic: ${FEATURE_ID}" \
   --body "$EPIC_BODY" \
   --label "epic" \
   --label "feature:${FEATURE_ID}" \
-  2>&1)
-
+  2>"$GH_STDERR")
 EPIC_CREATE_EXIT=$?
 
 if [ "$EPIC_CREATE_EXIT" -ne 0 ]; then
-  echo "[$(date +"%H:%M:%S")] ERROR: Failed to create epic — $EPIC_URL" >&2
+  GH_ERR=$(cat "$GH_STDERR")
+  echo "[$(date +"%H:%M:%S")] ERROR: Failed to create epic — $GH_ERR" >&2
   # Output partial results so caller can proceed with child issues
-  echo "{\"epic\": null, \"issues\": ${ISSUE_MAP}, \"error\": $(echo "$EPIC_URL" | jq -Rs '.')}"
+  echo "{\"epic\": null, \"issues\": ${ISSUE_MAP}, \"error\": $(echo "$GH_ERR" | jq -Rs '.')}"
   exit $EXIT_FATAL
 fi
 
-EPIC_NUMBER=$(basename "$EPIC_URL" 2>/dev/null | tr -cd '0-9')
+EPIC_NUMBER=$(parse_issue_number "$EPIC_URL")
 
 if [ -z "$EPIC_NUMBER" ]; then
   echo "[$(date +"%H:%M:%S")] WARNING: Could not parse epic issue number from: $EPIC_URL" >&2

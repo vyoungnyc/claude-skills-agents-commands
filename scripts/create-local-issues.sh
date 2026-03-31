@@ -31,23 +31,27 @@
 
 set -uo pipefail
 
+EXIT_OK=0
+EXIT_FATAL=1
+EXIT_USAGE=10
+
 FEATURE_ID="${1:-}"
 PLAN_STEPS_FILE="${2:-}"
 ROADMAP_FILE="${3:-}"
 
 if [ -z "$FEATURE_ID" ] || [ -z "$PLAN_STEPS_FILE" ]; then
   echo '{"error": "Usage: create-local-issues.sh <feature_id> <plan_steps_json_file> [roadmap_phases_json_file]"}' >&2
-  exit 1
+  exit $EXIT_USAGE
 fi
 
 if ! command -v jq &>/dev/null; then
   echo '{"error": "jq is required but not installed"}' >&2
-  exit 1
+  exit $EXIT_FATAL
 fi
 
 if [ ! -f "$PLAN_STEPS_FILE" ]; then
   echo "{\"error\": \"Plan steps file not found: $PLAN_STEPS_FILE\"}" >&2
-  exit 1
+  exit $EXIT_USAGE
 fi
 
 # Operate from git repo root so plans/ and .gitignore are in the right place
@@ -80,7 +84,11 @@ mkdir -p "$PLANS_DIR"
 
 # Cache file content to avoid re-reading from disk on every loop iteration
 PLAN_STEPS=$(cat "$PLAN_STEPS_FILE")
-STEP_COUNT=$(echo "$PLAN_STEPS" | jq 'length')
+if ! jq -e '.' <<< "$PLAN_STEPS" >/dev/null 2>&1; then
+  echo '{"error": "Plan steps file is not valid JSON"}' >&2
+  exit $EXIT_USAGE
+fi
+STEP_COUNT=$(jq 'length' <<< "$PLAN_STEPS")
 ISSUE_MAP="{}"
 TASK_LIST=""
 DATE=$(date +%Y-%m-%d)
