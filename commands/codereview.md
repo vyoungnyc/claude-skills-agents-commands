@@ -138,7 +138,7 @@ fi
 
 **Codex output format:** Codex may return structured JSON (with `confidence` 0–1 per finding) or rendered markdown. Handle both:
 - **JSON output:** Extract `confidence` per finding, compute `score = confidence × 100`.
-- **Markdown output:** Parse the rendered report, extract findings manually, and assign `score` based on severity (`[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40).
+- **Markdown output:** Parse the rendered report, extract findings manually, and assign `score` based on severity (`[P0]`/`blocker` → 100, `[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40).
 
 Do **not** send Codex findings to the haiku scoring step — score them directly from the output.
 

@@ -408,7 +408,7 @@ fi
 
 **Parse the output.** Codex may return structured JSON (with `verdict` and `findings`) or rendered markdown. Handle both:
 - **JSON:** Parse directly and branch on `verdict`.
-- **Markdown:** Extract the verdict from the report header (e.g., "Verdict: needs-attention" → `needs_revision`) and parse findings from the bullet list. Map severity labels (`[high]` → high, `[medium]` → medium, `[low]` → low).
+- **Markdown:** Extract the verdict from the report header (e.g., "Verdict: needs-attention" → `needs_revision`) and parse findings from the bullet list. Map severity labels (`[critical]` → critical, `[high]` → high, `[medium]` → medium, `[low]` → low).
 
 If `verdict` is `approve` (or no findings), state: "Adversarial review passed — no material issues found." and proceed immediately.
 
