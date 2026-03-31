@@ -329,16 +329,13 @@ Save the current PRD to `docs/features/{feature_id}/PRD.md` (create directory if
 
 ### Step 2: Run Codex adversarial review
 
-```bash
-CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
-if [ -n "$CODEX" ]; then
-  node "$CODEX" adversarial-review --wait "review the PRD for: invalid assumptions, missing failure modes, scope gaps that would block launch, auth/permission risks, data loss or irreversible state risks, acceptance criteria that are untestable, and requirements that contradict each other" 2>/dev/null
-else
-  echo "CODEX_UNAVAILABLE"
-fi
+Invoke `/codex:adversarial-review` with `--wait` and a focus argument targeting PRD-level concerns:
+
+```
+/codex:adversarial-review --wait "review the PRD for: invalid assumptions, missing failure modes, scope gaps that would block launch, auth/permission risks, data loss or irreversible state risks, acceptance criteria that are untestable, and requirements that contradict each other"
 ```
 
-**If Codex is unavailable:** run an inline adversarial pass yourself using this stance:
+**If `/codex:adversarial-review` is unavailable or errors:** run an inline adversarial pass yourself using this stance:
 - Default to skepticism — assume the PRD can fail in high-cost or user-visible ways
 - Attack the assumptions: what has to be true for each requirement to work?
 - Look for: missing error states, rollback safety gaps, untestable ACs, contradicting requirements, auth/permission holes, irreversible operations without safeguards, requirements that are secretly 3x larger than they appear
