@@ -98,11 +98,11 @@ Return `[]` if no findings. Never include: pre-existing issues, style issues a l
 
 **Agent #3 — Git blame and history**
 
-> You are a git history reviewer. Run `git log --follow -10` and `git blame` on the changed files and lines. Look for: prior bugs in this area, recently reverted changes being re-introduced, prior fixes being undone. Use history to identify whether this change is safe. Return a JSON array of findings. Return [] if history gives no cause for concern.
+> You are a git history reviewer. Read the git blame and history of the code modified. Use `git log --follow` and `git blame` on the changed files and lines — decide how deep to go based on what you find. Look for: prior bugs in this area, recently reverted changes being re-introduced, prior fixes being undone, areas flagged repeatedly in commit messages. Use history to identify whether this change is safe. Return a JSON array of findings. Return [] if history gives no cause for concern.
 
 **Agent #4 — Prior PR/MR comments**
 
-> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` to find prior PRs that touched the same files, and read their comments. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` (the unavailability will be reported separately via reviewer status). Look for review comments that apply to what is currently being changed. Return relevant findings as a JSON array, noting the prior PR number in the body. Return [] if no relevant prior comments found.
+> You are a PR history reviewer. Read previous pull requests that touched the same files, and check for any comments on those pull requests that may also apply to the current pull request. Use `gh pr list --state merged` and `gh pr view` to find and read prior PRs — decide how many to check based on what you find. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` (the unavailability will be reported separately via reviewer status). Return relevant findings as a JSON array, noting the prior PR number in the body. Return [] if no relevant prior comments found.
 
 **Agent #5 — Code comments compliance**
 

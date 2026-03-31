@@ -135,7 +135,10 @@ fi
 ```
 `Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
-**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, check the Codex background task outputs. If Codex tasks are still running, proceed to dedup and initial presentation with Claude findings only — Codex results will be integrated incrementally per Step 6. If `verdict` is `"error"`, note it in the final summary as a skipped reviewer — do not treat errors as clean approvals. Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
+**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, check the Codex background task outputs. If Codex tasks are still running, proceed to dedup and initial presentation with Claude findings only — Codex results will be integrated incrementally per Step 6. Check the `summary` field to distinguish two error cases:
+- **`"Codex companion not found"`** → Codex is not installed. Treat as a **skipped** reviewer — note in the summary, no verdict impact.
+- **Any other error** (runtime failure, timeout) → Codex is installed but failed. Treat as a **failed** reviewer — note in the summary and apply the verdict downgrade per the failure adjustment rule below.
+Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
 
 **Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed. **Exception:** "Codex companion not found" is a **skipped** reviewer (optional dependency not installed), not a failed one — do not count it toward the failure threshold or downgrade the verdict. Only count runtime errors or timeouts from an installed Codex as failures.
 
