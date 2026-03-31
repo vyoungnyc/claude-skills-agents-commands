@@ -1,6 +1,8 @@
 {
-  "model": "sonnet",
-  "effortLevel": "high",
+  "enabledPlugins": {
+    "codex@openai-codex": true,
+    "code-review@claude-plugins-official": true
+  },
   "extraKnownMarketplaces": {
     "openai-codex": {
       "source": {
@@ -9,7 +11,5 @@
       }
     }
   },
-  "enabledPlugins": {
-    "codex@openai-codex": true
-  }
+  "effortLevel": "high"
 }
