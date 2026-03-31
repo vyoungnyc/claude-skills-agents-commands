@@ -385,14 +385,28 @@ for i in "${!WORKTREE_BRANCHES[@]}"; do
   fi
 
   # Check for uncommitted changes in the worktree — auto-commit so edits aren't silently dropped
+  HAS_UNCOMMITTED=false
   if ! git -C "$PATH_WT" diff --quiet 2>/dev/null || ! git -C "$PATH_WT" diff --cached --quiet 2>/dev/null; then
+    HAS_UNCOMMITTED=true
     echo "[$(date +"%H:%M:%S")] Worktree '$NAME' has uncommitted changes — auto-committing" >&2
     git -C "$PATH_WT" add -A 2>/dev/null
-    git -C "$PATH_WT" commit -m "swarm(${FEATURE_ID}): auto-commit uncommitted changes from batch '${NAME}'" 2>/dev/null || true
+    COMMIT_OUTPUT=$(git -C "$PATH_WT" commit -m "swarm(${FEATURE_ID}): auto-commit uncommitted changes from batch '${NAME}'" 2>&1)
+    COMMIT_EXIT=$?
+    if [ "$COMMIT_EXIT" -ne 0 ]; then
+      echo "[$(date +"%H:%M:%S")] ERROR: Auto-commit failed for '$NAME' — worktree preserved at $PATH_WT" >&2
+      MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"auto_commit_failed\", \"worktree\": \"$PATH_WT\", \"commit_output\": $(echo "$COMMIT_OUTPUT" | jq -Rs '.')}")
+      continue
+    fi
   fi
 
   # Skip merge if the worktree branch has no new commits vs the feature branch
   if [ "$(git -C "$REPO_ROOT" rev-parse "$BRANCH")" = "$(git -C "$REPO_ROOT" merge-base "$BRANCH" "$FEATURE_BRANCH")" ]; then
+    if [ "$HAS_UNCOMMITTED" = true ]; then
+      # Had uncommitted changes, commit succeeded, but still no new commits — should not happen
+      echo "[$(date +"%H:%M:%S")] ERROR: Worktree '$NAME' had changes but no commits detected after auto-commit — preserved at $PATH_WT" >&2
+      MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"commit_mismatch\", \"worktree\": \"$PATH_WT\"}")
+      continue
+    fi
     echo "[$(date +"%H:%M:%S")] Skipping merge for '$NAME' — no new commits on worktree branch" >&2
     MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"no_changes\"}")
     git -C "$REPO_ROOT" worktree remove --force "$PATH_WT" 2>/dev/null || rm -rf "$PATH_WT"
