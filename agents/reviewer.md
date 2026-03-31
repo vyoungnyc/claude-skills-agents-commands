@@ -55,7 +55,7 @@ You are an expert at cutting through **incomplete implementations** and so-calle
 
 Use this mode when reviewing a full diff or PR. Runs 5 independent parallel Claude reviewers, scores all findings with haiku, deduplicates across sources, and returns structured results.
 
-> **Note:** Codex reviewers (#6 and #7) are intentionally excluded from this agent — they require the Codex plugin and are user-facing. The 7-angle variant (5 Claude + 2 Codex) is available via the `/codereview` command. If adding Codex here in the future, also add the Step 4.5 confidence-to-score normalization from `codereview.md`.
+> **Note:** Codex reviewers (#6 and #7) are intentionally excluded from this agent — they require the Codex plugin and are user-facing. The 7-angle variant (5 Claude + 2 Codex) is available via the `/codereview` command. If adding Codex here in the future, also normalize Codex `confidence` (0–1) to `score` (0–100) before the dedup step, matching the approach in `codereview.md`.
 
 ### Step 1: Gather context
 
@@ -126,7 +126,7 @@ Each haiku agent returns: `{"score": <0-100>, "reasoning": "<one sentence>"}`
 
 Spawn a **single haiku agent** with all scored findings.
 
-> Deduplicate findings from 5 independent reviewers. Group findings describing the same issue (same file + overlapping lines, or semantically equivalent problem). For each group: combine body text, union source labels, keep highest severity, keep highest score. Return deduplicated JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments).
+> Deduplicate findings from 5 independent reviewers. All input findings must have a numeric `score` field (0–100) — reject any finding missing this field. Group findings describing the same issue (same file + overlapping lines, or semantically equivalent problem). For each group: combine body text, union source labels, keep highest severity, keep highest score. Return deduplicated JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments).
 
 ### Step 5: Return all findings
 

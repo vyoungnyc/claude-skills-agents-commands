@@ -96,14 +96,18 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
 
+**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1. If the user specified a non-default scope (e.g., a single file or a specific commit range), note this discrepancy in the final output — Codex findings may cover a broader or different diff than Claude agents.
+
 **Codex #6 — Standard review:**
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
-  node "$CODEX" review --wait 2>/dev/null
+  OUTPUT=$(node "$CODEX" review --wait 2>/dev/null)
   EXIT=$?
-  if [ $EXIT -ne 0 ]; then
-    echo '{"verdict":"error","summary":"Codex review failed (exit '$EXIT')","findings":[{"severity":"low","title":"Codex review unavailable","body":"The Codex standard review failed or timed out. This review angle was skipped.","file":"N/A","line_start":0,"line_end":0,"confidence":0}],"next_steps":[]}'
+  if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
+    echo "$OUTPUT"
+  else
+    echo '{"verdict":"error","summary":"Codex review failed (exit '$EXIT')","findings":[],"next_steps":[]}'
   fi
 else
   echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"next_steps":[]}'
@@ -115,10 +119,12 @@ fi
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
-  node "$CODEX" adversarial-review --wait 2>/dev/null
+  OUTPUT=$(node "$CODEX" adversarial-review --wait 2>/dev/null)
   EXIT=$?
-  if [ $EXIT -ne 0 ]; then
-    echo '{"verdict":"error","summary":"Codex adversarial review failed (exit '$EXIT')","findings":[{"severity":"low","title":"Codex adversarial review unavailable","body":"The Codex adversarial review failed or timed out. This review angle was skipped.","file":"N/A","line_start":0,"line_end":0,"confidence":0}],"next_steps":[]}'
+  if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
+    echo "$OUTPUT"
+  else
+    echo '{"verdict":"error","summary":"Codex adversarial review failed (exit '$EXIT')","findings":[],"next_steps":[]}'
   fi
 else
   echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"next_steps":[]}'
@@ -126,17 +132,17 @@ fi
 ```
 `Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
-**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, read the Codex background task outputs. If a Codex task is still running, wait for it before proceeding to dedup. If `verdict` is `"error"`, note it in the final output as a skipped reviewer — do not treat errors as clean approvals.
+**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, read the Codex background task outputs. If a Codex task is still running, wait for it before proceeding to dedup. If `verdict` is `"error"`, note it in the final summary as a skipped reviewer — do not treat errors as clean approvals. Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
 
 Codex findings include `confidence` (0–1 scale) instead of `score`. **Do not send Codex findings to the haiku scoring step** — they already have confidence values.
 
-Note which reviewers were skipped or errored in the final output.
+Note which reviewers were skipped, errored, or used a different scope in the final output.
 
 ---
 
 ## Step 4: Score Claude findings with haiku
 
-Once all 7 reviewers complete, spawn a **parallel haiku agent per finding** from agents #1–#5.
+Once Claude agents #1–#5 complete, spawn a **parallel haiku agent per finding** from those agents. Do not wait for Codex — it runs in the background and its results are read after haiku scoring finishes (see Step 3 handling note).
 
 Give each haiku agent the finding JSON, the diff, and the CLAUDE.md file paths. Use this rubric verbatim:
 

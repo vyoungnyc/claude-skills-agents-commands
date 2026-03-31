@@ -41,7 +41,7 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
      - Read the file.
      - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
      - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), create branch, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
-     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), create branch, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
      - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
    - If user says no (or just provides a topic): proceed to step 2.
 
@@ -329,11 +329,26 @@ The canonical path is always `docs/features/{feature_id}/PRD.md`. All subsequent
 
 ### Step 2: Run Codex adversarial review
 
-**Important:** Before running the bash below, substitute the actual PRD file path from Step 1 into both `PRD_PATH` and the `FOCUS` string. The `{feature_id}` tokens below are **template placeholders** — replace them with the real feature ID from this discovery session (e.g., `docs/features/user_auth/PRD.md`).
+**Important:** Before running the bash below, you must:
+1. Replace `{feature_id}` with the actual feature ID (e.g., `user_auth`). **Sanitize it** to alphanumeric characters, hyphens, and underscores only — strip any shell metacharacters.
+2. The resolved path must match the canonical path from Step 1.
 
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 PRD_PATH="docs/features/{feature_id}/PRD.md"
+
+# Guard: abort if placeholder was not substituted
+if [[ "$PRD_PATH" == *"{"* ]]; then
+  echo '{"verdict":"error","summary":"PRD_PATH placeholder was not substituted","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+  exit 1
+fi
+
+# Guard: abort if PRD file does not exist
+if [ ! -f "$PRD_PATH" ]; then
+  echo '{"verdict":"error","summary":"PRD file not found at '$PRD_PATH'","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+  exit 1
+fi
+
 FOCUS="Read \`./$PRD_PATH\` (even if untracked) and perform an adversarial PRD review.
 
 Review as a skeptical staff PM/architect. Find:
@@ -363,13 +378,19 @@ Output strict JSON:
 }"
 
 if [ -n "$CODEX" ]; then
-  node "$CODEX" adversarial-review --wait "$FOCUS" 2>/dev/null
+  OUTPUT=$(node "$CODEX" adversarial-review --wait "$FOCUS" 2>/dev/null)
+  EXIT=$?
+  if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
+    echo "$OUTPUT"
+  else
+    echo '{"verdict":"error","summary":"Codex adversarial review failed (exit '$EXIT')","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
+  fi
 else
   echo "CODEX_UNAVAILABLE"
 fi
 ```
 
-**If Codex is unavailable or errors:** run an inline adversarial pass yourself using the same rubric and output the same JSON structure:
+**If Codex is unavailable, errors, or returns `verdict: "error"`:** run an inline adversarial pass yourself using the same rubric and output the same JSON structure. Do NOT proceed to `/execute-prd` without either valid Codex output or a completed inline fallback:
 - Read the PRD at the path saved in Step 1
 - Review as a skeptical staff PM/architect
 - Find: invalid assumptions, contradicting requirements, missing edge/failure/abuse modes, untestable ACs, hidden dependencies, missing observability/migration/rollback requirements
