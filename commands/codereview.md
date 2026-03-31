@@ -2,10 +2,10 @@
 name: codereview
 description: "Interactive code review — checks correctness, pattern adherence, and best practices. Asks when intent is unclear. Can apply fixes."
 args:
-  - name: scope
+  - name: input
     type: string
     required: false
-    description: "What to review: 'staged', a commit ref like 'abc123', 'PR #N', or a file path. Defaults to staged changes, falling back to unstaged."
+    description: "Scope and/or intent. Can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', 'adding scan_type to src_abc model for ACM product. Needed to distinguish full from classic scans.'"
 model: opus
 ---
 
@@ -19,13 +19,18 @@ You are reviewing code changes interactively with the user. You can see the full
 2. **Pattern adherence** — Does the code follow existing patterns in this codebase? Search for similar code nearby. Flag deviations from established conventions (naming, error handling, data flow, file organization).
 3. **Best practices** — Is the code using current/recommended approaches? Check library docs with `mcp__context7` when unsure. Flag deprecated APIs, known anti-patterns, and missed language features that simplify the code.
 
-## Step 1: Scope the review
+## Step 1: Parse input and scope the review
 
-Based on `$ARGUMENTS`:
+`$ARGUMENTS` may contain a scope, a description of intent, or both. Parse it:
+
+**Scope** (determines which diff to review):
 - No args or `staged` → `git diff --cached` (staged), fall back to `git diff` (unstaged)
 - A commit ref (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`
 - `PR #N`, `MR #N`, or just a number → On GitHub repos: `gh pr diff N`. On GitLab repos or if `gh` is unavailable: `git diff main...HEAD`.
 - A file path → read the file, check recent changes with `git log -5 --follow <file>`
+- If no scope token is found, default to staged/unstaged diff.
+
+**Intent description** (everything that isn't a scope token): If the user describes what the changes are supposed to do, treat this as authoritative context for the review. Use it to verify correctness — the code should match the stated intent. If the code diverges from the description, that's a blocking finding. If the description mentions deployment steps, migration requirements, or caveats, verify the code supports them.
 
 Show a one-line summary of what you're reviewing ("Reviewing 3 files, 47 lines changed since abc123").
 
