@@ -298,6 +298,8 @@ for i in $(seq 0 $((BATCH_COUNT - 1))); do
     echo "{\"error\": \"Failed to create worktree for batch '$BATCH_NAME'\"}" >> "$OUTPUT_FILE"
     SESSION_PIDS+=(-1)
     SESSION_NAMES+=("$BATCH_NAME")
+    SESSION_MODELS+=("")
+    SESSION_TURNS+=("")
     WORKTREE_PATHS+=("")
     WORKTREE_BRANCHES+=("")
     continue
@@ -369,11 +371,20 @@ for i in "${!WORKTREE_BRANCHES[@]}"; do
   BRANCH="${WORKTREE_BRANCHES[$i]}"
   PATH_WT="${WORKTREE_PATHS[$i]}"
   NAME="${SESSION_NAMES[$i]}"
-  EXIT_CODE="${SESSION_EXIT_CODES[$i]}"
 
   if [ -z "$BRANCH" ] || [ -z "$PATH_WT" ]; then
     MERGE_RESULTS+=("{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"worktree_not_created\"}")
     continue
+  fi
+
+  # Read the actual claude exit code from the .exit file (not from `wait`, which captures
+  # the subshell exit — always 0 because `echo $?` is the last command in the subshell)
+  OUTPUT_FILE="${WORK_DIR}/session_${i}_${NAME}.json"
+  EXIT_FILE="${OUTPUT_FILE}.exit"
+  if [ -f "$EXIT_FILE" ]; then
+    EXIT_CODE=$(cat "$EXIT_FILE" 2>/dev/null || echo "${SESSION_EXIT_CODES[$i]}")
+  else
+    EXIT_CODE="${SESSION_EXIT_CODES[$i]}"
   fi
 
   # Skip merge for failed sessions — don't pull incomplete work into the feature branch
@@ -389,7 +400,7 @@ for i in "${!WORKTREE_BRANCHES[@]}"; do
   if ! git -C "$PATH_WT" diff --quiet 2>/dev/null || ! git -C "$PATH_WT" diff --cached --quiet 2>/dev/null; then
     HAS_UNCOMMITTED=true
     echo "[$(date +"%H:%M:%S")] Worktree '$NAME' has uncommitted changes — auto-committing" >&2
-    git -C "$PATH_WT" add -A 2>/dev/null
+    git -C "$PATH_WT" add -u 2>/dev/null
     COMMIT_OUTPUT=$(git -C "$PATH_WT" commit -m "swarm(${FEATURE_ID}): auto-commit uncommitted changes from batch '${NAME}'" 2>&1)
     COMMIT_EXIT=$?
     if [ "$COMMIT_EXIT" -ne 0 ]; then

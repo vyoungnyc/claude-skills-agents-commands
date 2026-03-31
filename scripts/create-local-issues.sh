@@ -78,10 +78,15 @@ fi
 PLANS_DIR="plans/${FEATURE_ID}"
 mkdir -p "$PLANS_DIR"
 
-STEP_COUNT=$(jq 'length' < "$PLAN_STEPS_FILE")
+# Cache file content to avoid re-reading from disk on every loop iteration
+PLAN_STEPS=$(cat "$PLAN_STEPS_FILE")
+STEP_COUNT=$(echo "$PLAN_STEPS" | jq 'length')
 ISSUE_MAP="{}"
 TASK_LIST=""
 DATE=$(date +%Y-%m-%d)
+
+# Escape YAML scalars — wrap in single quotes, escape internal single quotes
+yaml_escape() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
 
 # Refuse to overwrite existing issue files unless FORCE_OVERWRITE=1
 if [ "${FORCE_OVERWRITE:-0}" != "1" ] && ls "$PLANS_DIR"/issue-*.md &>/dev/null; then
@@ -94,20 +99,19 @@ for i in $(seq 0 $((STEP_COUNT - 1))); do
   ISSUE_NUM=$((i + 1))
   ISSUE_FILE="$PLANS_DIR/issue-$(printf '%04d' $ISSUE_NUM).md"
 
-  STEP_ID=$(jq -r ".[$i].step_id" < "$PLAN_STEPS_FILE")
-  TITLE=$(jq -r ".[$i].title" < "$PLAN_STEPS_FILE")
-  COMPLEXITY=$(jq -r ".[$i].complexity // \"medium\"" < "$PLAN_STEPS_FILE")
-  BATCH_HINT=$(jq -r ".[$i].batch_hint // \"general\"" < "$PLAN_STEPS_FILE")
-  FILE_DOMAIN=$(jq -r ".[$i].file_domain | join(\", \")" < "$PLAN_STEPS_FILE")
-  DEPS=$(jq -r ".[$i].dependencies | if length > 0 then join(\", \") else \"none\" end" < "$PLAN_STEPS_FILE")
+  STEP=$(echo "$PLAN_STEPS" | jq ".[$i]")
+  STEP_ID=$(echo "$STEP" | jq -r '.step_id')
+  TITLE=$(echo "$STEP" | jq -r '.title')
+  COMPLEXITY=$(echo "$STEP" | jq -r '.complexity // "medium"')
+  BATCH_HINT=$(echo "$STEP" | jq -r '.batch_hint // "general"')
+  FILE_DOMAIN=$(echo "$STEP" | jq -r '.file_domain | join(", ")')
+  DEPS=$(echo "$STEP" | jq -r '.dependencies | if length > 0 then join(", ") else "none" end')
 
-  # Escape YAML scalars — wrap in single quotes, escape internal single quotes
-  yaml_escape() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
   TITLE_ESCAPED=$(yaml_escape "$TITLE")
   STEP_ID_ESCAPED=$(yaml_escape "$STEP_ID")
 
   # Build acceptance criteria checkboxes
-  AC_LINES=$(jq -r ".[$i].acceptance_criteria[]? | \"- [ ] \" + ." < "$PLAN_STEPS_FILE")
+  AC_LINES=$(echo "$STEP" | jq -r '.acceptance_criteria[]? | "- [ ] " + .')
   if [ -z "$AC_LINES" ]; then
     AC_LINES="- [ ] (no acceptance criteria defined)"
   fi
@@ -154,10 +158,11 @@ if [ -n "$ROADMAP_FILE" ] && [ -f "$ROADMAP_FILE" ]; then
 
 | Phase | Status | Summary |
 |-------|--------|---------|"
-  PHASE_COUNT=$(jq 'length' < "$ROADMAP_FILE")
+  ROADMAP_DATA=$(cat "$ROADMAP_FILE")
+  PHASE_COUNT=$(echo "$ROADMAP_DATA" | jq 'length')
   for j in $(seq 0 $((PHASE_COUNT - 1))); do
-    PHASE_NAME=$(jq -r ".[$j].phase" < "$ROADMAP_FILE")
-    PHASE_SUMMARY=$(jq -r ".[$j].summary" < "$ROADMAP_FILE")
+    PHASE_NAME=$(echo "$ROADMAP_DATA" | jq -r ".[$j].phase")
+    PHASE_SUMMARY=$(echo "$ROADMAP_DATA" | jq -r ".[$j].summary")
     if [ "$j" -eq 0 ]; then
       ROADMAP_SECTION="${ROADMAP_SECTION}
 | ${PHASE_NAME} | In Progress | ${PHASE_SUMMARY} |"

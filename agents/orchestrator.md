@@ -46,12 +46,22 @@ When receiving an external PRD, architect reviews for:
 - **Minor gaps** → user answers inline, architect updates PRD, proceed.
 - **Major gaps or scope issues** → redirect to `/discover` for structured refinement before proceeding.
 
-### 1b. GitHub Issues Creation
+### 1b. Issue Creation (auto-detect platform)
 
 After plan is created and before presenting to user for approval:
-- Call `scripts/create-github-issues.sh` with `<feature_id>` and the plan steps JSON.
-- Script outputs `{"epic": N, "issues": {"step_01": M, ...}}` — store this mapping.
-- Include the epic link and each issue link in the plan approval summary presented to the user.
+
+```
+if gh auth status &>/dev/null && git remote get-url origin 2>/dev/null | grep -q github; then
+  scripts/create-github-issues.sh <feature_id> <plan_steps_json>
+  # Output: {"epic": 42, "issues": {"step_01": 43, ...}} (integer issue numbers)
+else
+  scripts/create-local-issues.sh <feature_id> <plan_steps_json>
+  # Output: {"epic": "plans/.../issue-0000.md", "issues": {"step_01": "plans/.../issue-0001.md", ...}} (file paths)
+fi
+```
+
+Store this mapping. Values are integers (GitHub) or file path strings (local) — downstream code handles both.
+Include the epic link (or file path) and each issue link in the plan approval summary presented to the user.
 
 ### 2. Plan approval checkpoint (mandatory — no exceptions)
 
@@ -179,16 +189,22 @@ claude --resume "{session_id}" -p "Continue where you left off"
 ```
 If resume fails (no session ID or second failure), escalate to the user — the infrastructure issue needs manual resolution.
 
+#### e) `launch_failure` — worktree creation failed (git state issue)
+
+Retry worktree creation once (the stale worktree may have been cleaned up by now). If it fails again, escalate to the user — likely a git state issue (locked index, disk full, branch conflict) that needs manual resolution.
+
 #### Recovery flow summary
 ```
 Session fails → check failure_reason:
-  max_turns      → upgrade model (haiku→sonnet→opus) → retry
-                   already opus? → escalate to user
-  tool_error     → escalate to user immediately
+  max_turns        → upgrade model (haiku→sonnet→opus) → retry
+                     already opus? → escalate to user
+  tool_error       → escalate to user immediately
   context_overflow → retry with opus 1M
                      already opus? → escalate to user
-  infrastructure → claude --resume (same model)
-                   fails again? → escalate to user
+  infrastructure   → claude --resume (same model)
+                     fails again? → escalate to user
+  launch_failure   → retry worktree creation once
+                     fails again? → escalate to user
 ```
 
 ### 7. Documentation (after gate steps pass)

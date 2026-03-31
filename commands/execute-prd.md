@@ -214,6 +214,7 @@ The script:
 | `tool_error` | Escalate to user immediately — unrecoverable without human input. |
 | `context_overflow` | Retry with opus (1M context). If already opus, escalate to user. |
 | `infrastructure` | `claude --resume "{session_id}"` with same model. If fails again, escalate to user. |
+| `launch_failure` | Retry worktree creation once. If fails again, escalate to user. |
 
 ---
 
