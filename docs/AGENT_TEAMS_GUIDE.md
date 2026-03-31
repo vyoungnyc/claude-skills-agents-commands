@@ -67,6 +67,8 @@ Each teammate completes their module with tests. Report back when done.
 
 ### Pattern 2: Multi-Perspective Review
 
+> **Note:** For standard code review, use the reviewer agent's built-in PR Review Mode (5-angle parallel review with haiku scoring and dedup) or the `/codereview` command (7-angle: 5 Claude + 2 Codex). Agent teams are for deeper cross-domain review where reviewers benefit from challenging each other in real time.
+
 When a feature touches security-sensitive code and needs deep review from multiple angles simultaneously.
 
 ```
