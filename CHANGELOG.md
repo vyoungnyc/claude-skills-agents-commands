@@ -2,6 +2,69 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.3.2] - 2026-03-30
+
+### Hardening, Correctness Fixes & Tiered Failure Recovery
+
+Comprehensive review and hardening pass across the entire swarm pipeline, fixing critical bugs that caused silent data loss and adding tiered failure recovery with model upgrades.
+
+### Fixed
+
+- **Critical: Failed sessions silently merged** (`scripts/swarm-dispatch.sh`) — The merge loop used `wait`'s exit code to determine session success, but `wait` returns the subshell's exit code (always 0 because `echo $?` is the last subshell command), not claude's exit code. Failed sessions were merged into the feature branch with incomplete/broken code. Now reads the actual exit code from the `.exit` file.
+
+- **Critical: Swarm dispatch arg mismatch** (`commands/execute-prd.md`, `agents/orchestrator.md`) — Both callers passed the plan file path as arg 2 to `swarm-dispatch.sh`, but the script expects the feature branch name. Fixed to pass `feature/{feature_id}`.
+
+- **Critical: Batch config field mismatch** (`commands/execute-prd.md`) — Batch config JSON used a `"model"` field, but `swarm-dispatch.sh` reads `"complexity"`. Fixed to use `"complexity"` consistently.
+
+- **Critical: Merge targeted wrong branch** (`scripts/swarm-dispatch.sh`) — No `git checkout` before the merge loop meant merges could land on whatever branch HEAD pointed to. Added explicit checkout of the feature branch with dirty-tree guard.
+
+- **28 stale agent references cleaned** — Replaced references to removed agents (planner, test-spec, documenter) across 20 files: 6 agents, 2 commands, 1 doc, 10 skills, 2 hooks. The `reinject-context.sh` PostCompact hook was re-injecting "planner may ask questions" on every compaction. The `auto-test-runner.sh` hook routed failures to nonexistent `test-spec` agent.
+
+- **SESSION_MODELS/SESSION_TURNS array misalignment** (`scripts/swarm-dispatch.sh`) — Launch failures skipped array appends, causing all subsequent sessions to read the wrong model/turns from misaligned arrays.
+
+- **Auto-commit failure silently dropped edits** (`scripts/swarm-dispatch.sh`) — If auto-commit failed (missing git config, empty tree), `|| true` swallowed the error, then the no-new-commits check removed the worktree. Now treats auto-commit failure as a merge blocker and preserves the worktree for manual recovery.
+
+- **Auto-commit staged secrets** (`scripts/swarm-dispatch.sh`) — `git add -A` staged everything including potential `.env` files or debug artifacts. Changed to `git add -u` (tracked files only).
+
+- **Branch creation failed on rerun** (`commands/execute-prd.md`) — `git checkout -b` failed when `/discover` already created the branch. Changed to `checkout || checkout -b`.
+
+- **Remote branch not found** (`scripts/swarm-dispatch.sh`) — Branch detection didn't fetch from origin, so remote-only branches weren't found. Added `git fetch origin $FEATURE_BRANCH` before detection.
+
+- **Invalid YAML frontmatter** (`scripts/create-local-issues.sh`) — Unescaped titles with colons or quotes produced invalid YAML. Added `yaml_escape()` with single-quote wrapping.
+
+- **Unconditional .gitignore modification** (`scripts/create-local-issues.sh`) — `.gitignore` was modified even outside a git repo. Guarded with git repo check; added `SKIP_GITIGNORE=1` opt-out.
+
+- **Local issue files overwritten on rerun** (`scripts/create-local-issues.sh`) — Reruns silently overwrote issue files containing notes/progress. Now refuses unless `FORCE_OVERWRITE=1`.
+
+- **Stale worktree branches deleted without warning** (`scripts/swarm-dispatch.sh`) — Prior-run branches with unmerged commits were force-deleted. Now warns with commit count before deletion.
+
+### Added
+
+- **Tiered failure recovery** (`agents/orchestrator.md`, `commands/execute-prd.md`, `scripts/swarm-dispatch.sh`):
+  - `classify_failure()` function examines session output and logs to determine: `max_turns`, `tool_error`, `context_overflow`, `infrastructure`, `launch_failure`, or `success`
+  - `max_turns` → upgrade model (haiku→sonnet→opus); already opus → escalate to user
+  - `tool_error` → escalate to user immediately
+  - `context_overflow` → retry with opus 1M context; already opus → escalate to user
+  - `infrastructure` → `claude --resume` same model; fails again → escalate to user
+  - `launch_failure` → retry worktree creation once; fails again → escalate to user
+  - Per-session `failure_reason` and `model` fields in swarm JSON output
+
+- **Preflight dependency checks** (`scripts/swarm-dispatch.sh`) — Validates `jq`, `git`, and `claude` CLI are available before any git mutations.
+
+- **Dirty-tree guard** (`scripts/swarm-dispatch.sh`) — Requires clean working tree before checkout/merge to prevent stomping local changes.
+
+- **No-changes merge skip** (`scripts/swarm-dispatch.sh`) — Skips merge when worktree branch has no new commits vs the feature branch.
+
+### Changed
+
+- **Model names normalized** — `swarm-dispatch.sh` model constants changed from `claude-opus-4-5`/`claude-sonnet-4-5`/`claude-haiku-3-5` to short names `opus`/`sonnet`/`haiku`. `commands/git.md` changed from `claude-4.5-haiku` to `haiku`.
+
+- **README.md** — Orchestrator model corrected to sonnet. Scripts count corrected to 5. Swarm-dispatch description expanded. v2.3.2 summary added.
+
+- **Efficiency: create-local-issues.sh** — Plan steps file cached in variable (was re-reading from disk 7 times per step per iteration). Roadmap file cached. `yaml_escape()` moved above loop.
+
+---
+
 ## [2.3.1] - 2026-03-30
 
 ### Phase 5: Swarm Architecture, Discovery & Issue Tracking

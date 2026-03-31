@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.3.1
+**Version:** 2.3.2
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -123,9 +123,9 @@ Or if you already have a PRD:
 |---|---|---|
 | poll-pr-reviews.sh | GitHub | Poll a PR for new review threads, approval emoji (👍/✅), or idle timeout. Used by `/pr-fix-loop`. |
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
-| swarm-dispatch.sh | Any | Launch N parallel claude sessions in git worktrees with complexity-based model selection; merge results. Used by orchestrator for 3+ step swarms. |
+| swarm-dispatch.sh | Any | Launch N parallel claude sessions in git worktrees with complexity-based model selection, failure classification (`max_turns`/`tool_error`/`context_overflow`/`infrastructure`/`launch_failure`), safe merge with auto-commit and dirty-tree guards. Used by orchestrator for 3+ step swarms. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
-| create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. |
+| create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
 
@@ -176,6 +176,13 @@ scripts/poll-mr-reviews.sh 42 60 15
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.3.2** — Hardening, correctness fixes, and tiered failure recovery:
+- Fixed critical merge bug: failed sessions were silently merged (subshell exit code masking)
+- Tiered failure recovery: `max_turns` → upgrade model, `tool_error` → escalate, `context_overflow` → opus 1M, `infrastructure` → resume
+- Cleaned 28 stale references to removed agents (planner, test-spec, documenter)
+- Data loss prevention: auto-commit before merge, overwrite protection for local issues, dirty-tree guard
+- Preflight dependency checks, remote branch fetch, YAML escaping, model name normalization
 
 **v2.3.1 (Phase 5)** — Swarm architecture, discovery, and issue tracking:
 - `/discover` command — interactive PRD creation with codebase analysis, web research, scope management, incremental splits
