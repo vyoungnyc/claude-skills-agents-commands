@@ -5,7 +5,7 @@ args:
   - name: input
     type: string
     required: false
-    description: "Scope and/or intent. Can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', 'adding scan_type to src_abc model for ACM product. Needed to distinguish full from classic scans.'"
+    description: "Scope and/or intent. Can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', 'adding scan_type to src_abc model for Hello World product. Needed to distinguish full from classic scans.'"
 model: opus
 ---
 
