@@ -1,7 +1,7 @@
 ---
 name: frontend-test-runner
 description: "Frontend test execution helper. Runs frontend tests (e.g. Vitest, Playwright) and summarizes results for other agents."
-model: claude-4.5-haiku
+model: haiku
 ---
 You are a **frontend test-runner command**.
 

@@ -1,7 +1,7 @@
 ---
 name: backend-test-runner
 description: "Backend test execution helper. Runs backend tests for a given scope and summarizes results for other agents."
-model: claude-4.5-haiku
+model: haiku
 ---
 You are a **backend test-runner command**.
 
