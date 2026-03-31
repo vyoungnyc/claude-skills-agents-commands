@@ -193,6 +193,7 @@ select_turns() {
 declare -a SESSION_PIDS=()
 declare -a SESSION_NAMES=()
 declare -a SESSION_MODELS=()
+declare -a SESSION_TURNS=()
 declare -a WORKTREE_PATHS=()
 declare -a WORKTREE_BRANCHES=()
 
@@ -201,41 +202,39 @@ declare -a WORKTREE_BRANCHES=()
 # ---------------------------------------------------------------------------
 
 classify_failure() {
-  local exit_code="$1" output_file="$2" log_file="$3" turns="$4"
-  local output="" logs=""
-
-  [ -f "$output_file" ] && output=$(cat "$output_file" 2>/dev/null || true)
+  local exit_code="$1" output_content="$2" log_file="$3" max_turns="$4"
+  local logs=""
   [ -f "$log_file" ] && logs=$(cat "$log_file" 2>/dev/null || true)
-  local combined="$output $logs"
+  local combined="$output_content $logs"
 
-  # Context window overflow — look for token/context limit signals
+  # Session was never launched (worktree creation failed, exit_code == -1)
+  if [ "$exit_code" -eq -1 ]; then
+    echo "launch_failure"
+    return
+  fi
+
+  # Checked first: context overflow can co-occur with max_turns signals
   if echo "$combined" | grep -qiE '(context.*(window|limit|overflow|exceeded)|token.*(limit|exceeded|maximum)|too.*(long|large).*context)'; then
     echo "context_overflow"
     return
   fi
 
-  # Infrastructure — network, API, or CLI errors
+  # Checked before max_turns: a rate-limited session might also hit turn limits
   if echo "$combined" | grep -qiE '(ECONNREFUSED|ETIMEDOUT|ENOTFOUND|network.error|connection.refused|rate.limit|503|502|429|API.error|socket.hang.up|fetch.failed)'; then
     echo "infrastructure"
     return
   fi
 
-  # maxTurns exhaustion — session ran out of turns (non-zero exit, high turn usage)
-  # The claude CLI exits non-zero when max turns is reached
+  # Check structured JSON first, then fall back to string matching for non-JSON output
   local turn_count
-  turn_count=$(echo "$output" | jq -r '.num_turns // 0' 2>/dev/null || echo "0")
-  if [ "$exit_code" -ne 0 ] && [ "$turn_count" -ge "$turns" ]; then
-    echo "max_turns"
-    return
+  turn_count=$(echo "$output_content" | jq -r '.num_turns // 0' 2>/dev/null || echo "0")
+  if [ "$exit_code" -ne 0 ]; then
+    if [ "$turn_count" -ge "$max_turns" ] || echo "$combined" | grep -qiE '(max.?turns|turn.limit|reached.*maximum.*turns)'; then
+      echo "max_turns"
+      return
+    fi
   fi
 
-  # Also classify as max_turns if the output mentions it
-  if echo "$combined" | grep -qiE '(max.?turns|turn.limit|reached.*maximum.*turns)'; then
-    echo "max_turns"
-    return
-  fi
-
-  # Tool error — anything else with non-zero exit
   if [ "$exit_code" -ne 0 ]; then
     echo "tool_error"
     return
@@ -299,6 +298,7 @@ for i in $(seq 0 $((BATCH_COUNT - 1))); do
   SESSION_PIDS+=($!)
   SESSION_NAMES+=("$BATCH_NAME")
   SESSION_MODELS+=("$MODEL")
+  SESSION_TURNS+=("$TURNS")
   WORKTREE_PATHS+=("$WORKTREE_PATH")
   WORKTREE_BRANCHES+=("$WORKTREE_BRANCH")
 done
@@ -405,6 +405,7 @@ for i in "${!SESSION_NAMES[@]}"; do
 
   # Parse session JSON output (read once to avoid double I/O)
   SESSION_JSON=""
+  RAW_OUTPUT=""
   if [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
     RAW_OUTPUT=$(cat "$OUTPUT_FILE")
     if echo "$RAW_OUTPUT" | jq -e '.' >/dev/null 2>&1; then
@@ -421,11 +422,11 @@ for i in "${!SESSION_NAMES[@]}"; do
   DURATION=$(echo "$SESSION_JSON" | jq -r '.duration_ms // null' 2>/dev/null || echo "null")
   RESULT=$(echo "$SESSION_JSON" | jq -r '.result // null' 2>/dev/null || echo "null")
   MODEL_USED="${SESSION_MODELS[$i]:-unknown}"
+  MAX_TURNS="${SESSION_TURNS[$i]:-30}"
 
-  # Classify failure reason for tiered recovery
+  # Classify failure reason for tiered recovery (pass content, not path — avoids re-reading)
   LOG_FILE="${WORK_DIR}/session_${i}_${NAME}.log"
-  TURNS_USED=$(select_turns "$(echo "$BATCH_CONFIG" | jq -r ".[$i].complexity // \"medium\"")")
-  FAILURE_REASON=$(classify_failure "$ACTUAL_EXIT" "$OUTPUT_FILE" "$LOG_FILE" "$TURNS_USED")
+  FAILURE_REASON=$(classify_failure "$ACTUAL_EXIT" "$RAW_OUTPUT" "$LOG_FILE" "$MAX_TURNS")
 
   MERGE_RESULT="${MERGE_RESULTS[$i]:-{\"batch\": \"$NAME\", \"merged\": false, \"reason\": \"unknown\"}}"
 
