@@ -56,18 +56,21 @@ if [ -n "$REPO_ROOT" ]; then
   cd "$REPO_ROOT"
 fi
 
-# Ensure plans/ is gitignored — skip if already ignored (check git directly to handle nested .gitignore)
-if ! git check-ignore -q "plans/" 2>/dev/null; then
-  GITIGNORE=".gitignore"
-  if [ -f "$GITIGNORE" ]; then
-    echo "" >> "$GITIGNORE"
-    echo "# Local issue tracking (not committed)" >> "$GITIGNORE"
-    echo "plans/" >> "$GITIGNORE"
-    echo "[create-local-issues] Added plans/ to .gitignore" >&2
-  else
-    echo "# Local issue tracking (not committed)" > "$GITIGNORE"
-    echo "plans/" >> "$GITIGNORE"
-    echo "[create-local-issues] Created .gitignore with plans/" >&2
+# Add plans/ to .gitignore if inside a git repo and not already ignored.
+# Set SKIP_GITIGNORE=1 to disable this behavior.
+if [ -n "$REPO_ROOT" ] && [ "${SKIP_GITIGNORE:-0}" != "1" ]; then
+  if ! git check-ignore -q "plans/" 2>/dev/null; then
+    GITIGNORE=".gitignore"
+    if [ -f "$GITIGNORE" ]; then
+      echo "" >> "$GITIGNORE"
+      echo "# Local issue tracking (not committed)" >> "$GITIGNORE"
+      echo "plans/" >> "$GITIGNORE"
+      echo "[create-local-issues] Added plans/ to .gitignore" >&2
+    else
+      echo "# Local issue tracking (not committed)" > "$GITIGNORE"
+      echo "plans/" >> "$GITIGNORE"
+      echo "[create-local-issues] Created .gitignore with plans/" >&2
+    fi
   fi
 fi
 

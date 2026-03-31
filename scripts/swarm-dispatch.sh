@@ -83,6 +83,21 @@ register_cleanup() {
 # Args
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Preflight: required binaries
+# ---------------------------------------------------------------------------
+
+for cmd in jq git claude; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "{\"error\": \"Required command '$cmd' not found. Install it before running swarm-dispatch.\"}" >&2
+    exit $EXIT_USAGE
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# Args
+# ---------------------------------------------------------------------------
+
 FEATURE_ID="${1:-}"
 FEATURE_BRANCH="${2:-}"
 BATCH_CONFIG_FILE="${3:-}"
@@ -140,6 +155,9 @@ if [ -z "$REPO_ROOT" ]; then
   echo '{"error": "Not inside a git repository"}' >&2
   exit $EXIT_FATAL
 fi
+
+# Fetch remote refs so we don't miss branches that exist only on origin
+git -C "$REPO_ROOT" fetch origin "$FEATURE_BRANCH" 2>/dev/null || true
 
 # Verify feature branch exists; create local tracking branch if only remote ref exists
 if git -C "$REPO_ROOT" rev-parse --verify "refs/heads/$FEATURE_BRANCH" >/dev/null 2>&1; then
