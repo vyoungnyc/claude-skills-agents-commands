@@ -5,6 +5,9 @@
 # Triggered on: Edit, Write (source files only, not docs/config)
 # Runs asynchronously — does not block Claude's work.
 # Results delivered as a systemMessage on the next turn.
+#
+# Kill + restart: if a previous test run is still in flight, kill it
+# and start fresh so tests always run against the latest code.
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
@@ -27,6 +30,17 @@ elif [ -f "jest.config.js" ] || [ -f "jest.config.ts" ]; then
 else
   exit 0
 fi
+
+# Kill any previous test run so we always test the latest code
+PIDFILE="${TMPDIR:-/tmp}/auto-test-runner.pid"
+if [ -f "$PIDFILE" ]; then
+  OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    kill "$OLD_PID" 2>/dev/null || true
+  fi
+fi
+echo $$ > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT INT TERM
 
 # Capture exit code via pipefail (piping to tail would otherwise lose it)
 set -o pipefail
