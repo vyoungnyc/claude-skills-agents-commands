@@ -134,7 +134,11 @@ fi
 
 **Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, read the Codex background task outputs. If a Codex task is still running, wait for it before proceeding to dedup. If `verdict` is `"error"`, note it in the final summary as a skipped reviewer — do not treat errors as clean approvals. Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
 
-Codex findings include `confidence` (0–1 scale) instead of `score`. **Do not send Codex findings to the haiku scoring step** — they already have confidence values.
+**Codex output format:** Codex may return structured JSON (with `confidence` 0–1 per finding) or rendered markdown. Handle both:
+- **JSON output:** Extract `confidence` per finding, compute `score = confidence × 100`.
+- **Markdown output:** Parse the rendered report, extract findings manually, and assign `score` based on severity (`[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40).
+
+Do **not** send Codex findings to the haiku scoring step — score them directly from the output.
 
 Note which reviewers were skipped, errored, or used a different scope in the final output.
 
@@ -161,8 +165,9 @@ Assign the returned score to its finding.
 ## Step 4.5: Normalize Codex findings
 
 Before dedup, normalize Codex findings (#6 and #7) so they have the same `score` field as Claude findings:
-- For each Codex finding, compute `score = confidence × 100` (e.g., 0.85 → 85).
-- Add the `score` field to each Codex finding JSON object.
+- **JSON output with `confidence`:** compute `score = confidence × 100` (e.g., 0.85 → 85).
+- **Markdown output without `confidence`:** assign `score` from severity: `[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40.
+- Add the `score` field to each Codex finding object.
 - All findings from all 7 agents **must** have a `score` (0–100) field before entering Step 5.
 
 ## Step 5: Deduplicate and merge
