@@ -38,7 +38,7 @@ Orchestrator dispatches to named agents in .claude/agents/:
   backend-coder         → backend impl + tests (sonnet, isolation: worktree, memory: project)
   frontend-coder        → frontend impl + tests (sonnet, isolation: worktree, memory: project)
   ui-ux                 → UX flows, design system guidance (sonnet, memory: project, AskUserQuestion)
-  reviewer              → code review (opus, permissionMode: plan, memory: project)
+  reviewer              → code review (opus, permissionMode: plan, memory: project, Agent — read-only sub-agents only)
   security-researcher   → security audit (opus, permissionMode: plan, memory: project)
 ```
 

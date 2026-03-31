@@ -2,6 +2,18 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.4.0] - 2026-03-31
+
+### Multi-Angle Parallel Review System
+
+- **Reviewer agent PR Review Mode** — 5-angle parallel review with haiku scoring and dedup (CLAUDE.md compliance, bug scan, git history, PR comments, code comments). Spawns read-only sub-agents only.
+- **`/codereview` command** — 7-angle parallel review (5 Claude + 2 Codex background reviewers). Haiku scoring, cross-source dedup, incremental Codex result integration. User decides what to fix.
+- **`/discover` adversarial review gate** — Inline adversarial PRD review before `/execute-prd` invocation. Verdict normalization, finding presentation, user re-approval after edits.
+- **Codex scope handling** — Three-case scope logic: matching (in-verdict), narrower (branch-wide section), different target like `PR #N` (Codex skipped).
+- **Failure threshold clarity** — Reviewer failure threshold scoped to 5 review agents only; haiku/dedup failures handled via fallback score (75).
+- **Feature ID derivation** — Existing-PRD intake path now derives `feature_id` before any canonical-path or branch references.
+- **Branch detection** — Approval gate uses explicit `git rev-parse --abbrev-ref HEAD` instead of ambiguous "if not already on one".
+
 ## [2.3.3] - 2026-03-30
 
 ### Deep Review & Hardening Pass (5-round code review)

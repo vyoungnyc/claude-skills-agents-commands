@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.3.3
+**Version:** 2.4.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -76,7 +76,7 @@ Or if you already have a PRD:
 | **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation + tests |
 | **coder** | sonnet | memory: project | General-purpose swarm implementer |
 | **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system, user research |
-| **reviewer** | opus | permissionMode: plan, memory: project | Read-only code review, runs in parallel with security-researcher |
+| **reviewer** | opus | permissionMode: plan, memory: project, Agent (read-only sub-agents only) | Code review with built-in 5-angle parallel PR Review Mode (CLAUDE.md compliance, bug scan, git history, PR comments, code comments). Scores with haiku, deduplicates. Runs in parallel with security-researcher |
 | **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit, runs in parallel with reviewer |
 
 ### Skills (11 — orchestrator invokes directly)
@@ -99,9 +99,9 @@ Or if you already have a PRD:
 
 | Command | Purpose |
 |---|---|
-| /discover | **Main entry point.** Interactive PRD discovery or review existing spec → auto-invokes `/execute-prd` on approval |
+| /discover | **Main entry point.** Interactive PRD discovery or review existing spec → adversarial review gate → auto-invokes `/execute-prd` on approval |
 | /execute-prd | Execute a PRD through the full swarm pipeline: review → plan → issues → swarm → review → PR |
-| /codereview | Interactive code review — correctness, pattern adherence, best practices. Asks when intent is unclear. Can fix directly. |
+| /codereview | Interactive 7-angle code review — 5 Claude sub-agents + 2 Codex reviewers (standard + adversarial), haiku scoring, cross-source dedup. Surfaces all findings; you decide what to fix. |
 | /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ on PR description (mandatory approval gate) or 15 min silence |
 | /mr-fix-loop | Fix review comments on GitLab MRs (GitLab Duo, Cursor BugBot, Codex, users) with Category A/B/C triage, fix pipeline failures locally, push, poll until MR approval or bot emoji gate or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
@@ -178,6 +178,12 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
+**v2.4.0** — Multi-angle parallel review system:
+- Reviewer agent PR Review Mode — 5-angle parallel review with haiku scoring and dedup
+- `/codereview` command — 7-angle review (5 Claude + 2 Codex), user decides what to fix
+- `/discover` adversarial review gate — inline PRD review before `/execute-prd`
+- Codex scope handling, failure threshold clarity, feature ID derivation, branch detection
+
 **v2.3.2** — Hardening, correctness fixes, and tiered failure recovery:
 - Fixed critical merge bug: failed sessions were silently merged (subshell exit code masking)
 - Tiered failure recovery: `max_turns` → upgrade model, `tool_error` → escalate, `context_overflow` → opus 1M, `infrastructure` → resume
@@ -232,6 +238,7 @@ agents/
   ui-ux.md
 commands/
   backend-test-runner.md
+  codereview.md
   discover.md
   execute-prd.md
   frontend-test-runner.md
