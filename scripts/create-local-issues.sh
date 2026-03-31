@@ -90,6 +90,7 @@ if ! jq -e '.' <<< "$PLAN_STEPS" >/dev/null 2>&1; then
 fi
 STEP_COUNT=$(jq 'length' <<< "$PLAN_STEPS")
 ISSUE_MAP_FILE=$(mktemp)
+trap 'rm -f "$ISSUE_MAP_FILE"' EXIT
 TASK_LIST=""
 DATE=$(date +%Y-%m-%d)
 

@@ -234,7 +234,9 @@ classify_failure() {
   fi
 
   # Convert to lowercase once for all pattern checks (avoids repeated grep forks)
-  local lc_combined="${combined,,}"
+  # Use tr instead of ${,,} for bash 3.2 (macOS) compatibility
+  local lc_combined
+  lc_combined=$(printf '%s' "$combined" | tr '[:upper:]' '[:lower:]')
 
   # Checked first: context overflow can co-occur with max_turns signals
   if [[ "$lc_combined" =~ context.*(window|limit|overflow|exceeded) ]] || \
@@ -298,8 +300,8 @@ for i in $(seq 0 $((BATCH_COUNT - 1))); do
     git -C "$REPO_ROOT" branch -D "$WORKTREE_BRANCH" 2>/dev/null || true
   fi
 
-  # Create worktree off the feature branch
-  if ! git -C "$REPO_ROOT" worktree add -b "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$FEATURE_BRANCH" 2>&1 | tee -a "$LOG_FILE" >&2; then
+  # Create worktree off the feature branch (redirect to log; avoid pipe to tee which masks exit code)
+  if ! git -C "$REPO_ROOT" worktree add -b "$WORKTREE_BRANCH" "$WORKTREE_PATH" "$FEATURE_BRANCH" >> "$LOG_FILE" 2>&1; then
     echo "{\"error\": \"Failed to create worktree for batch '$BATCH_NAME'\"}" >> "$OUTPUT_FILE"
     SESSION_PIDS+=(-1)
     SESSION_NAMES+=("$BATCH_NAME")
@@ -382,8 +384,8 @@ for i in "${!WORKTREE_BRANCHES[@]}"; do
     continue
   fi
 
-  # Read the actual claude exit code from the .exit file (not from `wait`, which captures
-  # the subshell exit — always 0 because `echo $?` is the last command in the subshell)
+  # Prefer .exit file over `wait` exit code — `wait` can miss the code if the PID is
+  # reaped before `wait` is called. The .exit file is written explicitly by the subshell.
   OUTPUT_FILE="${WORK_DIR}/session_${i}_${NAME}.json"
   EXIT_FILE="${OUTPUT_FILE}.exit"
   if [ -f "$EXIT_FILE" ]; then
@@ -519,4 +521,12 @@ read -r SUCCESS_COUNT FAILURE_COUNT MERGE_CONFLICT_COUNT < <(
   jq -r '[ ([.[] | select(.exit_code == 0)] | length), ([.[] | select(.exit_code != 0)] | length), ([.[] | select(.merge.conflicts == true)] | length) ] | @tsv' <<< "$RESULTS_JSON"
 )
 
-echo "{\"feature_id\": \"$FEATURE_ID\", \"feature_branch\": \"$FEATURE_BRANCH\", \"total\": $BATCH_COUNT, \"succeeded\": $SUCCESS_COUNT, \"failed\": $FAILURE_COUNT, \"merge_conflicts\": $MERGE_CONFLICT_COUNT, \"sessions\": $RESULTS_JSON}"
+jq -n \
+  --arg fid "$FEATURE_ID" \
+  --arg fb "$FEATURE_BRANCH" \
+  --argjson total "$BATCH_COUNT" \
+  --argjson ok "$SUCCESS_COUNT" \
+  --argjson fail "$FAILURE_COUNT" \
+  --argjson conflicts "$MERGE_CONFLICT_COUNT" \
+  --argjson sessions "$RESULTS_JSON" \
+  '{feature_id:$fid, feature_branch:$fb, total:$total, succeeded:$ok, failed:$fail, merge_conflicts:$conflicts, sessions:$sessions}'

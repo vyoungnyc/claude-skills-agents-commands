@@ -117,7 +117,7 @@ echo "[$(date +"%H:%M:%S")] Target repo: $REPO" >&2
 
 # Temp file for capturing gh stderr separately from stdout
 GH_STDERR=$(mktemp)
-trap 'rm -f "$GH_STDERR"' EXIT
+trap 'rm -f "$GH_STDERR" "$ISSUE_MAP_FILE"' EXIT
 
 # ---------------------------------------------------------------------------
 # Helper: extract issue number from gh issue create URL output
@@ -133,10 +133,9 @@ parse_issue_number() {
 
 echo "[$(date +"%H:%M:%S")] Ensuring labels exist on $REPO..." >&2
 LABELS_TO_CREATE=("epic" "feature:${FEATURE_ID}")
-readarray -t STEP_LABELS < <(
-  jq -r '[.[] | "domain:\(.batch_hint // "general")", "complexity:\(.complexity // "medium")"] | unique | .[]' <<< "$PLAN_STEPS"
-)
-LABELS_TO_CREATE+=("${STEP_LABELS[@]}")
+while IFS= read -r lbl; do
+  LABELS_TO_CREATE+=("$lbl")
+done < <(jq -r '[.[] | "domain:\(.batch_hint // "general")", "complexity:\(.complexity // "medium")"] | unique | .[]' <<< "$PLAN_STEPS")
 # Deduplicate and create
 printf '%s\n' "${LABELS_TO_CREATE[@]}" | sort -u | while IFS= read -r label; do
   gh label create "$label" --repo "$REPO" --force 2>/dev/null || true
@@ -243,8 +242,8 @@ QUALITY_GATES="### Quality Gates
 ROADMAP_SECTION=""
 if [ -n "$ROADMAP_FILE" ] && [ -f "$ROADMAP_FILE" ]; then
   ROADMAP_DATA=$(cat "$ROADMAP_FILE")
-  if echo "$ROADMAP_DATA" | jq -e '.' >/dev/null 2>&1; then
-    ROADMAP_ROWS=$(echo "$ROADMAP_DATA" | jq -r '.[] | "| \(.phase) | \(.epic // "_Not started_") | \(.status // "⚪ Planned") | \(.summary) |"')
+  if jq -e '.' <<< "$ROADMAP_DATA" >/dev/null 2>&1; then
+    ROADMAP_ROWS=$(jq -r '.[] | "| \(.phase) | \(.epic // "_Not started_") | \(.status // "⚪ Planned") | \(.summary) |"' <<< "$ROADMAP_DATA")
     ROADMAP_SECTION="
 ### Roadmap
 
