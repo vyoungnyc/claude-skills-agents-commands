@@ -95,12 +95,13 @@ Or if you already have a PRD:
 | fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
-### Commands (7)
+### Commands (8)
 
 | Command | Purpose |
 |---|---|
 | /discover | **Main entry point.** Interactive PRD discovery or review existing spec → auto-invokes `/execute-prd` on approval |
 | /execute-prd | Execute a PRD through the full swarm pipeline: review → plan → issues → swarm → review → PR |
+| /codereview | Interactive code review — correctness, pattern adherence, best practices. Asks when intent is unclear. Can fix directly. |
 | /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ on PR description (mandatory approval gate) or 15 min silence |
 | /mr-fix-loop | Fix review comments on GitLab MRs (GitLab Duo, Cursor BugBot, Codex, users) with Category A/B/C triage, fix pipeline failures locally, push, poll until MR approval or bot emoji gate or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
