@@ -24,7 +24,7 @@ You are reviewing code changes interactively with the user. You can see the full
 Based on `$ARGUMENTS`:
 - No args or `staged` → `git diff --cached` (staged), fall back to `git diff` (unstaged)
 - A commit ref (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`
-- `PR #N` or just a number → `gh pr diff N`
+- `PR #N` or just a number → `gh pr diff N` (if `gh` is not available, fall back to `git diff main...HEAD` and tell the user)
 - A file path → read the file, check recent changes with `git log -5 --follow <file>`
 
 Show a one-line summary of what you're reviewing ("Reviewing 3 files, 47 lines changed since abc123").
