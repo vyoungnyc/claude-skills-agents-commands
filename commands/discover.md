@@ -39,9 +39,10 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
    - "Do you already have a PRD, spec, or requirements document for this? If so, provide the file path and I'll review it."
    - If user provides a file path:
      - Read the file.
+     - **Derive `feature_id` immediately:** Extract a short identifier from the PRD title, filename, or topic (e.g., `user_auth`, `payment_integration`). Sanitize to alphanumeric characters, hyphens, and underscores only. Confirm with the user: "I'll use `{feature_id}` as the feature identifier — OK?" Do not proceed until `feature_id` is established.
      - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
-     - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), **verify the PRD exists at the canonical path before proceeding**, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
-     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), **verify the PRD exists at the canonical path before proceeding**, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), **verify the PRD exists at the canonical path**, then create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), **verify the PRD exists at the canonical path**, then create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
      - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
    - If user says no (or just provides a topic): proceed to step 2.
 
@@ -327,102 +328,44 @@ The canonical path is always `docs/features/{feature_id}/PRD.md`. All subsequent
 - **Freshly written PRD (from discovery phases):** Save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed). Confirm to the user: "PRD saved to `docs/features/{feature_id}/PRD.md`."
 - **Existing PRD (user-provided file):** The first-reply block already copied it to the canonical path. Verify `docs/features/{feature_id}/PRD.md` exists and proceed to Step 2. If the file is missing, copy it now.
 
-### Step 2: Run Codex adversarial review
+### Step 2: Run adversarial review
 
-**Important:** Before running the bash below, you must:
-1. Replace `{feature_id}` with the actual feature ID (e.g., `user_auth`). **Sanitize it** to alphanumeric characters, hyphens, and underscores only — strip any shell metacharacters.
-2. The resolved path must match the canonical path from Step 1.
+> **Why inline, not Codex?** The Codex companion's `adversarial-review` subcommand is hard-wired to its code-review schema (`approve|needs-attention` with file/line findings). It cannot accept a custom prompt or return the PRD-specific schema this gate requires (`needs_revision|block` with `section/evidence_quote/missing_acceptance_tests/open_questions`). PRD adversarial review is always performed inline.
 
-```bash
-CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
-PRD_PATH="docs/features/{feature_id}/PRD.md"
+Read the PRD at the canonical path from Step 1 and perform an adversarial review as a skeptical staff PM/architect. Find:
+- Invalid assumptions
+- Contradictory requirements
+- Missing edge/failure/abuse modes
+- Untestable or ambiguous acceptance criteria
+- Hidden dependencies and rollout risks
+- Missing observability, migration, and rollback requirements
 
-# Guard: abort if placeholder was not substituted
-if [[ "$PRD_PATH" == *"{"* ]]; then
-  echo '{"verdict":"error","summary":"PRD_PATH placeholder was not substituted","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
-  exit 1
-fi
+Cite by section heading + evidence quote — not line numbers. Report only material findings.
 
-# Guard: extract and validate feature_id from PRD_PATH (must be alphanumeric, hyphens, underscores only — no slashes, no path traversal)
-FEATURE_ID=$(echo "$PRD_PATH" | sed -n 's|^docs/features/\([^/]*\)/PRD\.md$|\1|p')
-if [ -z "$FEATURE_ID" ] || [[ ! "$FEATURE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
-  echo '{"verdict":"error","summary":"PRD_PATH does not match canonical pattern docs/features/<safe_id>/PRD.md","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
-  exit 1
-fi
-
-# Guard: verify PRD_PATH is the canonical form (defense-in-depth — FEATURE_ID already validated above)
-# Uses prefix match anchored to repo root, not substring match. Does not cd (dir may not exist yet).
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-if [[ "$REPO_ROOT/$PRD_PATH" != "$REPO_ROOT/docs/features/$FEATURE_ID/"* ]]; then
-  echo '{"verdict":"error","summary":"PRD_PATH resolves outside docs/features/","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
-  exit 1
-fi
-
-# Guard: abort if PRD file does not exist
-if [ ! -f "$PRD_PATH" ]; then
-  echo "{\"verdict\":\"error\",\"summary\":\"PRD file not found at $PRD_PATH\",\"findings\":[],\"missing_acceptance_tests\":[],\"open_questions\":[]}"
-  exit 1
-fi
-
-FOCUS="Read \`./$PRD_PATH\` (even if untracked) and perform an adversarial PRD review.
-
-Review as a skeptical staff PM/architect. Find:
-- invalid assumptions
-- contradictory requirements
-- missing edge/failure/abuse modes
-- untestable or ambiguous acceptance criteria
-- hidden dependencies and rollout risks
-- missing observability, migration, and rollback requirements
-
-Output strict JSON:
+Output the review as this JSON structure:
+```json
 {
-  \"verdict\": \"approve|needs_revision|block\",
-  \"findings\": [
+  "verdict": "approve|needs_revision|block",
+  "findings": [
     {
-      \"severity\": \"high|medium|low\",
-      \"category\": \"assumption|contradiction|edge_case|testability|dependency|operational_risk|security|compliance\",
-      \"section\": \"<heading path>\",
-      \"evidence_quote\": \"<short quote from PRD>\",
-      \"risk\": \"<what fails and why>\",
-      \"recommendation\": \"<specific rewrite or added requirement>\",
-      \"confidence\": 0.0
+      "severity": "high|medium|low",
+      "category": "assumption|contradiction|edge_case|testability|dependency|operational_risk|security|compliance",
+      "section": "<heading path>",
+      "evidence_quote": "<short quote from PRD>",
+      "risk": "<what fails and why>",
+      "recommendation": "<specific rewrite or added requirement>",
+      "confidence": 0.0
     }
   ],
-  \"missing_acceptance_tests\": [\"...\"],
-  \"open_questions\": [\"...\"]
-}"
-
-if [ -n "$CODEX" ]; then
-  # Pass FOCUS via temp file to avoid shell expansion risks with multi-line positional arguments
-  FOCUS_FILE=$(mktemp "${TMPDIR:-/tmp}/prd-review-focus.XXXXXX")
-  printf '%s' "$FOCUS" > "$FOCUS_FILE"
-  OUTPUT=$(node "$CODEX" adversarial-review "$FOCUS_FILE" 2>/dev/null)
-  EXIT=$?
-  rm -f "$FOCUS_FILE"
-  if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
-    echo "$OUTPUT"
-  else
-    echo "{\"verdict\":\"error\",\"summary\":\"Codex adversarial review failed (exit $EXIT)\",\"findings\":[],\"missing_acceptance_tests\":[],\"open_questions\":[]}"
-  fi
-else
-  echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"missing_acceptance_tests":[],"open_questions":[]}'
-fi
+  "missing_acceptance_tests": ["..."],
+  "open_questions": ["..."]
+}
 ```
-
-**If Codex is unavailable, errors, or returns `verdict: "error"`:** run an inline adversarial pass yourself using the same rubric and output the same JSON structure. Do NOT proceed to `/execute-prd` without either valid Codex output or a completed inline fallback:
-- Read the PRD at the path saved in Step 1
-- Review as a skeptical staff PM/architect
-- Find: invalid assumptions, contradicting requirements, missing edge/failure/abuse modes, untestable ACs, hidden dependencies, missing observability/migration/rollback requirements
-- Cite by section heading + evidence quote — not line numbers
-- Report only material findings
 
 ### Step 3: Present findings and address them
 
-**Parse the output.** Codex may return structured JSON (with `verdict` and `findings`) or rendered markdown. Handle both:
-- **JSON:** Parse directly. Normalize the verdict through the shared mapping below before branching.
-- **Markdown:** Extract the verdict from the report header and parse findings from the bullet list. Map severity labels (`[critical]` → critical, `[high]` → high, `[medium]` → medium, `[low]` → low).
+**Normalize the verdict** from the inline review output before branching:
 
-**Verdict normalization (apply to both JSON and markdown):**
 - `approve` / `pass` → `approve`
 - `needs_revision` / `needs-revision` / `needs-attention` → `needs_revision`
 - `block` / `reject` / `fail` → `block`
@@ -462,8 +405,8 @@ After presenting the full PRD:
 
 1. Ask: "Does this accurately capture what we're building? Any changes before I save it?"
 2. Iterate on feedback until the user explicitly approves: "Yes", "Approved", "Looks good", "Ship it", etc.
-3. On approval: save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed), create branch if not already on one (verify `git checkout -b` succeeds), then run the **Adversarial Review Gate** above.
-4. After all adversarial findings are resolved and user re-approves the final PRD: invoke `/execute-prd`:
+3. On approval: save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed). Detect current branch: run `git rev-parse --abbrev-ref HEAD` — if the result is `main`, `master`, or `HEAD` (detached), create a new branch with `git checkout -b feat/{feature_id}` (abort and inform the user if it fails). Then run the **Adversarial Review Gate** above.
+4. After all adversarial findings are resolved and user re-approves the final PRD (do NOT invoke `/execute-prd` without explicit user re-approval per the Adversarial Review Gate's re-approval requirement): invoke `/execute-prd`:
    ```
    /execute-prd {feature_id} docs/features/{feature_id}/PRD.md
    ```

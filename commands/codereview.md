@@ -96,7 +96,10 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
 
-**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1. If the user specified a non-default scope (e.g., a single file or a specific commit range), note this discrepancy in the final output — Codex findings may cover a broader or different diff than Claude agents. **When the user's scope is narrower than branch-vs-default**, tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict calculation — present them in a separate "Branch-wide Codex findings" section so they don't inflate the scoped verdict.
+**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1 and does not accept explicit scope flags. If the user specified a non-default scope (e.g., a single file, a specific commit range, or `PR #N`), Codex will review a different target than the Claude agents. Handle this as follows:
+- **User scope matches branch-vs-default** (no args, `staged`, or full branch diff): Codex findings are in-scope — include them in the primary verdict.
+- **User scope is narrower than branch-vs-default** (single file, commit range): Tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict — present them in a separate "Branch-wide Codex findings" section.
+- **User scope is a different target entirely** (`PR #N`, `MR #N`, specific commit ref): Treat Codex as **skipped** for this review — it cannot review the same target. Note in the summary: "Codex reviewers skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide.
 
 **Codex #6 — Standard review:**
 ```bash

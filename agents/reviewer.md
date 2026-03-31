@@ -139,7 +139,7 @@ Sort by `score` descending. Return **all findings** — do not filter. Include t
 - Only `medium`/`low` or all scores < 75 → `approve-with-nits`
 - No findings → `approve`
 
-**Reviewer failure adjustment:** If any sub-agent errors or returns no valid JSON, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 sub-agents failed, force `changes-requested` with a note that the review had insufficient coverage.
+**Reviewer failure adjustment:** If any of the 5 review sub-agents (#1–#5) errors or returns no valid JSON, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 review sub-agents failed, force `changes-requested` with a note that the review had insufficient coverage. Haiku scoring and dedup agent failures do not count toward this threshold — handle them via the fallback score (75) documented in Step 4.
 
 ---
 
