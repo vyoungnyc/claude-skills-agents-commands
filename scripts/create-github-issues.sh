@@ -145,14 +145,14 @@ ${AC_CHECKBOXES}
 - **Test spec:** See PLAN_steps.md ${STEP_ID}
 - **Architecture:** See ARCHITECTURE.md"
 
-  LABELS="feature:${FEATURE_ID},domain:${BATCH_HINT},complexity:${COMPLEXITY}"
-
   echo "[$(date +"%H:%M:%S")] Creating child issue for $STEP_ID: $TITLE..." >&2
 
   ISSUE_URL=$(gh issue create \
     --title "${STEP_ID}: ${TITLE}" \
     --body "$ISSUE_BODY" \
-    --label "$LABELS" \
+    --label "feature:${FEATURE_ID}" \
+    --label "domain:${BATCH_HINT}" \
+    --label "complexity:${COMPLEXITY}" \
     2>&1)
 
   if [ $? -ne 0 ]; then
@@ -163,11 +163,8 @@ ${AC_CHECKBOXES}
     continue
   fi
 
-  ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$' || true)
-  if [ -z "$ISSUE_NUMBER" ]; then
-    # Try extracting from URL format https://github.com/owner/repo/issues/123
-    ISSUE_NUMBER=$(echo "$ISSUE_URL" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+' || true)
-  fi
+  # Extract issue number from the URL (last path segment is always the number)
+  ISSUE_NUMBER=$(basename "$ISSUE_URL" 2>/dev/null | tr -cd '0-9')
 
   if [ -z "$ISSUE_NUMBER" ]; then
     echo "[$(date +"%H:%M:%S")] WARNING: Could not parse issue number from: $ISSUE_URL" >&2
@@ -236,7 +233,8 @@ echo "[$(date +"%H:%M:%S")] Creating epic tracking issue..." >&2
 EPIC_URL=$(gh issue create \
   --title "Epic: ${FEATURE_ID}" \
   --body "$EPIC_BODY" \
-  --label "epic,feature:${FEATURE_ID}" \
+  --label "epic" \
+  --label "feature:${FEATURE_ID}" \
   2>&1)
 
 EPIC_CREATE_EXIT=$?
@@ -248,10 +246,7 @@ if [ "$EPIC_CREATE_EXIT" -ne 0 ]; then
   exit $EXIT_FATAL
 fi
 
-EPIC_NUMBER=$(echo "$EPIC_URL" | grep -oE '[0-9]+$' || true)
-if [ -z "$EPIC_NUMBER" ]; then
-  EPIC_NUMBER=$(echo "$EPIC_URL" | grep -oE '/issues/[0-9]+' | grep -oE '[0-9]+' || true)
-fi
+EPIC_NUMBER=$(basename "$EPIC_URL" 2>/dev/null | tr -cd '0-9')
 
 if [ -z "$EPIC_NUMBER" ]; then
   echo "[$(date +"%H:%M:%S")] WARNING: Could not parse epic issue number from: $EPIC_URL" >&2

@@ -134,17 +134,23 @@ register_cleanup "$PIDFILE"
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    kill "$OLD_PID" 2>/dev/null || true
-    local_i=0
-    while kill -0 "$OLD_PID" 2>/dev/null && [ $local_i -lt 3 ]; do
-      sleep 1
-      local_i=$((local_i + 1))
-    done
-    kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null || true
-    echo "[$(date +"%H:%M:%S")] Killed previous swarm-dispatch instance (PID $OLD_PID)" >&2
+    # Verify the PID belongs to a swarm-dispatch process (guard against PID reuse)
+    OLD_CMD=$(ps -o command= -p "$OLD_PID" 2>/dev/null || true)
+    if echo "$OLD_CMD" | grep -q "swarm-dispatch"; then
+      kill "$OLD_PID" 2>/dev/null || true
+      local_i=0
+      while kill -0 "$OLD_PID" 2>/dev/null && [ $local_i -lt 3 ]; do
+        sleep 1
+        local_i=$((local_i + 1))
+      done
+      kill -0 "$OLD_PID" 2>/dev/null && kill -9 "$OLD_PID" 2>/dev/null || true
+      echo "[$(date +"%H:%M:%S")] Killed previous swarm-dispatch instance (PID $OLD_PID)" >&2
+    else
+      echo "[$(date +"%H:%M:%S")] Stale PID file (PID $OLD_PID is not swarm-dispatch) — removing" >&2
+    fi
   fi
 fi
-echo $$ > "$PIDFILE"
+echo "$$" > "$PIDFILE"
 
 # ---------------------------------------------------------------------------
 # Working directory — must be inside a git repo
