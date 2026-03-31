@@ -1,0 +1,180 @@
+#!/bin/bash
+# Create local file-based epic and issues when not in a GitHub repo.
+# Fallback for GitLab repos or repos without gh CLI access.
+# Files are stored in plans/ (gitignored) to avoid committing tracking artifacts.
+#
+# Usage: create-local-issues.sh <feature_id> <plan_steps_json_file> [roadmap_phases_json_file]
+#
+# Same input format as create-github-issues.sh for interchangeability.
+#
+# plan_steps_json format:
+# [
+#   {
+#     "step_id": "step_01",
+#     "title": "Auth API endpoints",
+#     "acceptance_criteria": ["JWT refresh returns 200", "Token expiry handled"],
+#     "file_domain": ["src/backend/auth/", "src/services/session/"],
+#     "complexity": "high",
+#     "dependencies": [],
+#     "batch_hint": "backend"
+#   }
+# ]
+#
+# Creates:
+#   plans/{feature_id}/issue-0000.md  (epic / tracking issue)
+#   plans/{feature_id}/issue-0001.md  (step_01)
+#   plans/{feature_id}/issue-0002.md  (step_02)
+#   ...
+#
+# Outputs JSON (same shape as create-github-issues.sh):
+#   {"epic": "plans/{feature_id}/issue-0000.md", "issues": {"step_01": "plans/{feature_id}/issue-0001.md", ...}}
+
+set -uo pipefail
+
+FEATURE_ID="${1:-}"
+PLAN_STEPS_FILE="${2:-}"
+ROADMAP_FILE="${3:-}"
+
+if [ -z "$FEATURE_ID" ] || [ -z "$PLAN_STEPS_FILE" ]; then
+  echo '{"error": "Usage: create-local-issues.sh <feature_id> <plan_steps_json_file> [roadmap_phases_json_file]"}' >&2
+  exit 1
+fi
+
+if ! command -v jq &>/dev/null; then
+  echo '{"error": "jq is required but not installed"}' >&2
+  exit 1
+fi
+
+if [ ! -f "$PLAN_STEPS_FILE" ]; then
+  echo "{\"error\": \"Plan steps file not found: $PLAN_STEPS_FILE\"}" >&2
+  exit 1
+fi
+
+# Ensure plans/ is in .gitignore
+GITIGNORE=".gitignore"
+if [ -f "$GITIGNORE" ]; then
+  if ! grep -qxF 'plans/' "$GITIGNORE"; then
+    echo "" >> "$GITIGNORE"
+    echo "# Local issue tracking (not committed)" >> "$GITIGNORE"
+    echo "plans/" >> "$GITIGNORE"
+  fi
+else
+  echo "# Local issue tracking (not committed)" > "$GITIGNORE"
+  echo "plans/" >> "$GITIGNORE"
+fi
+
+# Create plans directory
+PLANS_DIR="plans/${FEATURE_ID}"
+mkdir -p "$PLANS_DIR"
+
+STEP_COUNT=$(jq 'length' < "$PLAN_STEPS_FILE")
+ISSUE_MAP="{}"
+TASK_LIST=""
+DATE=$(date +%Y-%m-%d)
+
+# Create child issues first (issue-0001.md, issue-0002.md, ...)
+for i in $(seq 0 $((STEP_COUNT - 1))); do
+  ISSUE_NUM=$((i + 1))
+  ISSUE_FILE="$PLANS_DIR/issue-$(printf '%04d' $ISSUE_NUM).md"
+
+  STEP_ID=$(jq -r ".[$i].step_id" < "$PLAN_STEPS_FILE")
+  TITLE=$(jq -r ".[$i].title" < "$PLAN_STEPS_FILE")
+  COMPLEXITY=$(jq -r ".[$i].complexity // \"medium\"" < "$PLAN_STEPS_FILE")
+  BATCH_HINT=$(jq -r ".[$i].batch_hint // \"general\"" < "$PLAN_STEPS_FILE")
+  FILE_DOMAIN=$(jq -r ".[$i].file_domain | join(\", \")" < "$PLAN_STEPS_FILE")
+  DEPS=$(jq -r ".[$i].dependencies | if length > 0 then join(\", \") else \"none\" end" < "$PLAN_STEPS_FILE")
+
+  # Build acceptance criteria checkboxes
+  AC_LINES=$(jq -r ".[$i].acceptance_criteria[]? | \"- [ ] \" + ." < "$PLAN_STEPS_FILE")
+  if [ -z "$AC_LINES" ]; then
+    AC_LINES="- [ ] (no acceptance criteria defined)"
+  fi
+
+  cat > "$ISSUE_FILE" << ISSUE_EOF
+---
+step_id: ${STEP_ID}
+title: "${TITLE}"
+status: open
+complexity: ${COMPLEXITY}
+domain: ${BATCH_HINT}
+feature: ${FEATURE_ID}
+created: ${DATE}
+---
+
+# ${STEP_ID}: ${TITLE}
+
+## Acceptance Criteria
+${AC_LINES}
+
+## Context
+- **File domain:** ${FILE_DOMAIN}
+- **Complexity:** ${COMPLEXITY}
+- **Dependencies:** ${DEPS}
+- **Batch hint:** ${BATCH_HINT}
+
+## Notes
+_Implementation notes and progress will be added here._
+ISSUE_EOF
+
+  # Add to issue map
+  ISSUE_MAP=$(echo "$ISSUE_MAP" | jq --arg sid "$STEP_ID" --arg path "$ISSUE_FILE" '. + {($sid): $path}')
+
+  # Add to epic task list
+  TASK_LIST="${TASK_LIST}
+- [ ] [${STEP_ID}: ${TITLE}](${ISSUE_FILE}) — complexity: ${COMPLEXITY}, domain: ${BATCH_HINT}"
+done
+
+# Build roadmap section
+ROADMAP_SECTION=""
+if [ -n "$ROADMAP_FILE" ] && [ -f "$ROADMAP_FILE" ]; then
+  ROADMAP_SECTION="
+## Roadmap
+
+| Phase | Status | Summary |
+|-------|--------|---------|"
+  PHASE_COUNT=$(jq 'length' < "$ROADMAP_FILE")
+  for j in $(seq 0 $((PHASE_COUNT - 1))); do
+    PHASE_NAME=$(jq -r ".[$j].phase" < "$ROADMAP_FILE")
+    PHASE_SUMMARY=$(jq -r ".[$j].summary" < "$ROADMAP_FILE")
+    if [ "$j" -eq 0 ]; then
+      ROADMAP_SECTION="${ROADMAP_SECTION}
+| ${PHASE_NAME} | In Progress | ${PHASE_SUMMARY} |"
+    else
+      ROADMAP_SECTION="${ROADMAP_SECTION}
+| ${PHASE_NAME} | Planned | ${PHASE_SUMMARY} |"
+    fi
+  done
+fi
+
+# Create epic (issue-0000.md)
+EPIC_FILE="$PLANS_DIR/issue-0000.md"
+cat > "$EPIC_FILE" << EPIC_EOF
+---
+type: epic
+feature: ${FEATURE_ID}
+status: open
+created: ${DATE}
+---
+
+# Epic: ${FEATURE_ID}
+
+**Branch:** feature/${FEATURE_ID}
+**Created:** ${DATE}
+**Steps:** ${STEP_COUNT}
+
+## Implementation Steps
+${TASK_LIST}
+
+## Quality Gates
+- [ ] Code review passed
+- [ ] Security review passed
+- [ ] All tests passing
+- [ ] Docs updated
+${ROADMAP_SECTION}
+
+## Progress
+_Updated automatically as issues are closed._
+EPIC_EOF
+
+# Output JSON (same shape as create-github-issues.sh)
+echo "$ISSUE_MAP" | jq --arg epic "$EPIC_FILE" '{epic: $epic, issues: .}'

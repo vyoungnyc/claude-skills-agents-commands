@@ -22,21 +22,20 @@ Before claiming, scan `TaskList` for `in_progress` tasks. If a candidate's `file
 
 Pick the lowest eligible task ID. Call `TaskUpdate` to set `owner` (your agent name) and `status=in_progress`.
 
-**2. CONTEXT** — Call `TaskGet` for `file_domain`, `issue_number`, and `complexity`. Read `ARCHITECTURE.md` and `PLAN_steps.md`. Use `mcp__context7` for library docs as needed. Fetch acceptance criteria:
-```
-gh issue view {issue_number}
-```
+**2. CONTEXT** — Call `TaskGet` for `file_domain`, `issue_ref`, and `complexity`. Read `ARCHITECTURE.md` and `PLAN_steps.md`. Use `mcp__context7` for library docs as needed. Fetch acceptance criteria:
+- If `issue_ref` is a number (GitHub): `gh issue view {issue_ref}`
+- If `issue_ref` is a file path (local): `Read {issue_ref}` (e.g., `plans/{feature_id}/issue-0001.md`)
 
 **3. IMPLEMENT** — Stay within `file_domain`. Follow existing patterns; extend abstractions, don't invent new ones. Write tests alongside code.
 
-**4. VALIDATE** — Check each acceptance criterion from the GitHub issue. Run tests. Iterate until all criteria pass.
+**4. VALIDATE** — Check each acceptance criterion from the issue. Run tests. Iterate until all criteria pass.
 
 **5. CHECKPOINT** — Every 5 turns, call `TaskUpdate` to append a progress note to the task description.
 
-**6. COMPLETE** — Get the commit SHA (`git rev-parse --short HEAD`), close the issue with evidence:
-```
-gh issue close {issue_number} -c "Fixed in {sha}. All criteria met."
-```
+**6. COMPLETE** — Get the commit SHA (`git rev-parse --short HEAD`), then close the issue:
+- If GitHub issue: `gh issue close {issue_ref} -c "Fixed in {sha}. All criteria met."`
+- If local issue file: update the file's frontmatter `status: closed` and append a "Completed in {sha}" note
+
 Call `TaskUpdate` to set `status=completed`. Summarize files changed, tests added, criteria satisfied.
 
 **7. NEXT** — Go to step 1. If no eligible tasks remain, report idle and stop.

@@ -109,19 +109,32 @@ Do not proceed to Phase 1 until the PRD review resolves.
 - Invoke `derive-test-spec-from-requirements` skill.
 - Output: a test spec that coders will implement alongside their feature code.
 
-### 1.5 Create GitHub Issues
-- Call `scripts/create-github-issues.sh {feature_id} <plan_steps_json>`.
-- Script creates: one epic (tracking issue) + one child issue per plan step.
-- Each child issue body: acceptance criteria checkboxes, file domain, complexity, dependencies.
-- Script outputs: `{"epic": N, "issues": {"step_01": M, "step_02": K, ...}}` — store this mapping.
+### 1.5 Create Epic + Issues
+
+**Auto-detect platform:** Check if `gh` CLI is authenticated and the remote is GitHub:
+```
+if gh auth status &>/dev/null && git remote get-url origin 2>/dev/null | grep -q github; then
+  # GitHub repo → create GitHub issues
+  scripts/create-github-issues.sh {feature_id} <plan_steps_json>
+else
+  # Non-GitHub (GitLab, local, etc.) → create local file-based issues
+  scripts/create-local-issues.sh {feature_id} <plan_steps_json>
+fi
+```
+
+**GitHub path:** Creates epic (tracking issue) + child issues on GitHub. Each child issue body: acceptance criteria checkboxes, file domain, complexity, dependencies.
+
+**Local path (GitLab / non-GitHub):** Creates `plans/{feature_id}/issue-0000.md` (epic) + `issue-0001.md` through `issue-NNNN.md` (one per step). Files have frontmatter with status, complexity, domain. `plans/` is auto-added to `.gitignore`.
+
+Both scripts output the same JSON shape: `{"epic": ..., "issues": {"step_01": ..., "step_02": ...}}` — store this mapping. The rest of the pipeline works identically regardless of platform.
 
 ### 1.6 User approval (REQUIRED — mandatory gate)
 Present a summary to the user via `AskUserQuestion`:
 - Architecture highlights
 - Plan steps with `file_domain`, `complexity`, and `batch_hint` per step
 - Test strategy overview
-- Epic link: `https://github.com/{repo}/issues/{epic_N}`
-- Issue links per step: `https://github.com/{repo}/issues/{M}`
+- If GitHub: epic link + issue links
+- If local: path to `plans/{feature_id}/` with issue files
 
 **Do not proceed to Phase 2 until the user explicitly approves.**
 

@@ -119,6 +119,7 @@ Or invoke the orchestrator directly with a task description.
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
 | swarm-dispatch.sh | Any | Launch N parallel claude sessions in git worktrees with complexity-based model selection; merge results. Used by orchestrator for 3+ step swarms. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
+| create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
 
@@ -240,6 +241,7 @@ scripts/
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
   swarm-dispatch.sh          # Parallel claude sessions in worktrees for /feature-autopilot swarm
   create-github-issues.sh    # GitHub epic + child issues from plan steps
+  create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
 hooks/
   reinject-context.sh        # PostCompact: re-inject standards
   auto-format.sh             # PostToolUse: Prettier + ESLint
