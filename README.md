@@ -60,22 +60,19 @@ Or invoke the orchestrator directly with a task description.
 
 ## Architecture
 
-### Agents (10)
+### Agents (7)
 
 | Agent | Model | Key Features | Role |
 |---|---|---|---|
 | **orchestrator** | opus | memory: project, maxTurns: 50 | Coordinates workflow, never writes code |
-| **architect** | opus | memory: project, MCP tools | System design, ADRs, AskUserQuestion |
-| **planner** | sonnet | memory: project, AskUserQuestion | PLAN_steps.md tracking, step decomposition |
-| **backend-coder** | sonnet | isolation: worktree, memory: project | Backend implementation |
-| **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation |
-| **test-spec** | sonnet | memory: project, MCP tools | Test design and implementation |
-| **reviewer** | opus | permissionMode: plan, memory: project | Read-only code review |
-| **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit |
-| **documenter** | haiku | memory: project | Docs and changelogs (cost-efficient) |
-| **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system guidance |
+| **architect** | opus | memory: project, MCP tools | System design, ADRs, governance |
+| **backend-coder** | sonnet | isolation: worktree, memory: project | Backend implementation + tests |
+| **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation + tests |
+| **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system, user research |
+| **reviewer** | opus | permissionMode: plan, memory: project | Read-only code review, runs in parallel with security-researcher |
+| **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit, runs in parallel with reviewer |
 
-### Skills (11)
+### Skills (11 — orchestrator invokes directly)
 
 | Skill | Purpose |
 |---|---|
@@ -154,7 +151,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 **PLAN_steps.md** — Single source of truth for step tracking with step_id, dependencies, status, and definition of done.
 
-**AskUserQuestion routing** — Only architect, ui-ux, and planner can ask the user clarifying questions. Other agents escalate through them.
+**AskUserQuestion routing** — Only architect and ui-ux can ask the user clarifying questions. Other agents escalate through them.
 
 **Dual parallel patterns** — Subagents (hub-and-spoke, with worktree isolation) for standard workflows. Agent teams (peer-to-peer, with SendMessage) for truly independent parallel modules. The orchestrator chooses based on file domain separability and task characteristics.
 
@@ -166,12 +163,14 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
-**v2.2.0 (Phase 3)** — Agent teams integration:
-- Added agent teams as optional peer-to-peer parallel execution pattern
-- `/feature-autopilot` now supports `mode=parallel` for team-based feature workflows (merged from `/team-autopilot`)
-- Orchestrator now has a decision framework for choosing subagents vs teams
-- Agent Teams Guide with 4 patterns: parallel modules, multi-perspective review, competing hypotheses, architecture exploration
-- Enabled `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings
+**v2.3.0 (Phase 4)** — Agent architecture simplification:
+- Removed planner, test-spec, and documenter agents (demoted to skills)
+- Orchestrator now invokes `derive-plan-from-spec`, `derive-test-spec-from-requirements`, and `sync-docs-with-implementation` skills directly
+- Backend and frontend coders now implement tests alongside code (no separate test-spec agent)
+- Reviewer and security-researcher run in parallel (parallel review team)
+- `/feature-autopilot` no longer supports sequential mode, always parallel
+- Agent count reduced from 10 to 7
+- CLAUDE.md and README.md updated to reflect new architecture
 
 **v2.1.0 (Phase 2)** — Hook automation:
 - Auto-run tests in background after file edits
@@ -194,13 +193,10 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 agents/
   architect.md
   backend-coder.md
-  documenter.md
   frontend-coder.md
   orchestrator.md
-  planner.md
   reviewer.md
   security-researcher.md
-  test-spec.md
   ui-ux.md
 commands/
   backend-test-runner.md

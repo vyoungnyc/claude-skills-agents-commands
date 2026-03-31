@@ -34,28 +34,21 @@ Never save working files, text/mds, or tests to the project root. Use:
 **Pattern A: Subagents (default — hub-and-spoke)**
 ```
 Orchestrator dispatches to named agents in .claude/agents/:
-  architect      → design (read-only + MCP tools, opus, memory: project)
-  planner        → plan tracking (sonnet, memory: project)
-  backend-coder  → backend impl (sonnet, isolation: worktree, memory: project)
-  frontend-coder → frontend impl (sonnet, isolation: worktree, memory: project)
-  test-spec      → test design + implementation (sonnet, memory: project)
-  reviewer       → code review (opus, permissionMode: plan, memory: project)
-  security-researcher → security audit (opus, permissionMode: plan, memory: project)
-  documenter     → docs/changelog (haiku, memory: project)
+  architect              → design (read-only + MCP tools, opus, memory: project)
+  backend-coder         → backend impl + tests (sonnet, isolation: worktree, memory: project)
+  frontend-coder        → frontend impl + tests (sonnet, isolation: worktree, memory: project)
+  ui-ux                 → UX flows, design system guidance (sonnet, memory: project, AskUserQuestion)
+  reviewer              → code review (opus, permissionMode: plan, memory: project)
+  security-researcher   → security audit (opus, permissionMode: plan, memory: project)
 ```
 
-**Pattern B: Agent teams (peer-to-peer, for parallel independent modules)**
+**Pattern B: Parallel review team (reviewer + security-researcher)**
 ```
-When 2+ implementation steps have no dependencies and touch separate file domains:
-  Create an agent team with file domain assignments:
-    - Backend teammate owns src/backend/, src/services/, src/models/
-    - Frontend teammate owns src/frontend/, src/components/, src/pages/
-    - Test teammate owns tests/
+After coders finish implementation, reviewer and security-researcher run in parallel:
+  - Reviewer checks functionality, style, test coverage, and API contracts
+  - Security-researcher audits for vulnerabilities, data flows, and compliance
 
-  Teams use SendMessage for direct peer communication.
-  No worktree isolation — file domains MUST NOT overlap.
-  Gate steps (tests, security, review, docs) still run as subagents after team work.
-  Use /feature-autopilot with mode=parallel for team-based feature workflows.
+Both agents run concurrently with no dependencies, then results are merged.
 ```
 
 ## Task Tracking

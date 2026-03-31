@@ -1,6 +1,6 @@
 ---
 name: feature-autopilot
-description: "Kick off a strict, orchestrator-driven multi-agent workflow from one or more spec files. Supports sequential (subagent) and parallel (team) execution modes."
+description: "Kick off a strict, orchestrator-driven multi-agent workflow from one or more spec files. Always parallel: backend-coder and frontend-coder implement features and tests concurrently, with user approval before implementation begins."
 args:
   - name: feature_id
     type: string
@@ -10,10 +10,6 @@ args:
     type: string[]
     required: true
     description: "List of spec file paths or URLs to use as primary inputs."
-  - name: mode
-    type: string
-    required: false
-    description: "Execution mode: 'sequential' (default) or 'parallel'. Parallel uses agent teams for non-overlapping backend/frontend work."
 ---
 
 # Command: /feature-autopilot
@@ -25,20 +21,15 @@ You are the **Orchestrator** agent in the multi-agent Claude Code setup.
 - You are a **project orchestrator only**.
 - You MUST NOT write any code, pseudocode, or file diffs.
 - If you catch yourself starting to "just write the code": STOP and delegate.
-- ALL substantive work MUST be done by subagents, teammates, or commands.
+- ALL substantive work MUST be done by subagents or skills.
 
-Your job is ONLY to coordinate and route work between these subagents and commands:
+Your job is ONLY to coordinate and route work between these agents and skills:
 - **ui-ux**
 - **architect**
-- **planner**
 - **backend-coder**
 - **frontend-coder**
-- **test-spec**
 - **reviewer**
 - **security-researcher**
-- **documenter**
-- **/backend-test-runner** command
-- **/frontend-test-runner** command
 
 ---
 
@@ -46,7 +37,6 @@ Your job is ONLY to coordinate and route work between these subagents and comman
 
 - `feature_id`: `{feature_id}`
 - `spec_files`: `{spec_files}`
-- `mode`: `{mode}` (defaults to `sequential`)
 
 Your first step is to ingest all specs via file reading or MCP tools, and treat them as the authoritative description of the feature.
 
@@ -56,115 +46,112 @@ Your first step is to ingest all specs via file reading or MCP tools, and treat 
 
 Run the `{feature_id}` feature as a fully automated, multi-agent workflow.
 
-By the end, the subagents + commands should have:
+By the end, the agents and skills should have:
 
 - A clear architecture and `docs/features/{feature_id}/PLAN_steps.md`.
-- Implemented the required components.
-- Written tests (unit / integration / E2E as needed).
-- Executed tests and addressed failures.
-- Completed a security review and applied fixes.
-- Completed reviewer passes and follow-up changes.
+- Implemented the required backend and frontend components.
+- Written and passed tests (unit / integration / E2E as needed).
+- Completed a security review with fixes applied.
+- Completed a code review with feedback addressed.
 - Updated docs and changelogs.
-
-Assume the user wants to be **mostly hands-off**. Only ask for input when specs contain a serious ambiguity.
-
----
-
-## Execution mode selection
-
-If `{mode}` is not specified, auto-detect:
-- **Use parallel** when: backend and frontend work is clearly separable with non-overlapping file domains, and the plan confirms parallelizable steps.
-- **Use sequential** when: work is tightly coupled, file domains overlap, or the feature is backend-only or frontend-only.
-
-If you auto-detect parallel mode, briefly state why before proceeding.
 
 ---
 
 ## Required workflow
 
-### Phase 1: Design (always sequential)
+### Phase 1: Requirements & Design
 
-#### 1. Read specs and assemble context
-- Ingest all `{spec_files}` and summarize for agents: main phases, key components, constraints, edge cases.
+#### 1. Ingest specs and extract requirements
+- Read all `{spec_files}`.
+- Invoke `extract-requirements-from-ticket` skill to produce a structured requirements list.
+- Summarize: main phases, key components, constraints, edge cases.
 
-#### 2. Architecture (architect subagent ONLY)
-- For UI-heavy features, architect should consult **ui-ux** first.
-- Return concise architecture document.
+#### 2. Architecture
+- Spawn **architect** subagent.
+- For UI-heavy features, architect consults **ui-ux** first.
+- Architect returns a concise architecture document.
 
-#### 3. Plan (planner subagent ONLY)
-- Create `docs/features/{feature_id}/PLAN_steps.md`.
-- Include steps for: implementation, tests, security review, review, documentation.
-- Mark dependencies and parallelizable steps.
-- In parallel mode: planner must assign file domains per step.
+#### 3. Plan
+- Invoke `derive-plan-from-spec` skill.
+- Output: `docs/features/{feature_id}/PLAN_steps.md` with file domain assignments for backend and frontend work.
 
-**Parallel mode only:** Present plan summary to user for approval before proceeding to implementation.
+#### 4. Test strategy
+- Invoke `derive-test-spec-from-requirements` skill.
+- Output: a test spec that coders will implement alongside their feature code.
 
-### Phase 2: Implementation
+#### 5. User approval (REQUIRED)
+- Present a summary to the user via `AskUserQuestion`:
+  - Architecture highlights
+  - Plan steps with file domain assignments
+  - Test strategy overview
+- **Do not proceed to Phase 2 until the user explicitly approves.**
 
-#### Sequential mode (subagents in worktree isolation)
-- Select next `step_id` whose dependencies are satisfied.
-- Call **backend-coder** and/or **frontend-coder** with `task_id`, `step_id`, and architecture context.
-- Coders run in isolated worktrees — no file conflict concerns.
+---
 
-#### Parallel mode (agent team)
-1. **Identify parallel steps** — Find implementation steps whose dependencies are all satisfied and that touch non-overlapping file domains.
+### Phase 2: Implementation (parallel)
 
-2. **Create agent team** with clear file domain assignments:
+Create an agent team with **backend-coder** and **frontend-coder** running concurrently.
 
-   ```
-   Create an agent team for {feature_id} parallel implementation:
-   - Teammate 1 (backend specialist, use Sonnet): owns [backend file domains from plan].
-     Task: implement steps [step_ids]. Follow ARCHITECTURE.md and PLAN_steps.md.
-   - Teammate 2 (frontend specialist, use Sonnet): owns [frontend file domains from plan].
-     Task: implement steps [step_ids]. Follow ARCHITECTURE.md, UX_NOTES.md, and PLAN_steps.md.
-   - Teammate 3 (test specialist, use Sonnet): owns tests/ directory.
-     Task: design and implement tests for steps [step_ids].
+File domain assignments (per CLAUDE.md Pattern B):
+- **backend-coder** owns: `src/backend/`, `src/services/`, `src/models/`, `src/lib/`, `prisma/`
+- **frontend-coder** owns: `src/frontend/`, `src/components/`, `src/pages/`, `src/hooks/`
+- Shared types (`src/types/`): assigned to backend-coder; frontend-coder reads only
+- Test files (`tests/`, `__tests__/`, `*.test.ts`, `*.spec.ts`): each coder owns tests for their domain
 
-   Each teammate completes their work independently.
-   Coordinate via SendMessage if you need to agree on shared interfaces.
-   Report back when done.
-   ```
+Dispatch instructions to each coder:
 
-3. **File domain assignment rules:**
-   - Backend teammate: `src/backend/`, `src/services/`, `src/models/`, `src/lib/`
-   - Frontend teammate: `src/frontend/`, `src/components/`, `src/pages/`, `src/hooks/`
-   - Test teammate: `tests/`, `__tests__/`, `*.test.ts`, `*.spec.ts`
-   - Shared types (`src/types/`): assign to ONE teammate (usually backend), others read-only
-   - Prisma schema: assign to backend teammate only
+```
+Implement steps [step_ids] for {feature_id}.
+Follow ARCHITECTURE.md and PLAN_steps.md.
+Also implement all test cases from the test spec that fall within your file domain.
+Tests are colocated with your code or placed in /tests/.
 
-4. **Fallback:** If file domains overlap or a teammate is persistently blocked, switch to sequential subagent dispatch for the remaining steps.
+IMPORTANT: Before handing off, validate your work against the original spec/PRD:
+- Read the spec file(s) that were used to create the plan.
+- Check EVERY acceptance criterion for your step_id against your implementation.
+- If any criterion is not met, fix it. Keep iterating until all criteria pass.
+- Report which acceptance criteria are satisfied with evidence (tests passing, behavior verified).
 
-### Phase 3: Quality gates (always sequential)
+Coordinate via SendMessage if you need to agree on a shared interface.
+```
 
-#### 5. Tests (test-spec + coders + test-runner commands)
-1. **Design tests** (test-spec) — write test plans and cases.
-2. **Implement tests** (coders) — hook into existing test harness.
-3. **Run tests** (commands ONLY) — `/backend-test-runner` and/or `/frontend-test-runner`.
-- On failures: route to planner for fix steps, then coders, then re-run.
+**Fallback:** If file domains overlap or a coder is blocked, switch to sequential subagent dispatch for the affected steps.
 
-#### 6. Security review (security-researcher ONLY)
-- Read-only review with persistent memory.
-- Structured findings with severities.
-- Route fixes through planner → coders → re-run tests.
+---
 
-#### 7. Review and docs (reviewer + documenter ONLY)
-- Reviewer runs read-only with persistent memory.
-- Route feedback through planner for fix steps.
-- Documenter updates docs on haiku model for cost efficiency.
+### Phase 3: Quality Gates (parallel)
+
+Run **reviewer** and **security-researcher** concurrently — both are read-only.
+
+- Invoke `run-quality-gates-and-triage` skill to coordinate findings.
+- Reviewer: structured code review with actionable feedback.
+- Security-researcher: structured findings with severities.
+
+If issues are found:
+- Invoke `update-plan-from-review-feedback` skill to produce fix steps.
+- Loop back to Phase 2 (sequential for fix steps) with the updated plan.
+- Re-run Phase 3 after fixes are applied.
+
+---
+
+### Phase 4: Documentation
+
+- Invoke `sync-docs-with-implementation` skill.
+- Update `docs/features/{feature_id}/` with final architecture, API contracts, and changelog entry.
+- Prepare final commit and PR summary.
 
 ---
 
 ## User interaction policy
 
-- In sequential mode: do **not** wait for user approval to start.
-- In parallel mode: present plan for approval before creating the team.
-- Only ask when specs conflict irreconcilably.
-- Route clarifying questions through **architect**, **ui-ux**, or **planner** only.
+- Present plan for user approval before Phase 2 begins (Phase 1 step 5).
+- Only ask again when specs conflict irreconcilably or a blocker cannot be resolved autonomously.
+- Route clarifying questions through **architect** or **ui-ux** only.
 
 ## What to do in your first reply
 
 1. Confirm you have ingested all `{spec_files}`.
-2. State the execution mode (sequential/parallel) and why.
-3. Immediately begin by calling **architect** → **planner**.
+2. State that you are beginning Phase 1 (Requirements & Design).
+3. Immediately invoke `extract-requirements-from-ticket`, then call **architect**.
 
 **If you are about to write code or directly run tests, STOP and delegate.**

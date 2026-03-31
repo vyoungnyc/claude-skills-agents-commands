@@ -2,6 +2,82 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.3.0] - 2026-03-30
+
+### Phase 4: Agent Architecture Simplification
+
+This release consolidates the 10-agent architecture into 7 core agents by demoting planner, test-spec, and documenter to reusable skills that the orchestrator invokes directly. Coders now implement tests alongside code. Reviewer and security-researcher run in parallel after implementation is complete.
+
+### Removed
+
+- **Planner agent** (`agents/planner.md`) — Demoted to `derive-plan-from-spec` skill. Orchestrator now invokes this skill directly instead of delegating to a separate agent. Reduces ceremony around plan creation while maintaining structured planning.
+
+- **Test-spec agent** (`agents/test-spec.md`) — Demoted to `derive-test-spec-from-requirements` skill. Orchestrator invokes this skill to generate test plans. Backend and frontend coders now implement tests alongside their code (no sequential hand-off).
+
+- **Documenter agent** (`agents/documenter.md`) — Demoted to `sync-docs-with-implementation` skill. Orchestrator invokes this skill after implementation to identify and update impacted docs, changelogs, and ADRs.
+
+- **Sequential mode in `/feature-autopilot`** — All workflows now run parallel implementation (backend + frontend as subagents with worktree isolation). Sequential mode is removed; no time is lost to sequential execution.
+
+### Changed
+
+- **Agent count** — Reduced from 10 to 7: orchestrator, architect, backend-coder, frontend-coder, ui-ux, reviewer, security-researcher.
+
+- **Agent responsibilities**:
+  - **backend-coder, frontend-coder** — Now responsible for implementing tests alongside feature code (no separate test-spec handoff).
+  - **reviewer, security-researcher** — Run in parallel after coders finish (no orchestrator sequencing between them).
+
+- **Orchestrator workflow**:
+  - Calls `derive-plan-from-spec` skill instead of dispatching to planner agent.
+  - Calls `derive-test-spec-from-requirements` skill instead of dispatching to test-spec agent.
+  - Dispatches backend + frontend coders in parallel with isolated worktrees.
+  - Dispatches reviewer and security-researcher in parallel (no sequence).
+  - Calls `sync-docs-with-implementation` skill instead of dispatching to documenter agent.
+
+- **CLAUDE.md** — Updated Agent Spawning Patterns:
+  - Pattern A: Removed planner, test-spec, documenter from subagent list. Reduced to 6 core agents plus orchestrator.
+  - Pattern B: Simplified to show reviewer + security-researcher as a parallel review team.
+  - Removed references to sequential mode.
+
+- **README.md**:
+  - Updated "Agents (10)" to "Agents (7)".
+  - Removed planner, test-spec, documenter rows from agent table.
+  - Updated directory structure to remove `planner.md`, `test-spec.md`, `documenter.md`.
+  - Updated "AskUserQuestion routing" to remove planner (now only architect and ui-ux).
+  - Updated "What Changed" section with Phase 4 notes.
+
+- **Skills section** — Added note: "orchestrator invokes directly". No agent boundary; coders own tests.
+
+### Rationale
+
+The 10-agent architecture had intermediate agents (planner, test-spec, documenter) that primarily transformed specifications into other specifications. These created handoffs without adding value:
+
+- **Planner agent** — Users already understand what needs to be done; plan creation is best done with the same context as implementation.
+- **Test-spec agent** — Tests are tightly coupled to code; separate design of tests from implementation caused rework.
+- **Documenter agent** — Demoting to a skill means docs are updated as part of implementation, not after.
+
+The 7-agent architecture is leaner and preserves the same level of rigor:
+- Orchestrator invokes skills for structured planning, test planning, and docs sync.
+- Coders implement features with tests embedded (faster feedback, fewer handoffs).
+- Review is parallel, not sequential (faster to merge).
+- Total agent count is lower → simpler mental model for engineers.
+
+### Migration Notes (Phase 3 → Phase 4)
+
+1. Remove agent files from `.claude/agents/`:
+   - `planner.md`
+   - `test-spec.md`
+   - `documenter.md`
+
+2. Update your `/feature-autopilot` command invocations: remove `mode=sequential`. All workflows default to parallel.
+
+3. Update CLAUDE.md with the new Agent Spawning Patterns section.
+
+4. Update README.md with the new agent table and directory structure.
+
+5. Brief coders: they now own tests (implement alongside code, not as a separate step after test-spec design).
+
+---
+
 ## [2.2.2] - 2026-03-30
 
 ### Added
