@@ -2,6 +2,66 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.3.3] - 2026-03-30
+
+### Deep Review & Hardening Pass (5-round code review)
+
+Five-round automated code review across all 40 changed files, verifying end-to-end orchestration correctness, efficiency, bash portability, and edge-case safety.
+
+### Fixed
+
+- **Critical: Worktree creation failure masked by `tee` pipe** (`scripts/swarm-dispatch.sh`) — `git worktree add ... 2>&1 | tee -a "$LOG_FILE"` always returned `tee`'s exit code (0) under `pipefail`, silently proceeding when worktree creation failed. Replaced with direct redirect to log file.
+
+- **Critical: Subshell exit code not propagated to `wait`** (`scripts/swarm-dispatch.sh`) — The subshell ended with `echo $? > file` whose exit was always 0, making the `wait` fallback unreliable if the `.exit` file write failed. Now ends with `exit $EXIT` so both `.exit` file and `wait` return the correct code.
+
+- **Bash 3.2 incompatibility on macOS** (`scripts/create-github-issues.sh`, `scripts/swarm-dispatch.sh`) — `readarray` (bash 4+) and `${var,,}` lowercase expansion (bash 4+) broke on macOS `/bin/bash` 3.2. Replaced with `while read` loop and `tr '[:upper:]' '[:lower:]'`.
+
+- **Labels fail on fresh repos** (`scripts/create-github-issues.sh`) — `gh issue create --label` failed when labels didn't pre-exist. Added idempotent `gh label create --force` before issue creation.
+
+- **Issues filed in wrong repo** (`scripts/create-github-issues.sh`) — No `--repo` flag meant issues landed in whatever the CWD resolved to. Added auto-detection via `GH_REPO` env var or `gh repo view`, passed `--repo "$REPO"` to all `gh` calls.
+
+- **Stderr contaminated issue URLs** (`scripts/create-github-issues.sh`) — `2>&1` mixed error messages into the URL variable used for number parsing. Separated stderr to a temp file; URL parsing now uses `grep -oE 'issues/[0-9]+'` instead of fragile `basename | tr -cd '0-9'`.
+
+- **Temp files leaked on early exit** (`scripts/create-github-issues.sh`, `scripts/create-local-issues.sh`) — `ISSUE_MAP_FILE` temp files not cleaned up on unexpected exit. Added to EXIT traps.
+
+- **Missing STEP_COUNT guard** (`scripts/create-local-issues.sh`) — Accepted 0-step plans, creating an epic with no child issues. Added guard matching `create-github-issues.sh`.
+
+- **Missing JSON validation** (`scripts/create-local-issues.sh`) — Invalid JSON in plan file silently produced empty variables. Added `jq -e '.'` validation matching the other scripts.
+
+- **Hand-assembled JSON output** (`scripts/swarm-dispatch.sh`) — Final output used string concatenation, breaking on special characters in feature IDs. Replaced with `jq -n` for proper escaping.
+
+- **String-concat results array** (`scripts/swarm-dispatch.sh`) — Session results built via manual comma insertion, fragile for escaping. Replaced with JSONL accumulation + `jq -s '.'`.
+
+- **Stale subshell comment** (`scripts/swarm-dispatch.sh`) — Comment incorrectly described the `.exit` file as working around an unfixed `echo $?` issue.
+
+- **Orchestrator rule 6 misleading** (`agents/orchestrator.md`) — Said "create the feature branch" (`checkout -b`) which fails when `/discover` already created it. Changed to `checkout || checkout -b`.
+
+- **Duplicate `# Args` section header** (`scripts/swarm-dispatch.sh`) — Dead artifact from insertion between header and content.
+
+### Improved
+
+- **Efficiency: jq process spawning reduced ~80%** — All three scripts consolidated from 6-8 jq forks per loop iteration to 1-2 via `jq @sh` field extraction and here-strings.
+
+- **Efficiency: O(n^2) JSON map rebuilding eliminated** — Both issue scripts replaced per-iteration `jq '. + {key: val}'` rebuilds with file-based accumulation + single `jq -n` assembly.
+
+- **Efficiency: `classify_failure` 4x faster** — Replaced 4 `echo | grep` forks with bash `[[ =~ ]]` pattern matching on a single lowercase string.
+
+- **Efficiency: Summary stats single-pass** — Replaced 3 separate `jq` calls for success/failure/conflict counts with one `jq @tsv` extraction.
+
+- **Consistency: `echo|jq` normalized to here-strings** — All `echo "$VAR" | jq` patterns replaced with `jq ... <<< "$VAR"` across all three scripts.
+
+- **Agent tools aligned** — `coder.md` added `mcp__chunkhound` to match backend/frontend-coder tool sets.
+
+- **Style lines removed** — Removed inconsistent `**Style:**` directives from backend-coder, frontend-coder, coder (already removed from other agents in v2.3.0).
+
+- **AGENT_TEAMS_GUIDE.md updated** — Count corrected to "three" patterns; swarm dispatch added to decision tree.
+
+- **Dead config removed** — `handoff_targets` field removed from `derive-plan-from-spec/SKILL.md` (no consumer used it).
+
+- **Exit code constants** — Added `EXIT_OK`, `EXIT_FATAL`, `EXIT_USAGE` to `create-local-issues.sh` (parity with other scripts).
+
+---
+
 ## [2.3.2] - 2026-03-30
 
 ### Hardening, Correctness Fixes & Tiered Failure Recovery
