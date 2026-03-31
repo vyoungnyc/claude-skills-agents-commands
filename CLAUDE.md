@@ -1,32 +1,17 @@
 # CLAUDE.md — Development & Engineering Standards
 
-## 📘 Project Overview
-**Tech Stack:**
-- **Backend:** Node.js 22 with TypeScript (Fastify/Express)
-- **Frontend:** React 18 with Next.js (App Router)
-- **Infrastructure:** Terraform + AWS SDK v3
-- **Testing:** Jest (unit/integration) + Playwright (UI/e2e)
-- **Database:** PostgreSQL + Prisma ORM
+## Project Overview
+**Tech Stack:** Node.js 22 + TypeScript (Fastify/Express), React 18 + Next.js (App Router), Terraform + AWS SDK v3, Jest + Playwright, PostgreSQL + Prisma ORM
 
-**Goal:**
-Maintain a clean, type-safe, test-driven, and UI-first codebase emphasizing structured planning, intelligent context gathering, automation, disciplined collaboration, and enterprise-grade security and observability.
-
----
-
-## 🧭 Core Principles
-- **Plan First:** Every major change requires a clear, written, reviewed plan and explicit approval before execution.
+## Core Principles
+- **Plan First:** Major changes require a written, reviewed plan and explicit approval before execution.
 - **Think Independently:** Critically evaluate decisions; propose better alternatives when appropriate.
 - **Confirm Before Action:** Seek approval before structural or production-impacting work.
 - **UI-First & Test-Driven:** Validate UI early; all code must pass Jest + Playwright tests before merge.
-- **Context-Driven:** Agents query MCP tools (Context7, Chunkhound) directly. Tool Search handles token efficiency automatically.
-- **Security Always:** Never commit secrets or credentials; follow least-privilege and configuration best practices.
-- **No Automated Co-Authors:** Do not include “Claude” or any AI as a commit co-author.
+- **Security Always:** Never commit secrets or credentials; follow least-privilege.
+- **No Automated Co-Authors:** Do not include "Claude" or any AI as a commit co-author.
 
----
-
-## 🗂️ Context Hierarchy & Intelligence
-Maintain layered, discoverable context so agents and humans retrieve only what’s necessary.
-
+## Context Hierarchy
 ```
 CLAUDE.md                 # Project-level standards
 /src/CLAUDE.md            # Module/component rules & conventions
@@ -35,248 +20,97 @@ CLAUDE.md                 # Project-level standards
 /docs/*                   # Living docs (API, ADRs, runbooks)
 ```
 
-### Context Intelligence Checklist
-- Architecture Decision Records (ADRs) for major choices
-- Dependency manifests with risk ratings and owners
-- Performance baselines and SLOs (API P95, Core Web Vitals)
-- Data classification and data-flow maps
-- Security posture: threat model, secrets map, access patterns
-- Integration contracts and schema versions
+## File Management
+Never save working files, text/mds, or tests to the project root. Use:
+- `/src` — Source code
+- `/tests` — Test files
+- `/docs` — Documentation & markdown
+- `/config` — Configuration
+- `/scripts` — Utility scripts
+- `/examples` — Example code
 
----
-
-## 🚨 Concurrent Execution & File Management
-
-**ABSOLUTE RULES**
-1. All related operations MUST be batched and executed concurrently in a single message.
-2. Never save working files, text/mds, or tests to the project root.
-3. Use these directories consistently:
-   - `/src` — Source code
-   - `/tests` — Test files
-   - `/docs` — Documentation & markdown
-   - `/config` — Configuration
-   - `/scripts` — Utility scripts
-   - `/examples` — Example code
-4. Use Claude Code’s Agent tool to spawn parallel subagents. Coders run in `isolation: worktree` for filesystem safety.
-5. For parallel independent modules, consider agent teams (see `docs/AGENT_TEAMS_GUIDE.md`). Teams require non-overlapping file domains.
-6. Context recovery is automatic via PostCompact hook + auto-memory. No manual checkpointing needed.
-
-### Agent Spawning Patterns
+## Agent Spawning Patterns
 
 **Pattern A: Subagents (default — hub-and-spoke)**
 ```
 Orchestrator dispatches to named agents in .claude/agents/:
-  architect      → design (read-only + MCP tools, opus, memory: project)
-  planner        → plan tracking (sonnet, memory: project)
-  backend-coder  → backend impl (sonnet, isolation: worktree, memory: project)
-  frontend-coder → frontend impl (sonnet, isolation: worktree, memory: project)
-  test-spec      → test design + implementation (sonnet, memory: project)
-  reviewer       → code review (opus, permissionMode: plan, memory: project)
-  security-researcher → security audit (opus, permissionMode: plan, memory: project)
-  documenter     → docs/changelog (haiku, memory: project)
+  architect              → design (read-only + MCP tools, opus, memory: project)
+  backend-coder         → backend impl + tests (sonnet, isolation: worktree, memory: project)
+  frontend-coder        → frontend impl + tests (sonnet, isolation: worktree, memory: project)
+  ui-ux                 → UX flows, design system guidance (sonnet, memory: project, AskUserQuestion)
+  reviewer              → code review (opus, permissionMode: plan, memory: project)
+  security-researcher   → security audit (opus, permissionMode: plan, memory: project)
 ```
 
-**Pattern B: Agent teams (peer-to-peer, for parallel independent modules)**
+**Pattern B: Parallel review team (reviewer + security-researcher)**
 ```
-When 2+ implementation steps have no dependencies and touch separate file domains:
-  Create an agent team with file domain assignments:
-    - Backend teammate owns src/backend/, src/services/, src/models/
-    - Frontend teammate owns src/frontend/, src/components/, src/pages/
-    - Test teammate owns tests/
+After coders finish implementation, reviewer and security-researcher run in parallel:
+  - Reviewer checks functionality, style, test coverage, and API contracts
+  - Security-researcher audits for vulnerabilities, data flows, and compliance
 
-  Teams use SendMessage for direct peer communication.
-  No worktree isolation — file domains MUST NOT overlap.
-  Gate steps (tests, security, review, docs) still run as subagents after team work.
-  Use /feature-autopilot with mode=parallel for team-based feature workflows.
+Both agents run concurrently with no dependencies, then results are merged.
 ```
 
----
+**Pattern C: Swarm (parallel claude sessions in worktrees, 3+ steps)**
+```
+Orchestrator groups steps into domain batches with complexity ratings.
+swarm-dispatch.sh launches N claude sessions, each in its own worktree.
+Model per session: opus (high complexity), sonnet (medium), haiku (low).
+Each session can spawn an agent team for work-stealing within its batch.
+Coders validate against GitHub issue acceptance criteria, close issues when done.
+Results merged via git merge after all sessions complete.
+```
 
-## 🤖 AI Development Patterns
+## Task Tracking
+- [ ] Incomplete or not started
+- [✅] Completed
+- [⚠️] Partially complete, requires user action
+- [❌] Cannot be completed or do not do
+- [⏳] Deferred (specify the phase)
 
-### Specification-First Development
-- Write executable specifications before implementation.
-- Derive test cases from specs; bind coverage to spec items.
-- Validate AI-generated code against specification acceptance criteria.
-
-### Progressive Enhancement
-- Ship a minimal viable slice first; iterate in safe increments.
-- Maintain backward compatibility for public contracts.
-- Use feature flags for risky changes; default off until validated.
-
-### AI Code Quality Gates
-- AI-assisted code review required for every PR.
-- SAST/secret scanning in CI for all changes.
-- Performance impact analysis for significant diffs.
-
-### Task tracking in implementation plans and phase plans
-- Mark incomplete tasks or tasks that have not started [ ]
-- Mark tasks completed with [✅]
-- Mark partially complete tasks that requires user action or changes with with [⚠️]
-- Mark tasks that cannot be completed or marked as do not do with [❌]
-- Mark deferred tasks with [⏳], and specify the phase it will be deferred to.
-
----
-
-## 🧪 Advanced Testing Framework
-
-### AI-Assisted Test Generation
+## Testing
+- ≥ 85% branch coverage project-wide; 100% for critical paths and security-sensitive code.
 - Auto-generate unit tests for new/changed functions.
-- Produce integration tests from OpenAPI/contract specs.
 - Generate edge-case and mutation tests for critical paths.
 
-### Test Quality Metrics
-- ≥ 85% branch coverage project-wide.
-- 100% coverage for critical paths and security-sensitive code.
-- Mutation score thresholds enforced for core domains.
-
-### Continuous Testing Pipeline
-- Pre-commit: lint, type-check, unit tests.
-- Pre-push: integration tests, SAST/secret scans.
-- CI: full tests, performance checks, cross-browser/device (UI).
-- CD: smoke tests, health checks, observability validation.
-
----
-
-## 📚 Documentation as Code
-
-### Automation
-- Generate API docs from OpenAPI/GraphQL schemas.
-- Update architecture diagrams from code (e.g., TS AST, Prisma ERD).
-- Produce changelogs from conventional commits.
-- Build onboarding guides from project structure and runbooks.
-
-### Quality Gates
-- Lint docs for spelling, grammar, links, and anchors in CI.
-- Track documentation coverage (e.g., exported symbols with docstrings).
-- Ensure accessibility compliance for docs (WCAG 2.1 AA).
-
----
-
-## 📊 Performance & Observability
-
-### Budgets & SLOs
-- Core Web Vitals: LCP < 2.5s, INP < 200ms, CLS < 0.1 on P75.
-- API: P95 < 200ms for critical endpoints; P99 error rate < 0.1%.
-- Build: end-to-end pipeline < 5 min; critical path bundles < 250KB gz.
-
-### Observability Requirements
-- Structured logging with correlation/trace IDs.
-- Distributed tracing for all external calls.
-- Metrics and alerting for latency, errors, saturation.
-- Performance regression detection on CI-controlled environments.
-
----
-
-## 🔐 Security Standards (Enterprise)
-
-### Supply Chain & Secrets
-- Lockfiles required; run `npm audit --audit-level=moderate` in CI.
-- Enable Dependabot/Renovate with weekly grouped upgrades.
-- Store secrets in vault; rotate at least quarterly; no secrets in code.
-
-### Access & Data
+## Security
+- No secrets in code; store in vault, rotate quarterly.
+- Lockfiles required; `npm audit --audit-level=moderate` in CI.
 - Principle of least privilege for services and developers.
-- Data classification: public, internal, confidential, restricted.
-- Document data flows and apply encryption in-transit and at-rest.
-- Enable Row Level Security (RLS) on all tables where applicable.
+- Encryption in-transit and at-rest; RLS on all applicable tables.
+- SAST/DAST and dependency scanning on every PR.
 
-### Vulnerability Response
-- Critical CVEs patched within 24 hours; high within 72 hours.
-- Security runbooks for incident triage and communications.
-- Mandatory SAST/DAST and dependency scanning on every PR.
-
----
-
-## 👥 Collaboration & Workflow
-
-### Planning & Phase Files
-- Divide work into phases under `/plans/PHASE_*`. Each phase includes:
-  - Context Intelligence, scope, risks, dependencies.
-  - High-level tasks → subtasks → atomic tasks.
-  - Exit criteria and verification plan.
-
-### Commit Strategy
-- Commit atomic changes with clear intent and rationale.
-- Conventional commits required; no AI co-authors.
-- Example: `feat(auth): implement login validation (subtask complete)`
-
-### Pull Requests
-- Link phase/TODO files, summarize changes, include verification steps.
-- Attach UI evidence for user-facing work.
-- Document breaking changes and DB impacts explicitly.
-
-### Reviews
-- Address comments with a mini-plan; confirm before major refactors.
-- Merge only after approvals and green CI.
-- Tag releases by phase completion.
-
----
-
-## 🎨 UI Standards
-- Prototype screens as static components under `UI_prototype/`.
+## UI Standards
 - Use shadcn/ui; prefer composition over forking.
 - Keep state minimal and localized; heavy state in hooks/stores.
-- Validate key flows with Playwright; include visual regression where useful.
+- Prototype screens as static components under `UI_prototype/`.
+- Validate key flows with Playwright.
 
----
+## Backend, Database & Infra
 
-## 🧭 Backend, Database & Infra
+**Prisma:** Keep schema in `prisma/schema.prisma`, commit all migrations. Use isolated test DB. Never hardcode connection strings — use `DATABASE_URL` via env.
 
-### Prisma & PostgreSQL
-- Keep schema in `prisma/schema.prisma` and commit all migrations.
-- Use isolated test DB; reset with `prisma migrate reset --force` in tests.
-- Never hardcode connection strings; use `DATABASE_URL` via env.
+**Terraform:** Plan → review → apply. Least privilege IAM. Runbooks in `/docs/runbooks/*`.
 
-```
-prisma/
- ├─ schema.prisma
- ├─ migrations/
- └─ seed.ts
-```
-
-### Terraform & AWS
-- Plan → review → apply for infra changes; logs kept for audits.
-- Use least privilege IAM; rotate and scope credentials narrowly.
-- Maintain runbooks in `/docs/runbooks/*` and keep diagrams up to date.
-
----
-
-## 🧠 Coding Standards
+## Coding Standards
 - TypeScript strict mode; two-space indentation.
 - camelCase (variables/functions), PascalCase (components/classes), SCREAMING_SNAKE_CASE (consts).
 - Prefer named exports, colocate tests and styles when logical.
-- Format on commit: `prettier --write .` and `eslint --fix`.
 
----
-
-## 🧩 Commands
-- Development: `npm run dev` (site), `npm run dev:email` (email preview)
-- Build: `npm run build`
-- Lint/Format: `npm run lint:fix`
-- Tests:
-  - Unit/Integration: `npm test` or `npx jest tests/<file>`
-  - E2E: `npm run test:e2e` or `npx playwright test tests/<file>`
+## Commands
+- Dev: `npm run dev`, Build: `npm run build`, Lint: `npm run lint:fix`
+- Tests: `npm test` or `npx jest tests/<file>`, E2E: `npm run test:e2e`
 - Database: `npm run db:migrate`, `npm run db:seed`
-- Automate setup with scripts:  
-  - `scripts/start.sh` → start dependencies then app.  
-  - `scripts/stop.sh` → gracefully stop app then dependencies.  
+- Setup: `scripts/start.sh` (start), `scripts/stop.sh` (stop)
 
----
-
-## ✅ Standard Development Lifecycle
-1. Plan: gather context (Context7, Chunkhound), define risks and ADRs.
+## Workflow
+1. Plan: gather context, define risks and ADRs.
 2. Prototype: build and validate UI.
 3. Implement: backend + frontend with incremental, tested commits.
-4. Verify: green Jest + Playwright + security scans.
+4. Verify: green tests + security scans.
 5. Review & Merge: structured PR; tag phase completion.
 
----
+Divide work into phases under `/plans/PHASE_*` with scope, risks, dependencies, exit criteria.
 
-## 📌 Important Notes
-- All changes must be tested; if tests weren’t run, the code does not work.
-- Prefer editing existing files over adding new ones; create files only when necessary.
-- Use absolute paths for file operations.
-- Keep `files.md` updated as a source-of-truth index.
-- Be honest about status; do not overstate progress.
+## Important
 - Never save working files, text/mds, or tests to the root folder.

@@ -149,15 +149,12 @@ After pushing fixes:
 
 ## Rules
 
-1. **Never force-push or use --no-verify.**
-2. **Use conventional commit messages** (e.g. `fix(hooks): description`).
-3. **Read files before editing** — understand current code before changing it.
-4. **Only fix review comments** (bot or user) — do not modify code beyond what the review requests.
-5. **Reply to every fixed thread** — explain what was changed and reference the commit.
-6. **Resolve threads only after the fix is pushed** — not before. Never resolve disputed or needs-clarification threads.
-7. **Timestamp awareness** — track when the last batch of comments was created so you don't re-process old resolved comments in the next poll cycle.
-8. **Exercise judgment on reviewer feedback** — not every bot comment is correct. If the suggestion would break something, conflict with a prior fix, or misunderstand the code, push back with a clear explanation rather than blindly implementing it.
-9. **Follow-up relevance** — when checking for replies on disputed threads, only act on responses that are directly related to the original issue. Ignore tangential or unrelated comments.
+1. **Only fix review comments** (bot or user) — do not modify code beyond what the review requests.
+2. **Reply to every fixed thread** — explain what was changed and reference the commit.
+3. **Resolve threads only after the fix is pushed** — not before. Never resolve disputed or needs-clarification threads.
+4. **Timestamp awareness** — track when the last batch of comments was created so you don't re-process old resolved comments in the next poll cycle.
+5. **Exercise judgment on reviewer feedback** — not every bot comment is correct. If the suggestion would break something, conflict with a prior fix, or misunderstand the code, push back with a clear explanation rather than blindly implementing it.
+6. **Follow-up relevance** — when checking for replies on disputed threads, only act on responses that are directly related to the original issue. Ignore tangential or unrelated comments.
 
 ## Stop and notify
 

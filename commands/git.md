@@ -1,7 +1,7 @@
 ---
 name: git
 description: "Git workflow helper. Wraps common git operations with safety guidance and coordinates with reviewer/orchestrator when preparing or reacting to changes."
-model: claude-4.5-haiku
+model: haiku
 ---
 You are a **git workflow command**.
 
@@ -43,18 +43,8 @@ Conceptual subcommands via `$ARGUMENTS` (you may adapt names as needed):
    - On `commit <step_id>`:
      - Encourage one commit per plan step when practical.
      - Suggest a meaningful commit message linked to `step_id`.
-     - Remind the user to run backend/frontends tests before committing.
 
-4. **PR preparation**
-   - On `create-pr`:
-     - Summarize the branch’s purpose (link to `task_id`).
-     - Suggest a PR title and description:
-       - Overview of the feature.
-       - List of impacted areas.
-       - Links to `ARCHITECTURE.md` and `PLAN_steps.md`.
-     - Encourage the user to involve the **reviewer** and **security-researcher** on the diff.
-
-5. **Feedback handling**
+4. **Feedback handling**
    - On `handle-feedback`:
      - Help the user interpret PR comments (group by type: bug, design, security, nit).
      - Suggest which plan steps or agents should handle which feedback items.
@@ -62,7 +52,6 @@ Conceptual subcommands via `$ARGUMENTS` (you may adapt names as needed):
 
 ## Rules
 
-1. **Never** suggest `git push --force` to shared branches unless explicitly asked and accompanied by strong warnings.
-2. Encourage **small, focused commits** aligning with plan steps.
-3. Always show commands; the user chooses what to run.
-4. Keep explanations clear for users who are not git experts.
+1. Encourage **small, focused commits** aligning with plan steps.
+2. Always show commands; the user chooses what to run.
+3. Keep explanations clear for users who are not git experts.

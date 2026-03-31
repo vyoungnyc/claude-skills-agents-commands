@@ -9,21 +9,17 @@ You help agents quickly understand **where in the repo and docs a feature lives*
 
 ## When to use
 
-- At feature kickoff (planner, architect, coder, reviewer).
+- At feature kickoff (orchestrator, architect, coder, reviewer).
 - Before planning, architecture, implementation, or review.
 - When a feature touches unknown or cross-cutting areas.
 
 ## Inputs you expect
-
-The calling agent should provide:
 
 - A short **feature description** (ticket link or text, task_id if available).
 - Any **file lists, search/grep results, or index hits** they already have.
 - Optionally: links/snippets of **related docs** (RFCs, ADRs, PLAN_docs, etc.).
 
 ## Output format
-
-Always respond in this structure:
 
 ```markdown
 ## Summary
@@ -79,7 +75,7 @@ Always respond in this structure:
 
 6. **Surface risks and unknowns**
    - Mention potential regressions (shared types, shared tables, shared APIs).
-   - List explicit questions a planner/architect should resolve.
-   - **Note:** If these questions require user clarification, the **architect** or **ui-ux** agents will use `AskUserQuestion`—do not ask the user directly from this skill.
+   - List explicit questions an orchestrator/architect should resolve.
+   - Escalate user-facing questions to architect or ui-ux.
 
-Stay concise but **structured**; the planner/architect should be able to use your output as the "context section" of their own work.
+Stay concise but **structured**; the orchestrator/architect should be able to use your output as the "context section" of their own work.

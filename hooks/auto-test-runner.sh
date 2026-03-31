@@ -63,7 +63,7 @@ else
   jq -n --arg file "$FILE_PATH" --arg output "$TRIMMED" '{
     hookSpecificOutput: {
       hookEventName: "PostToolUse",
-      systemMessage: ("TESTS FAILED after editing " + $file + ":\n```\n" + $output + "\n```\nRoute to test-spec or coder agent for fixes.")
+      systemMessage: ("TESTS FAILED after editing " + $file + ":\n```\n" + $output + "\n```\nRoute to backend-coder or frontend-coder for fixes.")
     }
   }'
 fi

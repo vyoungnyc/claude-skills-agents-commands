@@ -88,6 +88,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local issue tracking (non-GitHub fallback)
+plans/
+
 # Project-specific
 .backup/
 *.backup
