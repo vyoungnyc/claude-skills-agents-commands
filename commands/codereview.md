@@ -84,7 +84,7 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 **Agent #4 — Prior PR/MR comments**
 
-> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` and read comments on prior PRs that touched the same files. Look for review comments or patterns that apply to what is currently being changed. Return any relevant findings as a JSON array using the schema provided, noting the prior PR number in the body. Return [] if no relevant prior comments found.
+> You are a PR history reviewer. Use `gh pr list --state merged --limit 20` to find prior PRs that touched the same files, and read their comments. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` with a note that PR history was unavailable. Look for review comments or patterns that apply to what is currently being changed. Return any relevant findings as a JSON array using the schema provided, noting the prior PR number in the body. Return [] if no relevant prior comments found.
 
 **Agent #5 — Code comments compliance**
 
@@ -92,33 +92,45 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 ---
 
-### Codex reviewers (Bash)
+### Codex reviewers (Bash — run in background, 15-minute timeout)
 
-Locate the Codex companion dynamically. If unavailable or erroring, skip gracefully — Codex is non-fatal.
+Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
 
 **Codex #6 — Standard review:**
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
-  node "$CODEX" review --wait 2>/dev/null || echo '{"verdict":"approve","summary":"skipped","findings":[],"next_steps":[]}'
+  node "$CODEX" review --wait 2>/dev/null
+  EXIT=$?
+  if [ $EXIT -ne 0 ]; then
+    echo '{"verdict":"error","summary":"Codex review failed (exit '$EXIT')","findings":[{"severity":"low","title":"Codex review unavailable","body":"The Codex standard review failed or timed out. This review angle was skipped.","file":"N/A","line_start":0,"line_end":0,"confidence":0}],"next_steps":[]}'
+  fi
 else
-  echo '{"verdict":"approve","summary":"skipped","findings":[],"next_steps":[]}'
+  echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"next_steps":[]}'
 fi
 ```
+`Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
 **Codex #7 — Adversarial review:**
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
-  node "$CODEX" adversarial-review --wait 2>/dev/null || echo '{"verdict":"approve","summary":"skipped","findings":[],"next_steps":[]}'
+  node "$CODEX" adversarial-review --wait 2>/dev/null
+  EXIT=$?
+  if [ $EXIT -ne 0 ]; then
+    echo '{"verdict":"error","summary":"Codex adversarial review failed (exit '$EXIT')","findings":[{"severity":"low","title":"Codex adversarial review unavailable","body":"The Codex adversarial review failed or timed out. This review angle was skipped.","file":"N/A","line_start":0,"line_end":0,"confidence":0}],"next_steps":[]}'
+  fi
 else
-  echo '{"verdict":"approve","summary":"skipped","findings":[],"next_steps":[]}'
+  echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"next_steps":[]}'
 fi
 ```
+`Bash({ command: "...", run_in_background: true, timeout: 900000 })`
+
+**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, read the Codex background task outputs. If a Codex task is still running, wait for it before proceeding to dedup. If `verdict` is `"error"`, note it in the final output as a skipped reviewer — do not treat errors as clean approvals.
 
 Codex findings include `confidence` (0–1 scale) instead of `score`. **Do not send Codex findings to the haiku scoring step** — they already have confidence values.
 
-Note which reviewers were skipped in the final output.
+Note which reviewers were skipped or errored in the final output.
 
 ---
 
