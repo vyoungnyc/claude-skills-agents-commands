@@ -238,37 +238,64 @@ Both are read-only. Collect both outputs before proceeding.
 
 ---
 
-## Phase 5: PR and Close Epic
+## Phase 5: Push, PR/MR, and Close Epic
 
-### 5.1 Push feature branch
+### 5.1 Ask the user
+
+Before pushing, ask via `AskUserQuestion`:
+
 ```
-git push origin feature/{feature_id}
+Implementation is complete, all reviews passed, docs are updated.
+
+Ready to push feature/{feature_id} to origin and create a PR/MR?
+- If GitHub: I'll push and create a PR via `gh pr create`
+- If GitLab: I'll push and create an MR via `glab mr create`
+- If you'd prefer to handle this manually, I'll just push the branch
+
+What would you like to do?
 ```
 
-### 5.2 Create PR
+### 5.2 Push feature branch
 ```
-gh pr create \
-  --title "feat({feature_id}): {summary from PRD}" \
-  --body "..."
+git push -u origin feature/{feature_id}
 ```
 
-PR body must include:
-- Link to epic: `Epic: #{epic_N}`
-- List of all closed child issues: `Implements #M, #K, ...` (NOT `Closes` for these — they are already closed)
+### 5.3 Create PR or MR (based on user response and platform)
+
+**Auto-detect platform:**
+```bash
+if gh auth status &>/dev/null && git remote get-url origin 2>/dev/null | grep -q github; then
+  # GitHub → create PR
+  gh pr create --title "feat({feature_id}): {summary}" --body "..."
+elif glab auth status &>/dev/null && git remote get-url origin 2>/dev/null | grep -q gitlab; then
+  # GitLab → create MR
+  glab mr create --title "feat({feature_id}): {summary}" --description "..."
+else
+  # Neither → just push, user handles PR/MR manually
+  echo "Branch pushed. Create your PR/MR manually."
+fi
+```
+
+**PR/MR body must include:**
+- Link to epic (GitHub issue link or `plans/` reference)
+- List of all closed child issues / completed issue files
 - Summary of changes
 - Test plan
 
-The PR does **not** close the epic — epic stays open until the PR is reviewed, approved, and merged.
+The PR/MR does **not** close the epic — epic stays open until the PR/MR is reviewed, approved, and merged.
 
-### 5.3 Post-PR review
-If PR review (human or automated) finds issues:
-- Invoke `/pr-fix-loop` to address feedback.
+### 5.4 Post-review
 
-### 5.4 Close epic on merge
-After PR is approved and merged:
-```
-gh issue close {epic_N} -c "Shipped in PR #{pr_number}. All {N} implementation issues closed."
-```
+If PR/MR review (human or automated) finds issues:
+- GitHub: invoke `/pr-fix-loop {pr_number}` to address feedback
+- GitLab: invoke `/mr-fix-loop {mr_iid}` to address feedback
+
+### 5.5 Close epic on merge
+
+After PR/MR is approved and merged:
+- GitHub: `gh issue close {epic_N} -c "Shipped in PR #{pr_number}"`
+- GitLab: update `plans/{feature_id}/issue-0000.md` frontmatter to `status: closed`
+- Both: report final summary to user
 
 ---
 
