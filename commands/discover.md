@@ -35,14 +35,24 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
 
 ## What to do in your first reply
 
-1. Create the feature branch immediately:
+1. **Ask if a PRD already exists:**
+   - "Do you already have a PRD, spec, or requirements document for this? If so, provide the file path and I'll review it."
+   - If user provides a file path:
+     - Read the file.
+     - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
+     - If clean: confirm with user, save to `docs/features/{feature_id}/PRD.md`, create branch, invoke `/execute-prd`.
+     - If minor gaps: present them, collect answers, update PRD, then invoke `/execute-prd`.
+     - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
+   - If user says no (or just provides a topic): proceed to step 2.
+
+2. Create the feature branch immediately:
    - Derive a short `feature_id` from the topic (or use `DISCOVERY` if no topic given).
    - Run: `git checkout -b feature/{feature_id}` off main.
    - Confirm the branch was created.
 
-2. Begin Phase 0 (codebase analysis) — scan before asking the user anything.
+3. Begin Phase 0 (codebase analysis) — scan before asking the user anything.
 
-3. After Phase 0, present your findings and begin Phase 1 with a single opening question.
+4. After Phase 0, present your findings and begin Phase 1 with a single opening question.
 
 ---
 
@@ -315,10 +325,11 @@ After presenting the full PRD:
 3. On approval:
    - Save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed).
    - Confirm the save: "PRD saved to `docs/features/{feature_id}/PRD.md`."
-4. Tell the user:
+4. Automatically invoke `/execute-prd`:
    ```
-   Run /feature-autopilot {feature_id} docs/features/{feature_id}/PRD.md to start implementation.
+   /execute-prd {feature_id} docs/features/{feature_id}/PRD.md
    ```
+   The user does not need to run this manually — `/discover` hands off directly.
 
 ---
 

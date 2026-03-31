@@ -50,13 +50,19 @@ chmod +x .claude/hooks/*.sh .claude/scripts/*.sh .claude/scripts/lib/*.sh
 
 3. Customize `hooks/reinject-context.sh` with your project's specific standards.
 
-4. Run the autopilot:
+4. Start building:
 
 ```
-/feature-autopilot FEATURE_ID spec-file.md
+/discover "user authentication"
 ```
 
-Or invoke the orchestrator directly with a task description.
+Or if you already have a PRD:
+
+```
+/discover
+> "Do you have a PRD?" → Yes, here: spec.md
+> Reviews → approves → auto-invokes /execute-prd
+```
 
 ## Architecture
 
@@ -93,8 +99,8 @@ Or invoke the orchestrator directly with a task description.
 
 | Command | Purpose |
 |---|---|
-| /feature-autopilot | Full automated workflow from spec to docs (sequential or parallel mode) |
-| /discover | Interactive PRD discovery — structured conversation → PRD |
+| /discover | **Main entry point.** Interactive PRD discovery or review existing spec → auto-invokes `/execute-prd` on approval |
+| /execute-prd | Execute a PRD through the full swarm pipeline: review → plan → issues → swarm → review → PR |
 | /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ on PR description (mandatory approval gate) or 15 min silence |
 | /mr-fix-loop | Fix review comments on GitLab MRs (GitLab Duo, Cursor BugBot, Codex, users) with Category A/B/C triage, fix pipeline failures locally, push, poll until MR approval or bot emoji gate or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |
@@ -140,7 +146,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 | **Agents** (all 8) | ✅ | ✅ | No platform-specific logic |
 | **Skills** (all 11) | ✅ | ✅ | No platform-specific logic |
 | **/discover** | ✅ | ✅ | Platform-agnostic — produces PRD files |
-| **/feature-autopilot** | ✅ | ✅ | Auto-detects GitHub vs local issue tracking |
+| **/execute-prd** | ✅ | ✅ | Auto-detects GitHub vs local issue tracking |
 | **/backend-test-runner** | ✅ | ✅ | No platform-specific logic |
 | **/frontend-test-runner** | ✅ | ✅ | No platform-specific logic |
 | **/git** | ✅ | ✅ | No platform-specific logic |
@@ -177,7 +183,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 - GitHub Issues integration — epic + child issues with acceptance criteria, progress bars, roadmap tables
 - Local issue fallback — file-based `plans/` tracking for GitLab/non-GitHub repos (gitignored)
 - `coder.md` agent — general-purpose swarm coder with work-stealing and issue validation
-- Full pipeline: `/discover` → PRD → `/feature-autopilot` → Epic+Issues → Swarm → Review → PR
+- Full pipeline: `/discover` → PRD → `/execute-prd` → Epic+Issues → Swarm → Review → PR
 - Agent count: 7 → 8; Command count: 6 → 7; Script count: 3 → 5
 
 **v2.3.0 (Phase 4)** — Agent architecture simplification:
@@ -185,7 +191,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 - Orchestrator now invokes `derive-plan-from-spec`, `derive-test-spec-from-requirements`, and `sync-docs-with-implementation` skills directly
 - Backend and frontend coders now implement tests alongside code (no separate test-spec agent)
 - Reviewer and security-researcher run in parallel (parallel review team)
-- `/feature-autopilot` no longer supports sequential mode, always parallel
+- `/execute-prd` no longer supports sequential mode, always parallel
 - Agent count reduced from 10 to 7
 - CLAUDE.md and README.md updated to reflect new architecture
 
@@ -219,7 +225,7 @@ agents/
 commands/
   backend-test-runner.md
   discover.md
-  feature-autopilot.md
+  execute-prd.md
   frontend-test-runner.md
   git.md
   mr-fix-loop.md
@@ -242,7 +248,7 @@ scripts/
   lib/poll-common.sh         # Shared functions: PID file, validation, set-diff
   poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
-  swarm-dispatch.sh          # Parallel claude sessions in worktrees for /feature-autopilot swarm
+  swarm-dispatch.sh          # Parallel claude sessions in worktrees for /execute-prd swarm
   create-github-issues.sh    # GitHub epic + child issues from plan steps
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
 hooks/

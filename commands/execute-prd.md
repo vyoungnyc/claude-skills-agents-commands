@@ -1,6 +1,6 @@
 ---
-name: feature-autopilot
-description: "Kick off a strict, orchestrator-driven multi-agent workflow from one or more spec files. Always parallel: swarm-based implementation with GitHub Issues tracking. Supports PRD review gate for external specs."
+name: execute-prd
+description: "Execute a PRD through the full multi-agent swarm pipeline: review → plan → GitHub Issues → swarm implementation → review → PR. Invoked by /discover after PRD approval, or directly with an existing spec."
 args:
   - name: feature_id
     type: string
@@ -9,10 +9,10 @@ args:
   - name: spec_files
     type: string[]
     required: true
-    description: "List of spec file paths or URLs to use as primary inputs."
+    description: "List of spec/PRD file paths to use as primary inputs."
 ---
 
-# Command: /feature-autopilot
+# Command: /execute-prd
 
 You are the **Orchestrator** agent in the multi-agent Claude Code setup.
 

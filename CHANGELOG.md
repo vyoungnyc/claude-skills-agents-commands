@@ -58,7 +58,7 @@ True swarm implementation with parallel claude sessions in git worktrees, intera
   - maxTurns recovery: detect abandoned tasks, resume sessions or respawn
   - Phase 5: PR creation, epic closes only on PR merge
 
-- **`commands/feature-autopilot.md`** — Full pipeline rewrite:
+- **`commands/execute-prd.md`** — Full pipeline rewrite:
   - Phase 0: Branch creation (`feature/{feature_id}`) + PRD review gate
   - Phase 1: Requirements, architecture, plan (with new fields), test strategy, GitHub/local issues, mandatory user approval with epic/issue links
   - Phase 2: Swarm dispatch with complexity-based model selection, worktree isolation per batch
@@ -79,7 +79,7 @@ True swarm implementation with parallel claude sessions in git worktrees, intera
 ### Full Pipeline
 
 ```
-/discover → PRD → /feature-autopilot → Epic+Issues → Plan → User approval
+/discover → PRD → /execute-prd → Epic+Issues → Plan → User approval
   → Swarm (worktrees, complexity-based models) → Merge → Review → Docs → PR
   → Merge → Close Epic
 ```
@@ -87,7 +87,7 @@ True swarm implementation with parallel claude sessions in git worktrees, intera
 ### Migration Notes
 
 1. Copy new files: `commands/discover.md`, `agents/coder.md`, `scripts/swarm-dispatch.sh`, `scripts/create-github-issues.sh`, `scripts/create-local-issues.sh`
-2. Replace: `agents/orchestrator.md`, `commands/feature-autopilot.md`
+2. Replace: `agents/orchestrator.md`, `commands/execute-prd.md`
 3. Update: `skills/derive-plan-from-spec/SKILL.md`, `docs/AGENT_TEAMS_GUIDE.md`, `CLAUDE.md`
 4. Ensure `gh` CLI is authenticated for GitHub issue tracking, or local fallback activates automatically
 5. `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` must be set in `hooks/settings.json` for swarm team mode inside sessions
@@ -108,7 +108,7 @@ This release consolidates the 10-agent architecture into 7 core agents by demoti
 
 - **Documenter agent** (`agents/documenter.md`) — Demoted to `sync-docs-with-implementation` skill. Orchestrator invokes this skill after implementation to identify and update impacted docs, changelogs, and ADRs.
 
-- **Sequential mode in `/feature-autopilot`** — All workflows now run parallel implementation (backend + frontend as subagents with worktree isolation). Sequential mode is removed; no time is lost to sequential execution.
+- **Sequential mode in `/execute-prd`** — All workflows now run parallel implementation (backend + frontend as subagents with worktree isolation). Sequential mode is removed; no time is lost to sequential execution.
 
 ### Changed
 
@@ -160,7 +160,7 @@ The 7-agent architecture is leaner and preserves the same level of rigor:
    - `test-spec.md`
    - `documenter.md`
 
-2. Update your `/feature-autopilot` command invocations: remove `mode=sequential`. All workflows default to parallel.
+2. Update your `/execute-prd` command invocations: remove `mode=sequential`. All workflows default to parallel.
 
 3. Update CLAUDE.md with the new Agent Spawning Patterns section.
 
@@ -297,7 +297,7 @@ If upgrading from v1:
 3. Copy `hooks/reinject-context.sh` to `.claude/hooks/` and make it executable (`chmod +x`).
 4. Merge `hooks/settings.json` into your `.claude/settings.json` under the `"hooks"` key.
 5. Replace all agent files in `.claude/agents/` with the v2 versions.
-6. Replace the `commands/feature-autopilot.md` with the v2 version.
+6. Replace the `commands/execute-prd.md` with the v2 version.
 7. Update your `CLAUDE.md` with the new agent spawning pattern section.
 
 ---
@@ -382,7 +382,7 @@ This release adds agent teams as an optional parallel execution pattern alongsid
   - Cost optimization strategies (~7x token cost vs standard sessions)
   - Limitations and risks
 
-- **`/feature-autopilot` parallel mode** — `/feature-autopilot` now accepts `mode=parallel` for team-based implementation (merged from former `/team-autopilot`). Uses agent teams for the implementation phase when backend + frontend can be built simultaneously on non-overlapping file domains. Auto-detects when parallel mode is appropriate if not specified.
+- **`/execute-prd` parallel mode** — `/execute-prd` now accepts `mode=parallel` for team-based implementation (merged from former `/team-autopilot`). Uses agent teams for the implementation phase when backend + frontend can be built simultaneously on non-overlapping file domains. Auto-detects when parallel mode is appropriate if not specified.
 
 - **Agent teams environment flag** in `hooks/settings.json` — Enables the experimental agent teams feature:
   ```json
@@ -440,7 +440,7 @@ AGENT TEAMS (Peer-to-Peer) — For parallel independent modules
 ### Migration Notes (Phase 2 → Phase 3)
 
 1. Merge the new `env` section from `hooks/settings.json` into your `.claude/settings.json`.
-2. `/team-autopilot` has been merged into `/feature-autopilot` (use `mode=parallel`).
+2. `/team-autopilot` has been merged into `/execute-prd` (use `mode=parallel`).
 3. Create the `docs/` directory and copy `docs/AGENT_TEAMS_GUIDE.md`.
 4. Replace `agents/orchestrator.md` with the v2.2 version.
 5. Update your `CLAUDE.md` with the new Pattern B section.
