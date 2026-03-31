@@ -40,8 +40,8 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
    - If user provides a file path:
      - Read the file.
      - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
-     - If clean: confirm with user, save to `docs/features/{feature_id}/PRD.md`, create branch, invoke `/execute-prd`.
-     - If minor gaps: present them, collect answers, update PRD, then invoke `/execute-prd`.
+     - If clean: confirm with user, save to `docs/features/{feature_id}/PRD.md`, create branch, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If minor gaps: present them, collect answers, update PRD, run the **Adversarial Review Gate**, then invoke `/execute-prd`.
      - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
    - If user says no (or just provides a topic): proceed to step 2.
 
@@ -53,9 +53,6 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
 3. Begin Phase 0 (codebase analysis) — scan before asking the user anything.
 
 4. After Phase 0, present your findings and begin Phase 1 with a single opening question.
-
-**Existing PRD path — adversarial review before executing:**
-If the user provided an existing PRD and it passes gap review, run the adversarial review gate (see **Adversarial Review Gate** below) before invoking `/execute-prd`.
 
 ---
 
@@ -323,17 +320,18 @@ Run /discover {feature_id}_v2 when v1 ships.
 
 Run this gate whenever a PRD is ready — whether freshly written or provided by the user. It must complete before invoking `/execute-prd`.
 
-### Step 1: Write the PRD to disk
+### Step 1: Ensure the PRD is on disk
 
-Save the current PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed).
+- **Freshly written PRD (from discovery phases):** Save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed). Confirm to the user: "PRD saved to `docs/features/{feature_id}/PRD.md`."
+- **Existing PRD (user-provided file):** The file is already on disk. Do **not** overwrite it — the user may have edits or notes in their original. Verify the file exists at the expected path and proceed to Step 2.
 
 ### Step 2: Run Codex adversarial review
 
-Construct the focus prompt with the actual PRD path substituted for `{prd_path}`, then run:
+**Important:** Before running the bash below, substitute the actual PRD file path from Step 1 into both `PRD_PATH` and the `FOCUS` string. The `{feature_id}` tokens below are **template placeholders** — replace them with the real feature ID from this discovery session (e.g., `docs/features/user_auth/PRD.md`).
 
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
-PRD_PATH="docs/features/{feature_id}/PRD.md"
+PRD_PATH="docs/features/<feature_id>/PRD.md"
 FOCUS="Read \`./$PRD_PATH\` (even if untracked) and perform an adversarial PRD review.
 
 Review as a skeptical staff PM/architect. Find:
@@ -370,7 +368,7 @@ fi
 ```
 
 **If Codex is unavailable or errors:** run an inline adversarial pass yourself using the same rubric and output the same JSON structure:
-- Read the PRD at `docs/features/{feature_id}/PRD.md`
+- Read the PRD at the path saved in Step 1
 - Review as a skeptical staff PM/architect
 - Find: invalid assumptions, contradicting requirements, missing edge/failure/abuse modes, untestable ACs, hidden dependencies, missing observability/migration/rollback requirements
 - Cite by section heading + evidence quote — not line numbers

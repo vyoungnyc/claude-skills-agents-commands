@@ -34,13 +34,15 @@ You are reviewing code changes interactively with the user. You run a 7-angle pa
 
 Show a one-line summary: `Reviewing N files, M lines changed` before proceeding.
 
-## Step 2: Gather context
+## Step 2: Gather context and clarify intent
 
 Before launching reviewers:
 - Get the full diff text
 - Find all relevant CLAUDE.md files: root CLAUDE.md + any CLAUDE.md in directories containing modified files
 - Check `ARCHITECTURE.md` and `PLAN_steps.md` if they exist
 - For each modified file, read enough surrounding code to understand the patterns in use
+
+**Intent gate (before Step 3):** If the intent of the changes is not obvious from the diff, commit messages, or user-provided context, ask the user what the changes are supposed to do **before** launching reviewers. Reviewers need clear intent context to produce accurate findings. Do not launch Step 3 until intent is established.
 
 ## Step 3: Launch all 7 reviewers in parallel
 
@@ -114,7 +116,7 @@ else
 fi
 ```
 
-Codex findings already include `confidence` (0–1 scale). Convert to 0–100 by multiplying × 100. **Do not send Codex findings to the haiku scoring step** — they already have scores.
+Codex findings include `confidence` (0–1 scale) instead of `score`. **Do not send Codex findings to the haiku scoring step** — they already have confidence values.
 
 Note which reviewers were skipped in the final output.
 
@@ -138,9 +140,16 @@ Each haiku agent returns: `{"score": <0-100>, "reasoning": "<one sentence>"}`
 
 Assign the returned score to its finding.
 
+## Step 4.5: Normalize Codex findings
+
+Before dedup, normalize Codex findings (#6 and #7) so they have the same `score` field as Claude findings:
+- For each Codex finding, compute `score = confidence × 100` (e.g., 0.85 → 85).
+- Add the `score` field to each Codex finding JSON object.
+- All findings from all 7 agents **must** have a `score` (0–100) field before entering Step 5.
+
 ## Step 5: Deduplicate and merge
 
-Spawn a **single haiku agent** with ALL findings from agents #1–#7 (each with its score and source label).
+Spawn a **single haiku agent** with ALL normalized findings from agents #1–#7 (each with its `score` and source label).
 
 Instructions for the haiku agent:
 > You are deduplicating a list of code review findings from 7 independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial).
@@ -178,13 +187,13 @@ Verdict is based on the presence of high-confidence findings (score ≥ 75):
 - Only medium/low or all < 75 → `approve-with-nits`
 - No findings or all cosmetic → `approve`
 
-## Step 7: Ask when unsure
+## Step 7: Ask when unsure (during review)
 
-Ask the user when:
-- You cannot determine intended behavior from code, tests, or commit message.
+If questions arise while reviewing findings (after Step 6), ask the user:
+- A finding's validity depends on intended behavior that wasn't clarified in Step 2.
 - A change contradicts existing patterns — ask if the deviation is deliberate.
 
-Do NOT ask about things determinable from the code or docs.
+Do NOT ask about things determinable from the code or docs. Major intent questions should be caught in Step 2's intent gate, not here.
 
 ## Step 8: Offer to fix
 
