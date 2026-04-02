@@ -19,6 +19,28 @@ You are reviewing code changes interactively with the user. You run a 7-angle pa
 2. **Pattern adherence** — Deviations from established codebase conventions (naming, error handling, data flow, file organization).
 3. **Best practices** — Deprecated APIs, known anti-patterns, missed language features that simplify the code.
 
+## Step 0: Detect repo host and capabilities from git config
+
+Before parsing scope, detect what remote platform this repo is on so you only use supported tooling.
+
+1. Read the remote URL from git config (prefer branch remote, then origin):
+   - `git config --get branch.$(git branch --show-current).remote`
+   - `git config --get remote.<remote>.url`
+   - Fallback: `git config --get remote.origin.url`
+2. Classify repo host from the URL/hostname:
+   - Contains `github` → `repo_host=github`
+   - Contains `gitlab` → `repo_host=gitlab`
+   - Otherwise → `repo_host=unknown`
+3. Detect CLI availability:
+   - `has_gh`: `command -v gh`
+   - `has_glab`: `command -v glab`
+4. Build a capability map used by later steps:
+   - GitHub review APIs: `repo_host=github` and `has_gh`
+   - GitLab review APIs: `repo_host=gitlab` and `has_glab`
+   - Otherwise: local git-only fallback
+
+Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>, glab: <yes/no>)`.
+
 ## Step 1: Parse input and scope
 
 `$ARGUMENTS` may contain a scope, intent description, or both.
@@ -26,7 +48,10 @@ You are reviewing code changes interactively with the user. You run a 7-angle pa
 **Scope** (determines which diff to review):
 - No args or `staged` → `git diff --cached`, fall back to `git diff`
 - Commit ref (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`
-- `PR #N`, `MR #N`, or just a number → GitHub repos: `gh pr diff N`; GitLab or no `gh`: `git diff main...HEAD`
+- `PR #N`, `MR #N`, or just a number:
+  - `repo_host=github` and `has_gh` → `gh pr diff N`
+  - `repo_host=gitlab` and `has_glab` → `glab mr diff N`
+  - otherwise → `git diff main...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
 - File path → read the file + `git log -5 --follow <file>`
 - Default: staged/unstaged diff
 
@@ -46,7 +71,7 @@ Before launching reviewers:
 
 ## Step 3: Launch all 7 reviewers in parallel
 
-In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, and any clarified intent context from Step 2 to each.
+In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, detected `repo_host`, CLI availability (`has_gh`, `has_glab`), and any clarified intent context from Step 2 to each.
 
 ---
 
@@ -84,7 +109,7 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 **Agent #4 — Prior PR/MR comments**
 
-> You are a PR history reviewer. Read previous pull requests that touched the same files, and check for any comments on those pull requests that may also apply to the current pull request. Use `gh pr list --state merged` and `gh pr view` to find and read prior PRs — decide how many to check based on what you find. If `gh` is unavailable (e.g., GitLab repos or no GitHub CLI), skip this review angle and return `[]` (the unavailability will be reported separately via reviewer status). Return any relevant findings as a JSON array using the schema provided, noting the prior PR number in the body. Return [] if no relevant prior comments found.
+> You are a review-history reviewer. Read previous merged code reviews that touched the same files, and check for comments that may also apply now. If `repo_host=github` and `has_gh`, use `gh pr list --state merged` and `gh pr view`. If `repo_host=gitlab` and `has_glab`, use `glab mr list --state merged` and `glab mr view`. Decide how many prior PRs/MRs to inspect based on what you find. If neither platform tool is available, skip this angle and return `[]` (the unavailability will be reported separately via reviewer status). Return any relevant findings as a JSON array using the schema provided, noting the prior PR/MR identifier in the body. Return [] if no relevant prior comments found.
 
 **Agent #5 — Code comments compliance**
 
