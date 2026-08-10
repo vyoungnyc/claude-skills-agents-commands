@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.4.0
+**Version:** 2.5.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -19,36 +19,22 @@ A set of agent definitions, skills, commands, and hooks that turn Claude Code in
 1. Copy the contents to your project's `.claude/` directory:
 
 ```bash
-mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/scripts/lib
+mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/rules .claude/scripts/lib
 cp -r agents/. .claude/agents/
 cp -r skills/. .claude/skills/
 cp -r commands/. .claude/commands/
+cp -r rules/. .claude/rules/
 cp hooks/*.sh .claude/hooks/
 cp scripts/lib/*.sh .claude/scripts/lib/
 cp scripts/*.sh .claude/scripts/
 chmod +x .claude/hooks/*.sh .claude/scripts/*.sh .claude/scripts/lib/*.sh
 ```
 
-2. Merge the hook configuration into your `.claude/settings.json`:
+For **global** (all-projects) use, copy to `~/.claude/` instead (`~/.claude/agents/`, `~/.claude/rules/`, etc.). If you deploy the hooks globally, merge the hook config into `~/.claude/settings.json` and change each hook command path from `"$CLAUDE_PROJECT_DIR"/.claude/hooks/` to `~/.claude/hooks/` — `$CLAUDE_PROJECT_DIR` points at the current project, not your home directory.
 
-```json
-{
-  "hooks": {
-    "PostCompact": [
-      {
-        "matcher": "",
-        "hooks": [{
-          "type": "command",
-          "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/reinject-context.sh",
-          "statusMessage": "Re-injecting project context..."
-        }]
-      }
-    ]
-  }
-}
-```
+2. Merge the hook configuration from `hooks/settings.json` into your project's `.claude/settings.json`. For **global** deployment, copy the root `settings.json` to `~/.claude/settings.json` instead — its hook commands already use `$HOME` paths.
 
-3. Customize `hooks/reinject-context.sh` with your project's specific standards.
+3. If your plans live somewhere other than `docs/features/*/PLAN_steps.md` or `plans/*/PLAN_steps.md`, adjust the glob in `hooks/plan-context.sh`.
 
 4. Start building:
 
@@ -76,10 +62,10 @@ Or if you already have a PRD:
 | **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation + tests |
 | **coder** | sonnet | memory: project | General-purpose swarm implementer |
 | **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system, user research |
-| **reviewer** | opus | permissionMode: plan, memory: project, Agent (read-only sub-agents only) | Code review with built-in 5-angle parallel PR Review Mode (CLAUDE.md compliance, bug scan, git history, PR comments, code comments). Scores with haiku, deduplicates. Runs in parallel with security-researcher |
+| **reviewer** | opus | permissionMode: plan, memory: project | Step-level review of implemented work against DoD and acceptance criteria. PR-scale multi-angle review is delegated to `/codereview` (Codex cross-check) or native `/code-review`. Runs in parallel with security-researcher |
 | **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit, runs in parallel with reviewer |
 
-### Skills (11 — orchestrator invokes directly)
+### Skills (10 — orchestrator invokes directly)
 
 | Skill | Purpose |
 |---|---|
@@ -92,7 +78,6 @@ Or if you already have a PRD:
 | review-changes-structured | Blocking/non-blocking review feedback |
 | update-plan-from-review-feedback | Convert review findings to fix tasks and incorporate into plan |
 | run-quality-gates-and-triage | Interpret test/lint logs, group failures |
-| fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
 ### Commands (8)
@@ -112,7 +97,7 @@ Or if you already have a PRD:
 
 | Hook | Event | Purpose |
 |---|---|---|
-| reinject-context.sh | PostCompact | Re-inject project standards after context compaction |
+| plan-context.sh | PostCompact | Re-inject active PLAN_steps.md state after compaction (CLAUDE.md survives compaction natively) |
 | auto-format.sh | PostToolUse (sync) | Auto-run Prettier + ESLint fix on edited source files |
 | auto-test-runner.sh | PostToolUse (async) | Run test suite in background after file edits |
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
@@ -145,7 +130,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 |---|---|---|---|
 | **Hooks** (all 5) | ✅ | ✅ | Platform-agnostic — operates at the git level |
 | **Agents** (all 8) | ✅ | ✅ | No platform-specific logic |
-| **Skills** (all 11) | ✅ | ✅ | No platform-specific logic |
+| **Skills** (all 10) | ✅ | ✅ | No platform-specific logic |
 | **/discover** | ✅ | ✅ | Platform-agnostic — produces PRD files |
 | **/execute-prd** | ✅ | ✅ | Auto-detects GitHub vs local issue tracking |
 | **/backend-test-runner** | ✅ | ✅ | No platform-specific logic |
@@ -177,6 +162,14 @@ scripts/poll-mr-reviews.sh 42 60 15
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.5.0** — Native-feature modernization (Aug 2026 audit):
+- CLAUDE.md rewritten for user scope; stack standards moved to path-scoped `rules/`
+- Global hook deployment via root `settings.json` (`$HOME` paths — `$CLAUDE_PROJECT_DIR` doesn't work at user scope)
+- `reinject-context.sh` → `plan-context.sh` (CLAUDE.md survives compaction natively; only plan state needs re-injection)
+- Reviewer agent slimmed to Step Review Mode; PR-scale review delegated to `/codereview` or native `/code-review`
+- Removed `fix-lint-and-typescript-errors` skill (native capability)
+- Added `docs/PHASE_6_NATIVE_PARALLELISM.md` — plan to evaluate native background subagents + worktrees vs `swarm-dispatch.sh`
 
 **v2.4.0** — Multi-angle parallel review system:
 - Reviewer agent PR Review Mode — 5-angle parallel review with haiku scoring and dedup
@@ -251,7 +244,6 @@ skills/
   derive-plan-from-spec/
   derive-test-spec-from-requirements/
   extract-requirements-from-ticket/
-  fix-lint-and-typescript-errors/
   propose-architecture-for-feature/
   review-changes-structured/
   run-quality-gates-and-triage/
@@ -266,14 +258,18 @@ scripts/
   swarm-dispatch.sh          # Parallel claude sessions in worktrees for /execute-prd swarm
   create-github-issues.sh    # GitHub epic + child issues from plan steps
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
+rules/
+  typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
+  infra.md                   # Path-scoped: Prisma/Terraform standards (loads only for matching files)
 hooks/
-  reinject-context.sh        # PostCompact: re-inject standards
+  plan-context.sh            # PostCompact: re-inject active plan state
   auto-format.sh             # PostToolUse: Prettier + ESLint
   auto-test-runner.sh        # PostToolUse: background tests
   enforce-git-conventions.sh # PreToolUse: commit/branch/push rules
   auto-approve-safe-ops.sh   # PermissionRequest: skip dialog for safe ops
-  settings.json              # Hook configuration (merge into .claude/settings.json)
-CLAUDE.md
+  settings.json              # Project-scope hook config (merge into .claude/settings.json)
+settings.json                # Global settings incl. hooks ($HOME paths) — deploy to ~/.claude/settings.json
+CLAUDE.md                    # Global (user-scope) standards — stack specifics live in rules/
 CHANGELOG.md
 README.md
 ```

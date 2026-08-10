@@ -2,6 +2,25 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.5.0] - 2026-08-10
+
+### CLAUDE.md Modernization & Path-Scoped Rules
+
+Audit against Claude Code native features (August 2026). CLAUDE.md restructured per current memory best practices; stack-specific standards moved to path-scoped rules.
+
+- **CLAUDE.md rewritten for user scope** — The file deploys to `~/.claude/CLAUDE.md` (loaded in every project), but previously declared a project tech stack, npm commands, and Prisma paths — misleading context in non-TypeScript repos. Now contains only universal standards (principles, file management, git, testing, task markers, agent dispatch rules). Trimmed well under the recommended 200-line target; derivable/duplicated content removed.
+- **`rules/` directory added** — `typescript.md` (paths: `**/*.{ts,tsx,mts,cts}`) and `infra.md` (paths: `*.tf`, `prisma/**`, `*.prisma`) carry the stack-specific standards. Deployed to `~/.claude/rules/`, they load only when Claude touches matching files.
+- **README** — Quickstart copies `rules/`; documented that global (user-scope) hook deployment requires changing hook command paths from `"$CLAUDE_PROJECT_DIR"/.claude/hooks/` to `~/.claude/hooks/`.
+- **AGENT_TEAMS_GUIDE** — Removed stale "Claude Opus 4.6" requirement; agent teams remain experimental (flag still required) as of Aug 2026.
+
+### Global Hook Deployment & Native-Feature Cleanup
+
+- **Root `settings.json` is now the full global config** — plugins, model, effort, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, and all hooks with `$HOME`-based command paths. Deploy by copying to `~/.claude/settings.json`. Previously the hook config lived only in `hooks/settings.json` with `$CLAUDE_PROJECT_DIR` paths, which silently did nothing at user scope — hooks were never active globally.
+- **`reinject-context.sh` removed; `plan-context.sh` added** — Project-root CLAUDE.md now survives compaction natively (Claude Code re-reads it from disk), so re-stating standards was pure duplication/drift risk. The replacement PostCompact hook re-injects only what doesn't survive on its own: active `PLAN_steps.md` step/status state (globs `docs/features/*/PLAN_steps.md`, `plans/*/PLAN_steps.md`, root).
+- **Reviewer agent slimmed to Step Review Mode** — Removed the built-in 5-angle PR Review Mode, the `Agent` tool grant, and the haiku scoring/dedup pipeline (maxTurns 30 → 20). PR-scale multi-angle review is delegated to `/codereview` (kept for its Codex cross-check) or the native `/code-review` skill (effort levels, `--fix`, `ultra`).
+- **`fix-lint-and-typescript-errors` skill removed** — Grouping and safely fixing lint/TS errors is native model capability; the durable rules (no blanket `any`/`@ts-ignore`) live in `rules/typescript.md`. Skill count 11 → 10; references removed from backend-coder and frontend-coder.
+- **`docs/PHASE_6_NATIVE_PARALLELISM.md` added** — Proposed (not yet approved) plan to evaluate replacing `swarm-dispatch.sh` with native background subagents using `isolation: worktree`, per-spawn `model` selection, the native task queue, and `SendMessage`-based recovery in place of `claude --resume`. Agent teams usage unchanged.
+
 ## [2.4.0] - 2026-03-31
 
 ### Multi-Angle Parallel Review System
