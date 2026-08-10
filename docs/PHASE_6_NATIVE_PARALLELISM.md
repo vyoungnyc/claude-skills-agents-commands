@@ -1,8 +1,15 @@
 # PHASE 6 — Native Parallelism: Modernize Swarm Dispatch
 
-**Status:** [ ] Proposed — awaiting approval. No implementation until approved.
+**Status:** [✅] Decisions made 2026-08-10 → executable PRD at `docs/features/native_swarm/PRD.md`. Run via `/execute-prd native_swarm docs/features/native_swarm/PRD.md`. This document remains as background/decision record.
 **Created:** 2026-08-10
 **Scope:** Evaluate replacing `scripts/swarm-dispatch.sh` (parallel `claude` CLI sessions in worktrees) with native background subagents using built-in worktree isolation. Agent teams usage stays as-is (still experimental; flag now enabled globally).
+
+## Decisions (2026-08-10)
+
+1. **End state: full retirement** of `swarm-dispatch.sh`. The user does not need per-batch cost itemization, and headless/CI runs are covered natively: a GitHub Actions step running `claude -p` (or `anthropics/claude-code-action`) is a live session for the duration of the run, and background subagents with worktree isolation work inside it. A documented CI entry point replaces the script's headless role.
+2. **Spike depth: lightweight blocker spike** — verify merge semantics, task-claim exclusivity, and SendMessage recovery only; no full A/B comparison.
+3. **Cost visibility: best-effort capture** — per-worker duration/turns/model in the swarm report; no dollar figures.
+4. **Cloud dispatch: research note only** (`isolation: "remote"` assessment, no implementation).
 
 ## Context
 
