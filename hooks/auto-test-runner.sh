@@ -6,19 +6,30 @@
 # Runs asynchronously — does not block Claude's work.
 # Results delivered as a systemMessage on the next turn.
 #
-# Skip-if-in-flight: hook invocations run synchronously inside this process
-# (there is no `&` around the suite invocation before the pidfile is even
-# written below the *.sh branch), so a same-process kill-and-restart can
-# never fire — the "kill" would need to interrupt code that hasn't reached
-# the point of checking for a kill yet, and by the time a later invocation
-# runs, the earlier invocation's own trap has already cleaned up its
-# pidfile. That combination let concurrent hook invocations orphan test
-# processes instead of ever actually restarting them. Both branches below
-# background the actual test-suite invocation, record the *child's* PID (not
-# this hook process's own $$), and skip launching a new run outright if a
-# still-live run is already recorded — simpler and correct, vs. attempting
-# to kill a process this same synchronous hook invocation can't outlive long
-# enough to interrupt.
+# Concurrency model (per suite kind — shell and JS coordinate separately):
+#
+#   marker  — a published "please run the tests" request. Every invocation
+#             touches it first, unconditionally. Multiple edits coalesce:
+#             touch is idempotent, and one run over current disk contents
+#             satisfies every request published before it launched.
+#   lock    — runner ownership, an atomic mkdir held for the runner's whole
+#             lifetime (launch, wait, rerun loop). Exactly one invocation
+#             holds it at a time; everyone else exits immediately after
+#             publishing their marker, trusting the lock holder's rerun
+#             loop to consume it.
+#
+# The lock closes the claim-to-launch window that pidfile-based liveness
+# checking could not: with a pidfile, an invocation arriving after a runner
+# consumed the marker but before it wrote its child PID saw "no live
+# runner", published-and-claimed a fresh marker, and launched a second
+# concurrent suite. Ownership here is held across that entire interval, so
+# the sequence "publish marker → fail to get lock → exit" is always safe:
+# a live lock holder is guaranteed to check the marker again after its
+# current run finishes.
+#
+# The lock dir records the holder's PID so a crashed runner (kill -9, no
+# trap) cannot wedge testing forever: an acquirer that finds the lock held
+# by a dead process removes and retakes it.
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
@@ -33,15 +44,14 @@ case "$FILE_PATH" in
     ;;
 esac
 
-# Per-user 0700 state directory for pidfiles and rerun markers. Fully
+# Per-user 0700 state directory for locks and rerun markers. Fully
 # predictable names directly in the shared, world-writable ${TMPDIR:-/tmp}
 # would let another local user (or a stale root-owned file) pre-create an
-# entry this hook cannot delete — an undeletable rerun marker turns the
-# consume loop below into an endless full-suite rerun. Same hardening as
-# scripts/lib/poll-common.sh's pidfile directory: create with mode 700,
-# then refuse to use it unless it is a real directory we own (mkdir -m
-# only applies the mode when it actually creates the directory), repairing
-# the mode since -O proves ownership but not permissions.
+# entry this hook cannot delete. Same hardening as scripts/lib/
+# poll-common.sh's pidfile directory: create with mode 700, then refuse to
+# use it unless it is a real directory we own (mkdir -m only applies the
+# mode when it actually creates the directory), repairing the mode since
+# -O proves ownership but not permissions.
 HOOK_STATE_DIR="${TMPDIR:-/tmp}/claude-auto-test-$(id -u)"
 mkdir -m 700 -p "$HOOK_STATE_DIR" 2>/dev/null || true
 if [ -L "$HOOK_STATE_DIR" ] || [ ! -d "$HOOK_STATE_DIR" ] || [ ! -O "$HOOK_STATE_DIR" ] \
@@ -51,17 +61,34 @@ if [ -L "$HOOK_STATE_DIR" ] || [ ! -d "$HOOK_STATE_DIR" ] || [ ! -O "$HOOK_STATE
   exit 0
 fi
 
-# Atomically claim a rerun request. `rm`-based consumption is not mutually
-# exclusive: when the previous child has just exited, the owner's rerun
-# loop and a touch-first later invocation can each see the marker, each
-# "consume" it (rm -f of an already-unlinked file still succeeds), and
-# both launch the suite, racing on the shared pidfile. rename(2) is atomic
-# — exactly one mv wins, so exactly one invocation becomes the runner for
-# any published request. A failed claim also cleanly ends the rerun loop
-# if the marker were ever unremovable, so no spin guard is needed.
+# Atomically consume a published run request. rename(2) is atomic — exactly
+# one mv wins — and a failed mv (marker absent) cleanly ends the rerun loop,
+# so no unconsumable-marker spin guard is needed.
 claim_marker() {
   mv "$1" "$1.claimed.$$" 2>/dev/null || return 1
   rm -f "$1.claimed.$$"
+  return 0
+}
+
+# Acquire runner ownership: atomic mkdir, holder PID recorded inside. On
+# contention, a lock held by a live process means a runner exists whose
+# rerun loop will consume our published marker — return failure so the
+# caller exits. A lock held by a dead process is a crashed runner's
+# leftover: remove and retake it (two concurrent reclaimers race on the
+# inner mkdir, which only one can win).
+acquire_lock() {
+  if mkdir "$1" 2>/dev/null; then
+    echo $$ > "$1/pid"
+    return 0
+  fi
+  local holder
+  holder=$(cat "$1/pid" 2>/dev/null || true)
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+    return 1
+  fi
+  rm -rf "$1"
+  mkdir "$1" 2>/dev/null || return 1
+  echo $$ > "$1/pid"
   return 0
 }
 
@@ -74,99 +101,30 @@ case "$FILE_PATH" in
     RUN_TESTS="$REPO_ROOT/scripts/run-tests.sh"
     [ -f "$RUN_TESTS" ] || exit 0
 
-    # Skip-if-in-flight pattern on its own pidfile so a shell-suite run never
-    # collides with a vitest/jest run below. The pidfile records the *child*
-    # test-runner process's PID, not this hook invocation's own $$ — the
-    # previous approach recorded the hook's own PID, which is meaningless to
-    # a later invocation (the hook process that owned it has usually already
-    # exited by the time anyone reads the pidfile back) and can never
-    # actually be interrupted mid-run since it's blocked synchronously
-    # capturing output.
-    SH_PIDFILE="$HOOK_STATE_DIR/shell.pid"
-    # Rerun marker: this hook runs async, so a second invocation can arrive
-    # while a run is already in flight testing *older* file contents. Bare
-    # skip-if-in-flight would drop that newer edit untested — the only
-    # reported result would cover the stale contents. Instead the skipping
-    # invocation leaves a marker, and the in-flight invocation re-runs the
-    # suite once after its current run finishes. Multiple mid-run edits
-    # coalesce into a single rerun (touch is idempotent), which is correct:
-    # the rerun tests whatever is on disk at that point.
-    SH_RERUN_MARKER="$HOOK_STATE_DIR/shell.rerun"
+    SH_MARKER="$HOOK_STATE_DIR/shell.rerun"
+    SH_LOCK="$HOOK_STATE_DIR/shell.lock"
 
-    # Publish the rerun request BEFORE the in-flight liveness check, not
-    # after: a touch that happens after confirming the PID is alive races
-    # the owner's post-wait marker check — the run can exit and the owner
-    # consume (and see no) marker between this invocation's kill -0 and its
-    # touch, leaving a marker nobody will ever read. Touch-first closes
-    # that: either the owner is still in wait and will consume the marker
-    # afterward, or the run has already finished, the liveness check below
-    # falls through, and this invocation becomes the runner itself —
-    # clearing the marker it just set before launching.
-    touch "$SH_RERUN_MARKER"
-    if [ -f "$SH_PIDFILE" ]; then
-      OLD_SH_PID=$(cat "$SH_PIDFILE" 2>/dev/null || true)
-      if [ -n "$OLD_SH_PID" ] && kill -0 "$OLD_SH_PID" 2>/dev/null; then
-        # Confirm the live PID is actually a shell-suite run before treating
-        # it as "in flight" — a recycled PID could otherwise belong to some
-        # unrelated process, causing this hook to wrongly skip a run that
-        # should have started.
-        OLD_SH_COMM=$(ps -o comm= -p "$OLD_SH_PID" 2>/dev/null || true)
-        case "$OLD_SH_COMM" in
-          *bash*|*run-tests*)
-            exit 0
-            ;;
-        esac
-      fi
-    fi
-
-    # Become the runner only by atomically claiming the request published
-    # above (the run below tests current disk contents, which already
-    # include whatever edit set the marker). A failed claim means another
-    # invocation — an in-flight owner's rerun loop — took it and will run
-    # the suite; launching here too would duplicate the run. Claim BEFORE
-    # registering the cleanup trap: a loser's exit must not tear down the
-    # shared pidfile the winning runner just wrote.
-    claim_marker "$SH_RERUN_MARKER" || exit 0
+    # Publish first, then try to become the runner. If the lock is held,
+    # the live holder's rerun loop is guaranteed to see this marker after
+    # its current run — the edit is never silently dropped.
+    touch "$SH_MARKER"
+    acquire_lock "$SH_LOCK" || exit 0
 
     SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
-    # Remove the shared pidfile only if it still records OUR child — by the
-    # time this runner exits, a newer invocation may already have claimed a
-    # fresh rerun request and written its own PID there; unconditional rm
-    # would blind later invocations to that still-running suite.
-    cleanup_sh() {
-      [ "$(cat "$SH_PIDFILE" 2>/dev/null)" = "${SH_PID:-}" ] && rm -f "$SH_PIDFILE"
-      rm -f "$SH_OUT_FILE"
-    }
-    trap cleanup_sh EXIT INT TERM
+    trap 'rm -rf "$SH_LOCK"; rm -f "$SH_OUT_FILE"' EXIT INT TERM
 
-    # `set -m` gives the backgrounded run its own process group (where the
-    # shell supports job control in a script), so a future kill of the
-    # recorded child PID cannot also reach this hook process's own group.
-    set -m 2>/dev/null || true
-    bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
-    SH_PID=$!
-    set +m 2>/dev/null || true
-    echo "$SH_PID" > "$SH_PIDFILE"
-
-    wait "$SH_PID"
-    SH_EXIT=$?
-
-    # An edit landed mid-run: its invocation skipped and left the marker, so
-    # the result above may describe stale contents. Re-run once against
-    # what's on disk now and report that instead. Loop bounded at one extra
-    # pass per marker cycle — a marker set during the rerun triggers another.
-    # claim_marker keeps runner ownership exclusive: if a newer invocation
-    # claimed this request first (its liveness check saw our child already
-    # exited), the claim fails and that invocation runs instead.
-    while claim_marker "$SH_RERUN_MARKER"; do
-      set -m 2>/dev/null || true
-      bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
-      SH_PID=$!
-      set +m 2>/dev/null || true
-      echo "$SH_PID" > "$SH_PIDFILE"
-      wait "$SH_PID"
+    # Run while requests exist. The first iteration normally consumes the
+    # marker we just published; a failed first claim means the previous
+    # runner consumed it in its final rerun (which tested disk contents
+    # that already included our edit), so there is nothing to do.
+    SH_EXIT=0
+    SH_RAN=0
+    while claim_marker "$SH_MARKER"; do
+      bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1
       SH_EXIT=$?
+      SH_RAN=1
     done
+    [ "$SH_RAN" -eq 1 ] || exit 0
     SH_OUTPUT=$(tail -30 "$SH_OUT_FILE" 2>/dev/null || true)
 
     if [ "$SH_EXIT" -eq 0 ]; then
@@ -199,71 +157,24 @@ else
   exit 0
 fi
 
-# Skip-if-in-flight: same pattern as the shell-suite branch above — record
-# the backgrounded test-runner child's PID (not this hook's own $$) and
-# skip starting a second run rather than trying to kill-and-restart, which
-# can't interrupt a process this same synchronous hook invocation is blocked
-# waiting on anyway.
-PIDFILE="$HOOK_STATE_DIR/js.pid"
-# Same rerun-marker pattern as the shell-suite branch: an edit arriving while
-# a run is in flight must trigger one coalesced rerun, not be silently dropped.
-RERUN_MARKER="$HOOK_STATE_DIR/js.rerun"
+MARKER="$HOOK_STATE_DIR/js.rerun"
+LOCK="$HOOK_STATE_DIR/js.lock"
 
-# Touch-before-check, same reasoning as the shell branch: publishing the
-# rerun request after the liveness check races the owner's post-wait marker
-# consumption; touch-first guarantees the marker is either consumed by the
-# still-waiting owner or cleared by this invocation when it becomes the
-# runner itself.
-touch "$RERUN_MARKER"
-if [ -f "$PIDFILE" ]; then
-  OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
-  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    # Identity check before treating this PID as "in flight" — vitest/jest
-    # run under node via npx, so confirm the live process is actually a
-    # node-based test runner before skipping on its account.
-    OLD_COMM=$(ps -o comm= -p "$OLD_PID" 2>/dev/null || true)
-    case "$OLD_COMM" in
-      *node*|*npx*|*vitest*|*jest*)
-        exit 0
-        ;;
-    esac
-  fi
-fi
-
-# Become the runner only via atomic claim — same reasoning as the shell
-# branch: a failed claim means an in-flight owner's rerun loop took this
-# request and will run. Claim BEFORE registering the cleanup trap so a
-# loser's exit cannot tear down the winning runner's pidfile.
-claim_marker "$RERUN_MARKER" || exit 0
+# Publish-then-lock, same protocol as the shell branch.
+touch "$MARKER"
+acquire_lock "$LOCK" || exit 0
 
 OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
-# Conditional pidfile cleanup — same reasoning as the shell branch.
-cleanup_js() {
-  [ "$(cat "$PIDFILE" 2>/dev/null)" = "${TEST_PID:-}" ] && rm -f "$PIDFILE"
-  rm -f "$OUT_FILE"
-}
-trap cleanup_js EXIT INT TERM
+trap 'rm -rf "$LOCK"; rm -f "$OUT_FILE"' EXIT INT TERM
 
-set -m 2>/dev/null || true
-"${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
-TEST_PID=$!
-set +m 2>/dev/null || true
-echo "$TEST_PID" > "$PIDFILE"
-
-wait "$TEST_PID"
-TEST_EXIT=$?
-
-# claim_marker keeps runner ownership exclusive — same reasoning as the
-# shell branch's rerun loop.
-while claim_marker "$RERUN_MARKER"; do
-  set -m 2>/dev/null || true
-  "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
-  TEST_PID=$!
-  set +m 2>/dev/null || true
-  echo "$TEST_PID" > "$PIDFILE"
-  wait "$TEST_PID"
+TEST_EXIT=0
+RAN=0
+while claim_marker "$MARKER"; do
+  "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1
   TEST_EXIT=$?
+  RAN=1
 done
+[ "$RAN" -eq 1 ] || exit 0
 TEST_OUTPUT=$(tail -30 "$OUT_FILE" 2>/dev/null || true)
 
 # Build result message
