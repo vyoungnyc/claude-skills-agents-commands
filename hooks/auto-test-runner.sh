@@ -33,6 +33,24 @@ case "$FILE_PATH" in
     ;;
 esac
 
+# Per-user 0700 state directory for pidfiles and rerun markers. Fully
+# predictable names directly in the shared, world-writable ${TMPDIR:-/tmp}
+# would let another local user (or a stale root-owned file) pre-create an
+# entry this hook cannot delete — an undeletable rerun marker turns the
+# consume loop below into an endless full-suite rerun. Same hardening as
+# scripts/lib/poll-common.sh's pidfile directory: create with mode 700,
+# then refuse to use it unless it is a real directory we own (mkdir -m
+# only applies the mode when it actually creates the directory), repairing
+# the mode since -O proves ownership but not permissions.
+HOOK_STATE_DIR="${TMPDIR:-/tmp}/claude-auto-test-$(id -u)"
+mkdir -m 700 -p "$HOOK_STATE_DIR" 2>/dev/null || true
+if [ -L "$HOOK_STATE_DIR" ] || [ ! -d "$HOOK_STATE_DIR" ] || [ ! -O "$HOOK_STATE_DIR" ] \
+  || ! chmod 700 "$HOOK_STATE_DIR" 2>/dev/null; then
+  # Untrusted state dir: without safe coordination files this hook cannot
+  # dedupe or hand off runs, so skip quietly — it is best-effort by design.
+  exit 0
+fi
+
 # A *.sh edit runs the repo's own shell test suite (REQ-010,
 # docs/features/script_tests/PRD.md) instead of the JS runner below — this
 # repo's shell scripts have no vitest/jest coverage, only *.test.sh suites.
@@ -50,7 +68,7 @@ case "$FILE_PATH" in
     # exited by the time anyone reads the pidfile back) and can never
     # actually be interrupted mid-run since it's blocked synchronously
     # capturing output.
-    SH_PIDFILE="${TMPDIR:-/tmp}/auto-test-runner-shell.pid"
+    SH_PIDFILE="$HOOK_STATE_DIR/shell.pid"
     # Rerun marker: this hook runs async, so a second invocation can arrive
     # while a run is already in flight testing *older* file contents. Bare
     # skip-if-in-flight would drop that newer edit untested — the only
@@ -59,7 +77,7 @@ case "$FILE_PATH" in
     # suite once after its current run finishes. Multiple mid-run edits
     # coalesce into a single rerun (touch is idempotent), which is correct:
     # the rerun tests whatever is on disk at that point.
-    SH_RERUN_MARKER="${TMPDIR:-/tmp}/auto-test-runner-shell.rerun"
+    SH_RERUN_MARKER="$HOOK_STATE_DIR/shell.rerun"
 
     # Publish the rerun request BEFORE the in-flight liveness check, not
     # after: a touch that happens after confirming the PID is alive races
@@ -87,7 +105,7 @@ case "$FILE_PATH" in
       fi
     fi
 
-    SH_OUT_FILE=$(mktemp "${TMPDIR:-/tmp}/auto-test-runner-shell-out.XXXXXX")
+    SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
     trap 'rm -f "$SH_PIDFILE" "$SH_OUT_FILE"' EXIT INT TERM
 
     # Consume any marker left before this run started: the run below tests
@@ -112,6 +130,13 @@ case "$FILE_PATH" in
     # pass per marker cycle — a marker set during the rerun triggers another.
     while [ -f "$SH_RERUN_MARKER" ]; do
       rm -f "$SH_RERUN_MARKER"
+      if [ -e "$SH_RERUN_MARKER" ]; then
+        # Marker survived rm (shouldn't happen inside our own 0700 dir, but
+        # never spin on it): an unconsumable marker would otherwise rerun
+        # the full suite forever. Warn and stop rerunning.
+        echo "auto-test-runner: rerun marker could not be consumed, aborting rerun loop (path: $SH_RERUN_MARKER)" >&2
+        break
+      fi
       set -m 2>/dev/null || true
       bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
       SH_PID=$!
@@ -157,10 +182,10 @@ fi
 # skip starting a second run rather than trying to kill-and-restart, which
 # can't interrupt a process this same synchronous hook invocation is blocked
 # waiting on anyway.
-PIDFILE="${TMPDIR:-/tmp}/auto-test-runner.pid"
+PIDFILE="$HOOK_STATE_DIR/js.pid"
 # Same rerun-marker pattern as the shell-suite branch: an edit arriving while
 # a run is in flight must trigger one coalesced rerun, not be silently dropped.
-RERUN_MARKER="${TMPDIR:-/tmp}/auto-test-runner.rerun"
+RERUN_MARKER="$HOOK_STATE_DIR/js.rerun"
 
 # Touch-before-check, same reasoning as the shell branch: publishing the
 # rerun request after the liveness check races the owner's post-wait marker
@@ -183,7 +208,7 @@ if [ -f "$PIDFILE" ]; then
   fi
 fi
 
-OUT_FILE=$(mktemp "${TMPDIR:-/tmp}/auto-test-runner-out.XXXXXX")
+OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
 trap 'rm -f "$PIDFILE" "$OUT_FILE"' EXIT INT TERM
 
 rm -f "$RERUN_MARKER"
@@ -199,6 +224,11 @@ TEST_EXIT=$?
 
 while [ -f "$RERUN_MARKER" ]; do
   rm -f "$RERUN_MARKER"
+  if [ -e "$RERUN_MARKER" ]; then
+    # Same unconsumable-marker guard as the shell branch — never spin.
+    echo "auto-test-runner: rerun marker could not be consumed, aborting rerun loop (path: $RERUN_MARKER)" >&2
+    break
+  fi
   set -m 2>/dev/null || true
   "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
   TEST_PID=$!
