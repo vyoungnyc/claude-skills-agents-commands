@@ -60,6 +60,17 @@ case "$FILE_PATH" in
     # coalesce into a single rerun (touch is idempotent), which is correct:
     # the rerun tests whatever is on disk at that point.
     SH_RERUN_MARKER="${TMPDIR:-/tmp}/auto-test-runner-shell.rerun"
+
+    # Publish the rerun request BEFORE the in-flight liveness check, not
+    # after: a touch that happens after confirming the PID is alive races
+    # the owner's post-wait marker check — the run can exit and the owner
+    # consume (and see no) marker between this invocation's kill -0 and its
+    # touch, leaving a marker nobody will ever read. Touch-first closes
+    # that: either the owner is still in wait and will consume the marker
+    # afterward, or the run has already finished, the liveness check below
+    # falls through, and this invocation becomes the runner itself —
+    # clearing the marker it just set before launching.
+    touch "$SH_RERUN_MARKER"
     if [ -f "$SH_PIDFILE" ]; then
       OLD_SH_PID=$(cat "$SH_PIDFILE" 2>/dev/null || true)
       if [ -n "$OLD_SH_PID" ] && kill -0 "$OLD_SH_PID" 2>/dev/null; then
@@ -70,7 +81,6 @@ case "$FILE_PATH" in
         OLD_SH_COMM=$(ps -o comm= -p "$OLD_SH_PID" 2>/dev/null || true)
         case "$OLD_SH_COMM" in
           *bash*|*run-tests*)
-            touch "$SH_RERUN_MARKER"
             exit 0
             ;;
         esac
@@ -151,6 +161,13 @@ PIDFILE="${TMPDIR:-/tmp}/auto-test-runner.pid"
 # Same rerun-marker pattern as the shell-suite branch: an edit arriving while
 # a run is in flight must trigger one coalesced rerun, not be silently dropped.
 RERUN_MARKER="${TMPDIR:-/tmp}/auto-test-runner.rerun"
+
+# Touch-before-check, same reasoning as the shell branch: publishing the
+# rerun request after the liveness check races the owner's post-wait marker
+# consumption; touch-first guarantees the marker is either consumed by the
+# still-waiting owner or cleared by this invocation when it becomes the
+# runner itself.
+touch "$RERUN_MARKER"
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -160,7 +177,6 @@ if [ -f "$PIDFILE" ]; then
     OLD_COMM=$(ps -o comm= -p "$OLD_PID" 2>/dev/null || true)
     case "$OLD_COMM" in
       *node*|*npx*|*vitest*|*jest*)
-        touch "$RERUN_MARKER"
         exit 0
         ;;
     esac

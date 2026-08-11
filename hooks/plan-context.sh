@@ -38,10 +38,25 @@ for f in "${CANDIDATES[@]}"; do
   fi
   echo ""
   echo "### $f"
-  # Unfinished/blocked step and status lines only — a flat head -25 over all
-  # status lines truncates in file order, so early completed steps could
-  # crowd out the one in_progress step compaction most needs to restore.
-  grep -E 'step_id|status:[[:space:]]*"?(pending|in_progress|blocked)|\[ \]|\[⚠️\]|\[⏳\]' "$f" 2>/dev/null | head -20
+  # Surface only unfinished work, capped — a flat head over all status lines
+  # truncates in file order, so early completed steps could crowd out the
+  # one in_progress step compaction most needs to restore. In the status
+  # dialect, step_id lines must be paired with their step's status before
+  # the cap: an unconditional step_id match would emit every completed
+  # step's ID too, and 20+ completed steps would push the unfinished step
+  # past the limit all over again.
+  if grep -qE '^[[:space:]]*status:' "$f" 2>/dev/null; then
+    awk '
+      /step_id/ { held = $0; next }
+      /^[[:space:]]*status:[[:space:]]*"?(pending|in_progress|blocked)/ {
+        if (held != "") { print held; held = "" }
+        print; next
+      }
+      /^[[:space:]]*status:/ { held = "" }
+    ' "$f" 2>/dev/null | head -20
+  else
+    grep -E '\[ \]|\[⚠️\]|\[⏳\]' "$f" 2>/dev/null | head -20
+  fi
   DONE_COUNT=$(grep -cE 'status:[[:space:]]*"?completed|\[✅\]|\[❌\]' "$f" 2>/dev/null)
   [ "${DONE_COUNT:-0}" -gt 0 ] && echo "(${DONE_COUNT} completed/closed entries omitted)"
 done
