@@ -163,7 +163,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] `grep -rn "swarm-dispatch" --include="*.md" --include="*.sh"` → only the amended allow-list (PRD REQ-004, 2026-08-10 amendment): CHANGELOG.md, README release-history bullets, `docs/features/native_swarm/**`, PHASE_6 doc
     - [ ] Every PRD AC checked off against the merged feature branch
     - [ ] Wall-clock comparison vs spike baseline noted (NFR, soft target)
-  status: "blocked"  # awaits step_09 fix batch; grep AC to be verified against the amended allow-list (see Review Round 1)
+  status: "completed"  # 2026-08-10, orchestrator-run @ 6baecd0; PRD AC checklist posted to issue #13 (closed)
   file_domain: []
   acceptance_criteria:
     - "Grep AC passes exactly as restated in PRD line 42"
