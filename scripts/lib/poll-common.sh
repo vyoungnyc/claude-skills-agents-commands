@@ -64,44 +64,72 @@ _pid_start_time() {
 
 acquire_pidfile() {
   local pidfile="$1"
+  local piddir="${pidfile%/*}"
+
+  # The pidfile's identity token (pid:start_time) is not a secret — `ps -o
+  # lstart=` is readable by any local user, so an attacker able to write into
+  # the pidfile's parent directory could forge a fully identity-matching
+  # pidfile for a victim they don't own, or plant a symlink over the path to
+  # clobber an arbitrary file the invoking user can write to. Rather than
+  # adding yet more token checks, close this at the root: put the pidfile in
+  # a directory only this user can write to at all.
+  mkdir -m 700 -p "$piddir" 2>/dev/null || true
+
   register_cleanup "$pidfile"
 
-  if [ -f "$pidfile" ]; then
+  # Never follow a symlink at the pidfile path — `echo ... > "$pidfile"`
+  # below would otherwise silently overwrite whatever the symlink points at
+  # (CWE-59). Refuse and unlink it; the rest of this function then proceeds
+  # exactly as if no pidfile existed.
+  if [ -L "$pidfile" ]; then
+    echo "[$(date +"%H:%M:%S")] Pidfile is a symlink, refusing to follow (path: $pidfile)" >&2
+    rm -f "$pidfile"
+  fi
+
+  if [ -e "$pidfile" ] && [ ! -O "$pidfile" ]; then
+    # Defense in depth: the 0700 directory above should make this
+    # unreachable in practice (no other local user can write into it), but
+    # if something predates the directory fix or the path was otherwise
+    # tampered with, don't trust or kill based on a pidfile we don't own.
+    echo "[$(date +"%H:%M:%S")] Pidfile not owned by current user, not killing (path: $pidfile)" >&2
+  elif [ -f "$pidfile" ]; then
     local raw old_pid old_start
     raw=$(cat "$pidfile" 2>/dev/null || true)
     old_pid="${raw%%:*}"
     if [ "$raw" = "$old_pid" ]; then
       # No "pid:start_time" separator — a pidfile from before this identity
-      # check existed, or one written by something other than this
-      # function. No start time to verify against, so identity can't be
-      # confirmed either way; fall back to the prior kill-if-alive behavior
-      # rather than refusing to ever reap a pidfile in this shape.
+      # check existed, or one written by something other than this function
+      # (including one pre-created by an attacker on a shared host, since the
+      # path is fully predictable from owner/name/pr). With no start time to
+      # verify identity against, treat it as untrusted rather than falling
+      # back to an unconditional kill: a colon-less pidfile no longer has a
+      # legitimate source going forward, since every write from this function
+      # uses the "pid:start_time" format. Do not kill; just warn and move on
+      # to overwrite it with a fresh identity-tagged pidfile below.
       old_start=""
+      if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        echo "[$(date +"%H:%M:%S")] Pidfile has no identity token, not killing (PID $old_pid)" >&2
+      fi
     else
       old_start="${raw#*:}"
-    fi
 
-    # Before signaling a PID read from a pidfile, confirm it's still the
-    # same process instance rather than blindly killing whatever now holds
-    # that PID — PIDs are recycled by the OS, so a stale pidfile can point
-    # at an unrelated process by the time we get around to reading it. When
-    # a start time was recorded, an unrelated process that happens to have
-    # been assigned the same PID will almost certainly have a different
-    # start time and is left alone.
-    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-      local identity_ok=1
-      if [ -n "$old_start" ]; then
-        [ "$(_pid_start_time "$old_pid")" = "$old_start" ] || identity_ok=0
-      fi
-      if [ "$identity_ok" = "1" ]; then
-        kill "$old_pid" 2>/dev/null || true
-        local i
-        for i in 1 2 3; do
-          kill -0 "$old_pid" 2>/dev/null || break
-          sleep 1
-        done
-        kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
-        echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $old_pid)" >&2
+      # Before signaling a PID read from a pidfile, confirm it's still the
+      # same process instance rather than blindly killing whatever now holds
+      # that PID — PIDs are recycled by the OS, so a stale pidfile can point
+      # at an unrelated process by the time we get around to reading it. An
+      # unrelated process that happens to have been assigned the same PID
+      # will almost certainly have a different start time and is left alone.
+      if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        if [ "$(_pid_start_time "$old_pid")" = "$old_start" ]; then
+          kill "$old_pid" 2>/dev/null || true
+          local i
+          for i in 1 2 3; do
+            kill -0 "$old_pid" 2>/dev/null || break
+            sleep 1
+          done
+          kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
+          echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $old_pid)" >&2
+        fi
       fi
     fi
   fi
