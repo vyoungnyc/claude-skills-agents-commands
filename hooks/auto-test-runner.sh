@@ -119,15 +119,25 @@ case "$FILE_PATH" in
       fi
     fi
 
-    SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
-    trap 'rm -f "$SH_PIDFILE" "$SH_OUT_FILE"' EXIT INT TERM
-
     # Become the runner only by atomically claiming the request published
     # above (the run below tests current disk contents, which already
     # include whatever edit set the marker). A failed claim means another
     # invocation — an in-flight owner's rerun loop — took it and will run
-    # the suite; launching here too would duplicate the run.
+    # the suite; launching here too would duplicate the run. Claim BEFORE
+    # registering the cleanup trap: a loser's exit must not tear down the
+    # shared pidfile the winning runner just wrote.
     claim_marker "$SH_RERUN_MARKER" || exit 0
+
+    SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
+    # Remove the shared pidfile only if it still records OUR child — by the
+    # time this runner exits, a newer invocation may already have claimed a
+    # fresh rerun request and written its own PID there; unconditional rm
+    # would blind later invocations to that still-running suite.
+    cleanup_sh() {
+      [ "$(cat "$SH_PIDFILE" 2>/dev/null)" = "${SH_PID:-}" ] && rm -f "$SH_PIDFILE"
+      rm -f "$SH_OUT_FILE"
+    }
+    trap cleanup_sh EXIT INT TERM
 
     # `set -m` gives the backgrounded run its own process group (where the
     # shell supports job control in a script), so a future kill of the
@@ -220,13 +230,19 @@ if [ -f "$PIDFILE" ]; then
   fi
 fi
 
-OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
-trap 'rm -f "$PIDFILE" "$OUT_FILE"' EXIT INT TERM
-
 # Become the runner only via atomic claim — same reasoning as the shell
 # branch: a failed claim means an in-flight owner's rerun loop took this
-# request and will run.
+# request and will run. Claim BEFORE registering the cleanup trap so a
+# loser's exit cannot tear down the winning runner's pidfile.
 claim_marker "$RERUN_MARKER" || exit 0
+
+OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
+# Conditional pidfile cleanup — same reasoning as the shell branch.
+cleanup_js() {
+  [ "$(cat "$PIDFILE" 2>/dev/null)" = "${TEST_PID:-}" ] && rm -f "$PIDFILE"
+  rm -f "$OUT_FILE"
+}
+trap cleanup_js EXIT INT TERM
 
 set -m 2>/dev/null || true
 "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &

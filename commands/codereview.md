@@ -61,7 +61,7 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 **Intent** (everything that isn't a scope token): treat as authoritative context for correctness checking. If the code diverges from the stated intent, that's a blocking finding.
 
-Show a one-line summary: `Reviewing <scope> vs $BASEREF — N files, M lines changed` before proceeding.
+Show a one-line summary before proceeding — mention the base only when the selected scope used one: `Reviewing <scope> vs $BASEREF — N files, M lines changed` for base-relative scopes, `Reviewing <scope> — N files, M lines changed` for `staged`/`unstaged`/commit-ref scopes (where `BASEREF` was never resolved).
 
 ## Step 2: Gather context and clarify intent
 
