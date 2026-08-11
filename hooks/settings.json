@@ -58,6 +58,17 @@
             "statusMessage": "Running tests in background..."
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "if": "Bash(gh *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pr-merge-sync-reminder.sh",
+            "statusMessage": "Checking for a squash merge..."
+          }
+        ]
       }
     ],
     "PermissionRequest": [

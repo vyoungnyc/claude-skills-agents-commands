@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.9.0
+**Version:** 2.10.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -94,7 +94,7 @@ Or if you already have a PRD:
 | /frontend-test-runner | Run frontend tests, analyze results, route failures |
 | /git | Branch management, commits, PRs, feedback handling |
 
-### Hooks (6)
+### Hooks (7)
 
 | Hook | Event | Purpose |
 |---|---|---|
@@ -102,6 +102,7 @@ Or if you already have a PRD:
 | plan-context.sh | PostCompact | Re-inject active PLAN_steps.md state after compaction (CLAUDE.md survives compaction natively) |
 | auto-format.sh | PostToolUse (sync) | Auto-run Prettier + ESLint fix on edited source files |
 | auto-test-runner.sh | PostToolUse (async) | Run test suite in background after file edits |
+| pr-merge-sync-reminder.sh | PostToolUse | After `gh pr merge --squash`/`-s`, remind the agent to ask whether to run `scripts/sync-claude-config.sh --apply`. Project-scope only (`hooks/settings.json`) — not wired into the global `settings.json`, since it's specific to repos that ship this deploy script |
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
@@ -150,7 +151,7 @@ bash scripts/run-tests.sh
 
 | Component | GitHub | GitLab | Notes |
 |---|---|---|---|
-| **Hooks** (all 6) | ✅ | ✅ | Platform-agnostic — operates at the git level |
+| **Hooks** (all 7) | ✅ | ✅ | Platform-agnostic — operates at the git level (`pr-merge-sync-reminder.sh` matches `gh pr merge`, GitHub-specific but harmless on GitLab repos since it only fires on that exact command) |
 | **Agents** (all 8) | ✅ | ✅ | No platform-specific logic |
 | **Skills** (all 11) | ✅ | ✅ | No platform-specific logic |
 | **/discover** | ✅ | ✅ | Platform-agnostic — produces PRD files |
@@ -184,6 +185,11 @@ bash scripts/run-tests.sh
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.10.0** — `pr-merge-sync-reminder.sh`: nudge to sync after a squash merge:
+- New PostToolUse hook fires when a `Bash` call runs `gh pr merge` with `--squash`/`-s`, and surfaces a `systemMessage` telling the agent to ask whether to run `scripts/sync-claude-config.sh --apply`
+- Project-scope only (`hooks/settings.json`) — deliberately not added to the global `settings.json`, since `gh pr merge` in an unrelated repo has nothing to do with this repo's deploy script
+- Hook count 6 → 7
 
 **v2.9.0** — `sync-claude-config.sh`: deploy this repo to `~/.claude`:
 - New script closes the gap this repo has always had: agents/skills/commands/rules deploy instructions existed in this README, but nothing automated pushing changes to the live global config, and `settings.json` had to be hand-merged
@@ -323,6 +329,8 @@ rules/
 hooks/
   response-style.sh          # UserPromptSubmit: reinject BLUF/response-style pointer
   plan-context.sh            # PostCompact: re-inject active plan state
+  pr-merge-sync-reminder.sh  # PostToolUse: remind to run sync-claude-config.sh after a squash merge
+  pr-merge-sync-reminder.test.sh  # Test suite for pr-merge-sync-reminder.sh
   auto-format.sh             # PostToolUse: Prettier + ESLint
   auto-test-runner.sh        # PostToolUse: background tests
   enforce-git-conventions.sh # PreToolUse: commit/branch/push rules
