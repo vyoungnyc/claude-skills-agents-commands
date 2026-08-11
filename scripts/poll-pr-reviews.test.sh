@@ -331,6 +331,26 @@ for bad_max in 0 -1 abc; do
 done
 mark_exercised 10
 
+# GraphQL-injection guard: a crafted pr_number must be rejected as a usage
+# error (exit 10) rather than reaching the GraphQL query interpolation, per
+# the FINDINGS.md "poll-pr-reviews.sh does not validate PR_NUMBER/OWNER/NAME"
+# security-relevant gap.
+new_case
+run_pr "$CASE_DIR" "$OWNER_BASE/repoInj" "1) {id} } } #" 1 4
+expect_exit 10 "GraphQL-injection pr_number"
+expect_stderr_match "pr_number must be a positive integer" "GraphQL-injection pr_number message"
+expect_stderr_no_match "unbound variable" "GraphQL-injection pr_number: clean stderr"
+
+# owner/name charset guard: values outside ^[A-Za-z0-9._-]+$ must be rejected
+# before GraphQL interpolation, not passed through.
+for bad_repo in "bad owner/repo" "owner/bad name" "owner/repo;drop"; do
+  new_case; new_pr
+  run_pr "$CASE_DIR" "$bad_repo" "$PR" 1 4
+  expect_exit 10 "invalid owner/name repo='$bad_repo'"
+  expect_stderr_match 'owner and name must match' "invalid owner/name repo='$bad_repo' message"
+  expect_stderr_no_match "unbound variable" "invalid owner/name repo='$bad_repo': clean stderr"
+done
+
 # =============================================================================
 # Exit 11 (SNAPSHOT_FAILURE)
 # =============================================================================
