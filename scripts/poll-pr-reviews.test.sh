@@ -352,13 +352,15 @@ expect_exit 10 "GraphQL-injection pr_number"
 expect_stderr_match "pr_number must be a positive integer" "GraphQL-injection pr_number message"
 expect_stderr_no_match "unbound variable" "GraphQL-injection pr_number: clean stderr"
 
-# owner/name charset guard: values outside ^[A-Za-z0-9._-]+$ must be rejected
-# before GraphQL interpolation, not passed through.
-for bad_repo in "bad owner/repo" "owner/bad name" "owner/repo;drop"; do
+# owner/name shape guard: charset violations, a slash-less value (which the
+# old per-component check let through as OWNER=NAME=<value>), and extra path
+# segments (silently dropped middle segment) must all be rejected before
+# GraphQL interpolation, not passed through.
+for bad_repo in "bad owner/repo" "owner/bad name" "owner/repo;drop" "norepo" "a/b/c" "/leading" "trailing/"; do
   new_case; new_pr
   run_pr "$CASE_DIR" "$bad_repo" "$PR" 1 4
   expect_exit 10 "invalid owner/name repo='$bad_repo'"
-  expect_stderr_match 'owner and name must match' "invalid owner/name repo='$bad_repo' message"
+  expect_stderr_match 'repo must be in owner/name format' "invalid owner/name repo='$bad_repo' message"
   expect_stderr_no_match "unbound variable" "invalid owner/name repo='$bad_repo': clean stderr"
 done
 

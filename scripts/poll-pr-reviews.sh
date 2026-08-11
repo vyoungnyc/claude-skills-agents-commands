@@ -20,13 +20,17 @@ require_positive_int "$PR_NUMBER" "pr_number"
 require_positive_int "$POLL_INTERVAL" "poll_interval_sec"
 require_positive_int "$MAX_POLLS" "max_polls"
 
-OWNER="${REPO%%/*}"
-NAME="${REPO##*/}"
-
-if ! [[ "$OWNER" =~ ^[A-Za-z0-9._-]+$ ]] || ! [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo '{"error": "owner and name must match ^[A-Za-z0-9._-]+$"}' >&2
+# Validate the full owner/repo shape before splitting: "${REPO%%/*}" /
+# "${REPO##*/}" on a slash-less value (e.g. "myrepo") yields OWNER=NAME=myrepo,
+# and "a/b/c" silently drops the middle segment — both pass a per-component
+# regex and produce queries against the wrong repository.
+if ! [[ "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+  echo '{"error": "repo must be in owner/name format, each matching ^[A-Za-z0-9._-]+$"}' >&2
   exit $EXIT_USAGE_ERROR
 fi
+
+OWNER="${REPO%%/*}"
+NAME="${REPO##*/}"
 
 # The pidfile lives under a per-uid, 0700 directory (created by
 # acquire_pidfile) rather than directly in the shared, world-writable
