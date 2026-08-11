@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.7.0
+**Version:** 2.8.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -94,10 +94,11 @@ Or if you already have a PRD:
 | /frontend-test-runner | Run frontend tests, analyze results, route failures |
 | /git | Branch management, commits, PRs, feedback handling |
 
-### Hooks (5)
+### Hooks (6)
 
 | Hook | Event | Purpose |
 |---|---|---|
+| response-style.sh | UserPromptSubmit | Reinject the Response Style pointer (BLUF, no preamble, epistemic labeling) every turn — CLAUDE.md rules fade under recency pressure over long sessions |
 | plan-context.sh | PostCompact | Re-inject active PLAN_steps.md state after compaction (CLAUDE.md survives compaction natively) |
 | auto-format.sh | PostToolUse (sync) | Auto-run Prettier + ESLint fix on edited source files |
 | auto-test-runner.sh | PostToolUse (async) | Run test suite in background after file edits |
@@ -141,7 +142,7 @@ bash scripts/run-tests.sh
 
 | Component | GitHub | GitLab | Notes |
 |---|---|---|---|
-| **Hooks** (all 5) | ✅ | ✅ | Platform-agnostic — operates at the git level |
+| **Hooks** (all 6) | ✅ | ✅ | Platform-agnostic — operates at the git level |
 | **Agents** (all 8) | ✅ | ✅ | No platform-specific logic |
 | **Skills** (all 11) | ✅ | ✅ | No platform-specific logic |
 | **/discover** | ✅ | ✅ | Platform-agnostic — produces PRD files |
@@ -175,6 +176,11 @@ bash scripts/run-tests.sh
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.8.0** — Response Style rules + drift-resistant reinjection:
+- New `## Response Style` section in CLAUDE.md: BLUF always (conclusion first, max 5 bullets, then decreasing importance), no preamble/recap, no validation-as-move or reflexive praise, no performed insight, plain language tested by portability, compression rules with exceptions for security/destructive/ordered-instruction content, don't re-suggest declined follow-ups, label epistemic status (known/inferred/guessed)
+- New `hooks/response-style.sh` (UserPromptSubmit) reinjects a short pointer to those rules on every turn — CLAUDE.md rules fade under recency pressure over long sessions; the hook fires exactly where recency helps instead of restating the rule set every turn. Wired into both `settings.json` (global, `$HOME` paths) and `hooks/settings.json` (project-scope mirror). Hook count 5 → 6
+- Since CLAUDE.md already deploys to `~/.claude/CLAUDE.md` at user scope, both the rules and the reinjection hook apply across every project once deployed, not just this repo
 
 **v2.7.0** — Test suites for the four untested scripts + poll-scripts repair:
 - Both poll scripts aborted on their first poll iteration, in every configuration, before this release — fixed in `scripts/lib/poll-common.sh` (subshell count loss, invalid jq JSON escape, empty-array trap under `set -u`)
@@ -299,6 +305,7 @@ rules/
   typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
   infra.md                   # Path-scoped: Prisma/Terraform standards (loads only for matching files)
 hooks/
+  response-style.sh          # UserPromptSubmit: reinject BLUF/response-style pointer
   plan-context.sh            # PostCompact: re-inject active plan state
   auto-format.sh             # PostToolUse: Prettier + ESLint
   auto-test-runner.sh        # PostToolUse: background tests
