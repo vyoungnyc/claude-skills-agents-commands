@@ -203,7 +203,13 @@ case "$FILE_PATH" in
     acquire_lock "$SH_LOCK" || exit 0
 
     SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
-    trap 'release_lock "$SH_LOCK"; rm -f "$SH_OUT_FILE"' EXIT INT TERM
+    # Cleanup on EXIT only; signal handlers must exit explicitly — a
+    # trapped INT/TERM otherwise runs the handler and RESUMES the script,
+    # which would continue the rerun loop after releasing the lock and
+    # launch suites without ownership.
+    trap 'release_lock "$SH_LOCK"; rm -f "$SH_OUT_FILE"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 
     # Run while requests exist. The first inner iteration normally consumes
     # the marker we just published; a failed first claim means the previous
@@ -266,7 +272,11 @@ touch "$MARKER"
 acquire_lock "$LOCK" || exit 0
 
 OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
-trap 'release_lock "$LOCK"; rm -f "$OUT_FILE"' EXIT INT TERM
+# EXIT-only cleanup + exiting signal handlers — same reasoning as the
+# shell branch.
+trap 'release_lock "$LOCK"; rm -f "$OUT_FILE"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Release-then-recheck handoff — same protocol as the shell branch.
 TEST_EXIT=0
