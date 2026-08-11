@@ -50,10 +50,19 @@ if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   }
 else
   discover_suites() {
+    # The extra prunes matter for the deployed copy under ~/.claude (not a
+    # git repo, so this fallback is its live path): Claude Code runtime dirs
+    # there (projects/ file-history/ paste-cache/) hold stale copies of
+    # edited files, including *.test.sh — executing those would run
+    # arbitrary out-of-date code. Harmless in a normal repo checkout where
+    # these dirs don't exist.
     find "$REPO_ROOT" -type f -name "*.test.sh" \
       -not -path "*/.git/*" \
       -not -path "*/.claude/worktrees/*" \
       -not -path "*/node_modules/*" \
+      -not -path "*/projects/*" \
+      -not -path "*/file-history/*" \
+      -not -path "*/paste-cache/*" \
       -print0 | sort -z
   }
 fi
