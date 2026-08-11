@@ -78,9 +78,8 @@ if [ -n "$REPO_ROOT" ] && [ "${SKIP_GITIGNORE:-0}" != "1" ]; then
   fi
 fi
 
-# Create plans directory
+# Plans directory path (created below, only after plan-steps JSON validates)
 PLANS_DIR="plans/${FEATURE_ID}"
-mkdir -p "$PLANS_DIR"
 
 # Cache file content to avoid re-reading from disk on every loop iteration
 PLAN_STEPS=$(cat "$PLAN_STEPS_FILE")
@@ -93,6 +92,11 @@ if [ "$STEP_COUNT" -lt 1 ]; then
   echo '{"error": "Plan steps must contain at least one step"}' >&2
   exit $EXIT_USAGE
 fi
+
+# Create plans directory now that the plan-steps JSON is validated (DEF-5:
+# avoid leaving a stray empty plans/<feature_id>/ dir on exit-10 usage errors)
+mkdir -p "$PLANS_DIR"
+
 ISSUE_MAP_FILE=$(mktemp)
 trap 'rm -f "$ISSUE_MAP_FILE"' EXIT
 TASK_LIST=""
