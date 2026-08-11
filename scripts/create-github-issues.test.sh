@@ -192,9 +192,18 @@ run_script() {
   set -e
 }
 
+EXERCISED_CODES=""
+mark_exercised() {
+  case " $EXERCISED_CODES " in
+    *" $1 "*) ;;
+    *) EXERCISED_CODES="$EXERCISED_CODES $1" ;;
+  esac
+}
+
 expect_exit() {
   local desc="$1" expected="$2"
   [ "$EC" = "$expected" ] || fail "$desc: expected exit $expected, got $EC (stderr: $(cat "$ERR_FILE"), stdout: $(cat "$OUT_FILE"))"
+  mark_exercised "$expected"
 }
 
 expect_jq() {
@@ -373,8 +382,12 @@ expect_error_match "$ERR_FILE" "not valid JSON" "DEF-4: jq absent"
 
 # ---------------------------------------------------------------------------
 # REQ-009 — state exercised exit codes rather than assuming them.
-# Documented set for create-github-issues.sh: 0, 1, 10 (all exercised).
+# Documented set for create-github-issues.sh: 0, 1, 10. Accumulated via
+# mark_exercised (called from expect_exit on every successful assertion)
+# rather than a hardcoded string, so this can't silently drift if a case
+# above is ever removed.
 # ---------------------------------------------------------------------------
 
-echo "exercised exit codes: 0 1 10"
+SORTED_CODES=$(echo "$EXERCISED_CODES" | tr ' ' '\n' | grep -v '^$' | sort -n | tr '\n' ' ')
+echo "create-github-issues.sh exit codes exercised: $SORTED_CODES(documented set: 0 1 10)"
 echo "create-github-issues.sh tests passed"
