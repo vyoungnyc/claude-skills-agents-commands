@@ -6,8 +6,19 @@
 # Runs asynchronously — does not block Claude's work.
 # Results delivered as a systemMessage on the next turn.
 #
-# Kill + restart: if a previous test run is still in flight, kill it
-# and start fresh so tests always run against the latest code.
+# Skip-if-in-flight: hook invocations run synchronously inside this process
+# (there is no `&` around the suite invocation before the pidfile is even
+# written below the *.sh branch), so a same-process kill-and-restart can
+# never fire — the "kill" would need to interrupt code that hasn't reached
+# the point of checking for a kill yet, and by the time a later invocation
+# runs, the earlier invocation's own trap has already cleaned up its
+# pidfile. That combination let concurrent hook invocations orphan test
+# processes instead of ever actually restarting them. Both branches below
+# background the actual test-suite invocation, record the *child's* PID (not
+# this hook process's own $$), and skip launching a new run outright if a
+# still-live run is already recorded — simpler and correct, vs. attempting
+# to kill a process this same synchronous hook invocation can't outlive long
+# enough to interrupt.
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
@@ -22,6 +33,77 @@ case "$FILE_PATH" in
     ;;
 esac
 
+# A *.sh edit runs the repo's own shell test suite (REQ-010,
+# docs/features/script_tests/PRD.md) instead of the JS runner below — this
+# repo's shell scripts have no vitest/jest coverage, only *.test.sh suites.
+case "$FILE_PATH" in
+  *.sh)
+    REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    RUN_TESTS="$REPO_ROOT/scripts/run-tests.sh"
+    [ -f "$RUN_TESTS" ] || exit 0
+
+    # Skip-if-in-flight pattern on its own pidfile so a shell-suite run never
+    # collides with a vitest/jest run below. The pidfile records the *child*
+    # test-runner process's PID, not this hook invocation's own $$ — the
+    # previous approach recorded the hook's own PID, which is meaningless to
+    # a later invocation (the hook process that owned it has usually already
+    # exited by the time anyone reads the pidfile back) and can never
+    # actually be interrupted mid-run since it's blocked synchronously
+    # capturing output.
+    SH_PIDFILE="${TMPDIR:-/tmp}/auto-test-runner-shell.pid"
+    if [ -f "$SH_PIDFILE" ]; then
+      OLD_SH_PID=$(cat "$SH_PIDFILE" 2>/dev/null || true)
+      if [ -n "$OLD_SH_PID" ] && kill -0 "$OLD_SH_PID" 2>/dev/null; then
+        # Confirm the live PID is actually a shell-suite run before treating
+        # it as "in flight" — a recycled PID could otherwise belong to some
+        # unrelated process, causing this hook to wrongly skip a run that
+        # should have started.
+        OLD_SH_COMM=$(ps -o comm= -p "$OLD_SH_PID" 2>/dev/null || true)
+        case "$OLD_SH_COMM" in
+          *bash*|*run-tests*)
+            exit 0
+            ;;
+        esac
+      fi
+    fi
+
+    SH_OUT_FILE=$(mktemp "${TMPDIR:-/tmp}/auto-test-runner-shell-out.XXXXXX")
+    trap 'rm -f "$SH_PIDFILE" "$SH_OUT_FILE"' EXIT INT TERM
+
+    # `set -m` gives the backgrounded run its own process group (where the
+    # shell supports job control in a script), so a future kill of the
+    # recorded child PID cannot also reach this hook process's own group.
+    set -m 2>/dev/null || true
+    bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
+    SH_PID=$!
+    set +m 2>/dev/null || true
+    echo "$SH_PID" > "$SH_PIDFILE"
+
+    wait "$SH_PID"
+    SH_EXIT=$?
+    SH_OUTPUT=$(tail -30 "$SH_OUT_FILE" 2>/dev/null || true)
+
+    if [ "$SH_EXIT" -eq 0 ]; then
+      SH_SUMMARY=$(echo "$SH_OUTPUT" | grep -E '^[0-9]+ passed, [0-9]+ failed$' | head -1)
+      jq -n --arg file "$FILE_PATH" --arg summary "$SH_SUMMARY" '{
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          systemMessage: ("Shell tests passing after editing " + $file + " (" + $summary + ")")
+        }
+      }'
+    else
+      SH_TRIMMED=$(echo "$SH_OUTPUT" | tail -20)
+      jq -n --arg file "$FILE_PATH" --arg output "$SH_TRIMMED" '{
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          systemMessage: ("SHELL TESTS FAILED after editing " + $file + ":\n```\n" + $output + "\n```\nRoute to backend-coder for fixes.")
+        }
+      }'
+    fi
+    exit 0
+    ;;
+esac
+
 # Determine test runner (also serves as framework detection — exits if none found)
 if [ -f "vitest.config.ts" ] || [ -f "vitest.config.js" ]; then
   TEST_CMD=(npx vitest run --reporter=verbose)
@@ -31,22 +113,39 @@ else
   exit 0
 fi
 
-# Kill any previous test run so we always test the latest code
+# Skip-if-in-flight: same pattern as the shell-suite branch above — record
+# the backgrounded test-runner child's PID (not this hook's own $$) and
+# skip starting a second run rather than trying to kill-and-restart, which
+# can't interrupt a process this same synchronous hook invocation is blocked
+# waiting on anyway.
 PIDFILE="${TMPDIR:-/tmp}/auto-test-runner.pid"
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    kill "$OLD_PID" 2>/dev/null || true
+    # Identity check before treating this PID as "in flight" — vitest/jest
+    # run under node via npx, so confirm the live process is actually a
+    # node-based test runner before skipping on its account.
+    OLD_COMM=$(ps -o comm= -p "$OLD_PID" 2>/dev/null || true)
+    case "$OLD_COMM" in
+      *node*|*npx*|*vitest*|*jest*)
+        exit 0
+        ;;
+    esac
   fi
 fi
-echo $$ > "$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT INT TERM
 
-# Capture exit code via pipefail (piping to tail would otherwise lose it)
-set -o pipefail
-TEST_OUTPUT=$("${TEST_CMD[@]}" 2>&1 | tail -30)
+OUT_FILE=$(mktemp "${TMPDIR:-/tmp}/auto-test-runner-out.XXXXXX")
+trap 'rm -f "$PIDFILE" "$OUT_FILE"' EXIT INT TERM
+
+set -m 2>/dev/null || true
+"${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
+TEST_PID=$!
+set +m 2>/dev/null || true
+echo "$TEST_PID" > "$PIDFILE"
+
+wait "$TEST_PID"
 TEST_EXIT=$?
-set +o pipefail
+TEST_OUTPUT=$(tail -30 "$OUT_FILE" 2>/dev/null || true)
 
 # Build result message
 if [ $TEST_EXIT -eq 0 ]; then

@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.6.0
+**Version:** 2.7.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -104,7 +104,7 @@ Or if you already have a PRD:
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (4)
+### Scripts (5)
 
 | Script | Platform | Purpose |
 |---|---|---|
@@ -112,6 +112,7 @@ Or if you already have a PRD:
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
+| run-tests.sh | Any | Discovers and runs every `*.test.sh` suite in the repo (no hardcoded list); prints per-suite PASS/FAIL plus a final summary; exits 0 only if every suite passes. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
 
@@ -123,6 +124,18 @@ scripts/poll-pr-reviews.sh owner/repo 42 60 15
 # GitLab MR polling (run from inside a GitLab repo)
 scripts/poll-mr-reviews.sh 42 60 15
 ```
+
+### Testing
+
+Run every test suite in the repo:
+
+```bash
+bash scripts/run-tests.sh
+```
+
+**Convention:** a shell file's tests live beside it as `<name>.test.sh` (e.g. `scripts/poll-pr-reviews.sh` → `scripts/poll-pr-reviews.test.sh`, `hooks/enforce-git-conventions.sh` → `hooks/enforce-git-conventions.test.sh`). `scripts/run-tests.sh` discovers every `*.test.sh` file under the repo automatically — no file needs to be registered anywhere — and runs each with `bash <file>` so a suite's file mode never affects whether it runs.
+
+**Offline/stub rule:** no suite may reach the network. Suites that need `gh` or `glab` prepend a per-run temp directory containing a stub executable to `PATH`; `jq` is a genuine dependency of both the scripts and their suites, and every suite exits with a clear message if it is missing.
 
 ## Platform Support
 
@@ -162,6 +175,13 @@ scripts/poll-mr-reviews.sh 42 60 15
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.7.0** — Test suites for the four untested scripts + poll-scripts repair:
+- Both poll scripts aborted on their first poll iteration, in every configuration, before this release — fixed in `scripts/lib/poll-common.sh` (subshell count loss, invalid jq JSON escape, empty-array trap under `set -u`)
+- New `.test.sh` suites for `create-github-issues.sh`, `create-local-issues.sh`, `poll-pr-reviews.sh`, `poll-mr-reviews.sh`, asserting each script's full documented exit-code contract against stubbed `gh`/`glab`
+- `scripts/run-tests.sh` added — discovers and runs every `*.test.sh` suite in the repo; script count 4 → 5
+- `hooks/auto-test-runner.sh` extended to run the suite on any `*.sh` edit
+- `docs/features/script_tests/FINDINGS.md` records repaired and open defects; `docs/PHASE_6_NATIVE_PARALLELISM.md` §P6.3 exit criterion marked MET — this feature's own 4-batch native swarm run is the evidence
 
 **v2.6.0** — Native swarm dispatch (`swarm-dispatch.sh` retired):
 - `scripts/swarm-dispatch.sh` deleted — 533 lines of bash replaced by native background subagents; script count 5 → 4
@@ -267,9 +287,14 @@ skills/
 scripts/
   lib/poll-common.sh         # Shared functions: PID file, validation, set-diff
   poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
+  poll-pr-reviews.test.sh    # Test suite for poll-pr-reviews.sh
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
+  poll-mr-reviews.test.sh    # Test suite for poll-mr-reviews.sh
   create-github-issues.sh    # GitHub epic + child issues from plan steps
+  create-github-issues.test.sh  # Test suite for create-github-issues.sh
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
+  create-local-issues.test.sh   # Test suite for create-local-issues.sh
+  run-tests.sh                # Discovers and runs every *.test.sh suite in the repo
 rules/
   typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
   infra.md                   # Path-scoped: Prisma/Terraform standards (loads only for matching files)

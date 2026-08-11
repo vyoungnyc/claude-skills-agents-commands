@@ -2,6 +2,36 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.7.0] - 2026-08-10
+
+### Poll-Scripts Repair — Both Poll Scripts Aborted On Their First Poll, In Every Configuration
+
+**Both `scripts/poll-pr-reviews.sh` and `scripts/poll-mr-reviews.sh` aborted on their first poll iteration, in every configuration, before this release.** This was a user-visible bug, not internal cleanup: `/pr-fix-loop` and `/mr-fix-loop` depend on these scripts and would have failed the moment either one hit its first poll. Found and fixed as the `script_tests` feature's REQ-000 prerequisite, ahead of the four test suites that are now the evidence it's fixed.
+
+- **DEF-1 (blocker) — `_NEW_COUNT` lost across a subshell** (`scripts/lib/poll-common.sh`) — `find_new_ids` set `_NEW_COUNT` as a side effect, but every caller captured its output via `NEW_IDS=$(find_new_ids ...)`, so the assignment happened inside a command-substitution subshell and never reached the caller. Under `set -u`, the next read of `_NEW_COUNT` died with an unbound-variable error — both scripts crashed on poll 1, always, with no JSON on stdout. Fixed by making `find_new_ids` pure (it only emits IDs) and having each of the two call sites derive the count itself from the output it already captured — no `declare -n` namerefs, which are bash 4.3+ and unavailable on this repo's bash 3.2 target.
+- **DEF-2 (blocker) — invalid JSON escape in the bot-approval pattern** (`scripts/lib/poll-common.sh`) — `BASE_BOT_PATTERNS` interpolated `\[bot\]$` into a jq program inside a JSON string literal; `\[` is not a valid JSON escape, so jq failed to compile on every poll and bot-emoji approval (exit 0) could never fire. Fixed by expressing the literal brackets as regex character classes (`[[]bot[]]$`), which need no backslash escaping at all.
+- **DEF-3 (minor) — empty-array expansion under `set -u`** (`scripts/lib/poll-common.sh`) — `"${_CLEANUP_PATHS[@]}"` on an empty array is an unbound-variable error on bash 3.2 + `set -u`, so every usage-error exit (before the first `register_cleanup` call) printed spurious trap noise alongside the real error. Fixed with the standard bash-3.2-safe guard, `${_CLEANUP_PATHS[@]+"${_CLEANUP_PATHS[@]}"}`.
+- **Scope held to one file plus two call sites** — the repair touches only `scripts/lib/poll-common.sh` and the two `_NEW_COUNT` read sites in `scripts/poll-pr-reviews.sh` / `scripts/poll-mr-reviews.sh`. No documented exit code, JSON key, or CLI argument changed; the fix makes the existing documented contract real rather than altering it.
+
+### Test Suites For The Four Previously-Untested Scripts
+
+Only `hooks/enforce-git-conventions.sh` had a test sibling before this release; `create-github-issues.sh`, `create-local-issues.sh`, `poll-pr-reviews.sh`, and `poll-mr-reviews.sh` — which publish exit codes 0–4/10/11 and a JSON shape that `/execute-prd`, `/pr-fix-loop`, and `/mr-fix-loop` all parse — had none. The poll-common repair above is the evidence these new suites found and pinned down.
+
+- **`scripts/create-github-issues.test.sh`** — happy path, all four exit-10 usage-error shapes, exit-1 auth/repo-detection failures, partial-failure JSON shapes (epic or a child issue fails independently), `GH_REPO` override, and the documented set (0, 1, 10) fully exercised, against a stubbed `gh`.
+- **`scripts/create-local-issues.test.sh`** — happy path, YAML front-matter and apostrophe-escaping correctness, overwrite protection (`FORCE_OVERWRITE=1`), `SKIP_GITIGNORE`, optional roadmap rendering, and the documented set (0, 1, 10) fully exercised — every invocation sandboxed inside a throwaway `git init` directory so the suite can never write into this repo.
+- **`scripts/poll-pr-reviews.test.sh`** — full documented exit-code contract (0, 1, 2, 3, 10, 11) against a stubbed `gh` returning per-poll GraphQL fixtures, including the `BLOCKED_THRESHOLD` boundary, pidfile kill-and-cleanup (only ever signaling a process the suite itself spawned), and transient-failure survival.
+- **`scripts/poll-mr-reviews.test.sh`** — full documented exit-code contract (0, 1, 2, 3, 4, 10, 11) against a stubbed `glab`, including both remote-URL slug forms, native-approval vs. award-emoji gates, and approval-before-discussions ordering — sandboxed inside a throwaway `git init` directory with a fake `origin` remote.
+- **`scripts/run-tests.sh` added** — the repo's test entry point. Discovers every `*.test.sh` under the repo with no hardcoded list, runs each via `bash <file>` (not as an executable, since `hooks/enforce-git-conventions.test.sh` is mode 644), isolates one suite's failure from the others, and prints per-suite PASS/FAIL lines plus a final `N passed, M failed` summary. Script count 4 → 5.
+- **`hooks/auto-test-runner.sh` extended** — editing any `*.sh` file now triggers `scripts/run-tests.sh` synchronously, in place of the existing vitest/jest detection (this repo's shell scripts have no vitest/jest coverage of their own, only `*.test.sh` suites) rather than running alongside it.
+
+### Findings
+
+- **`docs/features/script_tests/FINDINGS.md` added** — separates **Repaired** defects (DEF-1/2/3 above, each citing the fix commit and its covering test) from **Open**, report-only findings left for a follow-up feature: DEF-4 (`create-github-issues.sh` jq-guard is dead code — observed exit 10, documented exit 1), DEF-5 (`create-local-issues.sh` leaves an empty `plans/` dir behind on an invalid-JSON exit-10 path), and DEF-6, newly found while writing the suites (`create-local-issues.sh` writes the `## Roadmap` heading and table header unconditionally, dropping only the data rows on malformed roadmap JSON, rather than omitting the section as documented). Also recorded: both poll scripts' pidfile paths hardcode `/tmp` rather than honoring `TMPDIR`; a deferred `jq --arg` hardening option for `BASE_BOT_PATTERNS`; and the deliberate, documented REQ-009 coverage gap (`poll-pr-reviews.sh` exit 4 is GitLab-only and unreachable there).
+
+### P6.3 Exit Criterion — MET
+
+`docs/PHASE_6_NATIVE_PARALLELISM.md` §P6.3's exit criterion — one full `/execute-prd` feature shipped through native dispatch with no regression in review gates or issue tracking — is marked **MET (2026-08-10)**, appended below the existing Superseded note. This feature's four independent test-file domains were the validation vehicle: a 4-batch parallel worktree-isolated wave (one worker per test file), following a sequenced single-worker repair round for REQ-000. See `docs/PHASE_6_NATIVE_PARALLELISM.md` for the full evidence.
+
 ## [2.6.0] - 2026-08-10
 
 ### Native Swarm Dispatch (`swarm-dispatch.sh` retired)
