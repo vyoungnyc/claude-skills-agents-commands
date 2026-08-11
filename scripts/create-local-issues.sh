@@ -78,9 +78,8 @@ if [ -n "$REPO_ROOT" ] && [ "${SKIP_GITIGNORE:-0}" != "1" ]; then
   fi
 fi
 
-# Create plans directory
+# Plans directory path (created below, only after plan-steps JSON validates)
 PLANS_DIR="plans/${FEATURE_ID}"
-mkdir -p "$PLANS_DIR"
 
 # Cache file content to avoid re-reading from disk on every loop iteration
 PLAN_STEPS=$(cat "$PLAN_STEPS_FILE")
@@ -93,6 +92,11 @@ if [ "$STEP_COUNT" -lt 1 ]; then
   echo '{"error": "Plan steps must contain at least one step"}' >&2
   exit $EXIT_USAGE
 fi
+
+# Create plans directory now that the plan-steps JSON is validated (DEF-5:
+# avoid leaving a stray empty plans/<feature_id>/ dir on exit-10 usage errors)
+mkdir -p "$PLANS_DIR"
+
 ISSUE_MAP_FILE=$(mktemp)
 trap 'rm -f "$ISSUE_MAP_FILE"' EXIT
 TASK_LIST=""
@@ -158,18 +162,19 @@ ISSUE_EOF
 - [ ] [${STEP_ID}: ${TITLE}](${ISSUE_FILE}) — complexity: ${COMPLEXITY}, domain: ${BATCH_HINT}"
 done
 
-# Build roadmap section
+# Build roadmap section. Parse first (DEF-6: malformed roadmap JSON must
+# omit the whole "## Roadmap" section, not just the data rows) — only
+# construct the heading/table header once jq has actually produced rows.
 ROADMAP_SECTION=""
 if [ -n "$ROADMAP_FILE" ] && [ -f "$ROADMAP_FILE" ]; then
-  ROADMAP_SECTION="
-## Roadmap
-
-| Phase | Status | Summary |
-|-------|--------|---------|"
   ROADMAP_DATA=$(cat "$ROADMAP_FILE")
   ROADMAP_ROWS=$(jq -r 'to_entries | .[] | "| \(.value.phase) | \(if .key == 0 then "In Progress" else "Planned" end) | \(.value.summary) |"' <<< "$ROADMAP_DATA" 2>/dev/null || true)
   if [ -n "$ROADMAP_ROWS" ]; then
-    ROADMAP_SECTION="${ROADMAP_SECTION}
+    ROADMAP_SECTION="
+## Roadmap
+
+| Phase | Status | Summary |
+|-------|--------|---------|
 ${ROADMAP_ROWS}"
   fi
 fi
