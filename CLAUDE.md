@@ -43,6 +43,7 @@ Agents are defined in `~/.claude/agents/` (orchestrator, architect, backend-code
 - After implementation, run **reviewer** and **security-researcher** in parallel — never sequentially.
 - Only **architect** and **ui-ux** may ask the user clarifying questions; other agents escalate through them.
 - Agent teams (peer-to-peer) only when teammates must debate or share findings; assign non-overlapping file domains. Full guidance: `docs/AGENT_TEAMS_GUIDE.md`.
+- Worktree-isolated workers commit incrementally (per fix/file/test suite, not batched at the end) — preserves progress if the worker exhausts its turn budget mid-task. Enforced in `agents/coder.md`, `agents/backend-coder.md`, `agents/frontend-coder.md`.
 
 ## Feature-Work Artifacts
 

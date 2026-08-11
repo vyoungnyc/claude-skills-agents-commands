@@ -196,7 +196,7 @@ Model per batch = highest complexity in the batch:
 **Spawn one background `coder` subagent per batch** via the Agent tool: `isolation: "worktree"`, `run_in_background: true`, `model` per the mapping above. Each spawn prompt must:
 1. **Pre-assign the batch's steps inline** — step IDs in execution order, file domain, issue numbers, and acceptance criteria in the prompt text itself.
 2. Start with `git merge feature/{feature_id} --no-edit` and verify it. Native worktrees are cut from `origin/main`, **not** from the dispatching branch, so workers otherwise cannot see feature-branch state at all.
-3. Instruct the worker to commit every intended, tracked change for its assigned steps — uncommitted work does not merge, and the worker must never `git add -A`/`-f` a blanket stage — and to close each issue once its criteria are met.
+3. Instruct the worker to commit every intended, tracked change for its assigned steps — uncommitted work does not merge, and the worker must never `git add -A`/`-f` a blanket stage — and to close each issue once its criteria are met. Instruct **incremental commits**: after each logical unit of work (a fix, a file, a test suite, a defect resolved), not batched into one commit at the end. `agents/coder.md`, `agents/backend-coder.md`, and `agents/frontend-coder.md` already enforce this, but multi-item fix batches especially benefit from restating it — a worker that exhausts its turn budget with nothing committed forces a `SendMessage` continuation whose punch list is "redo everything," instead of "commit what's already done."
 
 Monitor via `TaskList` / `TaskUpdate` as workers report; the harness notifies on completion, so do not poll.
 
