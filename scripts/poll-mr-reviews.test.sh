@@ -43,6 +43,16 @@ SPAWNED_PID=""
 
 mkdir -p "$SANDBOX" "$STUB_BIN"
 
+# Suite-owned TMPDIR, independent of whatever the invoking environment has
+# (or doesn't have) set. Without this, an expected-pidfile-path assertion
+# computed from ${TMPDIR:-/tmp} would pass by coincidence whenever TMPDIR
+# happens to be unset in the ambient environment — a mutant that hardcoded
+# /tmp in the script under test would still pass here too. Pinning TMPDIR to
+# a suite-owned directory makes the assertion meaningful regardless of the
+# invoking shell's environment.
+export TMPDIR="$SCRATCH/tmp"
+mkdir -p "$TMPDIR"
+
 cat > "$STUB_BIN/glab" <<'STUB'
 #!/bin/bash
 # Stub glab: dispatches on the API path, returns per-call fixtures.
@@ -180,7 +190,7 @@ assert_slug_and_pidfile_lifecycle() {
   seed_neutral_defaults
   fixture approvals 1 '{"approved": true, "approvals_left": 5, "approved_by": [{"user": {"username": "alice"}}]}'
 
-  pidfile="${TMPDIR:-/tmp}/poll-mr-reviews-${expected_slug}-${mr}.pid"
+  pidfile="${TMPDIR:-/tmp}/poll-$(id -u)/poll-mr-reviews-${expected_slug}-${mr}.pid"
   rm -f "$pidfile"
 
   "$POLL_MR" "$mr" 1 1 >"$SCRATCH/out.json" 2>"$ERR_FILE" &
@@ -231,7 +241,8 @@ test_bare_pid_not_killed() {
   local mr slug pidfile old_pid
   mr=$(next_mr_iid)
   slug="default-repo"
-  pidfile="${TMPDIR:-/tmp}/poll-mr-reviews-${slug}-${mr}.pid"
+  pidfile="${TMPDIR:-/tmp}/poll-$(id -u)/poll-mr-reviews-${slug}-${mr}.pid"
+  mkdir -p "$(dirname "$pidfile")"
 
   sleep 30 &
   old_pid=$!
@@ -265,6 +276,46 @@ test_bare_pid_not_killed() {
   fi
 }
 test_bare_pid_not_killed
+
+# ---------------------------------------------------------------------------
+# Symlinked pidfile path — refused, not followed (CWE-59 closure). Same
+# acquire_pidfile() code path as poll-pr-reviews.test.sh's equivalent case;
+# exercised here too since poll-mr-reviews.sh builds its own pidfile path
+# and calls the shared function independently.
+# ---------------------------------------------------------------------------
+
+test_symlinked_pidfile_refused() {
+  local mr slug pidfile sentinel
+  mr=$(next_mr_iid)
+  slug="default-repo"
+  pidfile="${TMPDIR:-/tmp}/poll-$(id -u)/poll-mr-reviews-${slug}-${mr}.pid"
+  mkdir -p "$(dirname "$pidfile")"
+
+  sentinel="$SCRATCH/sentinel_$mr"
+  printf 'do not touch me' > "$sentinel"
+  ln -sf "$sentinel" "$pidfile"
+
+  new_fixture_dir
+  seed_neutral_defaults
+  fixture approvals 1 '{"approved": true, "approvals_left": 5, "approved_by": [{"user": {"username": "sybil"}}]}'
+
+  run_and_capture "$mr" 1 1
+  expect_exit "symlinked-pidfile-refused" 0 "$CODE"
+  mark_exercised 0
+
+  [ "$(cat "$sentinel")" = "do not touch me" ] || \
+    fail "symlinked-pidfile-refused: sentinel content was modified (symlink followed / clobbered)"
+
+  grep -q "Pidfile is a symlink, refusing to follow" "$ERR_FILE" || \
+    fail "symlinked-pidfile-refused: expected symlink-refusal warning logged"
+
+  if [ -L "$pidfile" ]; then
+    fail "symlinked-pidfile-refused: expected the symlink itself to be gone (unlinked, not left in place)"
+  fi
+
+  rm -f "$sentinel"
+}
+test_symlinked_pidfile_refused
 
 # ---------------------------------------------------------------------------
 # Exit 0 — native approval (approved:true, and separately approvals_left:0)

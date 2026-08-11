@@ -22,6 +22,16 @@ SUITE_TMP="$(mktemp -d)"
 STUB_BIN="$SUITE_TMP/bin"
 mkdir -p "$STUB_BIN"
 
+# Suite-owned TMPDIR, independent of whatever the invoking environment has
+# (or doesn't have) set. Without this, an expected-pidfile-path assertion
+# computed from ${TMPDIR:-/tmp} would pass by coincidence whenever TMPDIR
+# happens to be unset in the ambient environment — a mutant that hardcoded
+# /tmp in the script under test would still pass here too. Pinning TMPDIR to
+# a suite-owned directory makes the assertion meaningful regardless of the
+# invoking shell's environment.
+export TMPDIR="$SUITE_TMP/tmp"
+mkdir -p "$TMPDIR"
+
 # Stub `gh` — dispatches purely on call order (a counter file in $GH_STUB_DIR),
 # never on the query text, per ARCHITECTURE.md's stubbing-seams table. Serves
 # "$GH_STUB_DIR/<call_number>.json"; if that exact file is absent, falls back
@@ -55,8 +65,9 @@ fi
 STUBEOF
 chmod +x "$STUB_BIN/gh"
 
-# Cleanup: pidfiles live in ${TMPDIR:-/tmp} (per the script under test),
-# never inside SUITE_TMP; remove SUITE_TMP itself.
+# Cleanup: pidfiles live under ${TMPDIR:-/tmp}/poll-$(id -u)/ (per the script
+# under test), which is now itself inside SUITE_TMP since TMPDIR is
+# suite-owned above; removing SUITE_TMP cleans up everything.
 cleanup_suite() {
   rm -rf "$SUITE_TMP"
 }
@@ -125,7 +136,7 @@ new_pr() {
 
 pidfile_for() {
   local owner="$1" name="$2" pr="$3"
-  echo "${TMPDIR:-/tmp}/poll-pr-reviews-${owner}-${name}-${pr}.pid"
+  echo "${TMPDIR:-/tmp}/poll-$(id -u)/poll-pr-reviews-${owner}-${name}-${pr}.pid"
 }
 
 EXERCISED_CODES=""
@@ -458,6 +469,55 @@ expect_stderr_no_match "Killed previous polling instance" "stale pidfile identit
 kill "$SLEEP_PID_MISMATCH" 2>/dev/null || true
 wait "$SLEEP_PID_MISMATCH" 2>/dev/null || true
 rm -f "$PF_MISMATCH"
+
+# Positive control — identity-verified kill path. The two negative cases
+# above (bare-PID format, identity mismatch) both prove the kill is
+# withheld; neither proves the kill branch actually fires when it SHOULD.
+# A mutation that neuters the kill entirely (e.g. `if false && [ "$(...)" =
+# "$old_start" ]; then`) would still pass every case above and the whole
+# rest of the suite. This case is the only one that fails under that
+# mutation: a pidfile whose recorded start time genuinely matches the live
+# process's current start time must result in that process being killed.
+new_case; new_pr
+OWNER_MATCH="matchowner$$"
+NAME_MATCH="matchrepo"
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "dependabot[bot]" > "$CASE_DIR/2.json"
+PF_MATCH="$(pidfile_for "$OWNER_MATCH" "$NAME_MATCH" "$PR")"
+sleep 30 &
+SLEEP_PID_MATCH=$!
+echo "$SLEEP_PID_MATCH:$(ps -o lstart= -p "$SLEEP_PID_MATCH" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" > "$PF_MATCH"
+run_pr "$CASE_DIR" "$OWNER_MATCH/$NAME_MATCH" "$PR" 1 4
+expect_exit 0 "stale pidfile identity match: run still completes normally"
+kill -0 "$SLEEP_PID_MATCH" 2>/dev/null && fail "stale pidfile identity match: self-spawned sleep should have been killed" || true
+echo "$ERR" | grep -q "Killed previous polling instance (PID $SLEEP_PID_MATCH)" || fail "stale pidfile identity match: expected kill message logged"
+wait "$SLEEP_PID_MATCH" 2>/dev/null || true
+rm -f "$PF_MATCH"
+
+# =============================================================================
+# Symlinked pidfile path — refused, not followed (CWE-59 closure)
+# =============================================================================
+
+# A pidfile path that is a symlink to an arbitrary file must never be
+# written through: acquire_pidfile must detect the symlink, log a warning,
+# unlink it, and proceed as if no pidfile existed — never follow it and
+# clobber whatever it points at.
+new_case; new_pr
+OWNER_SYMLINK="symlinkowner$$"
+NAME_SYMLINK="symlinkrepo"
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "dependabot[bot]" > "$CASE_DIR/2.json"
+PF_SYMLINK="$(pidfile_for "$OWNER_SYMLINK" "$NAME_SYMLINK" "$PR")"
+mkdir -p "$(dirname "$PF_SYMLINK")"
+SENTINEL="$SUITE_TMP/sentinel_$PR"
+printf 'do not touch me' > "$SENTINEL"
+ln -sf "$SENTINEL" "$PF_SYMLINK"
+run_pr "$CASE_DIR" "$OWNER_SYMLINK/$NAME_SYMLINK" "$PR" 1 4
+expect_exit 0 "symlinked pidfile: run still completes normally"
+[ "$(cat "$SENTINEL")" = "do not touch me" ] || fail "symlinked pidfile: sentinel content was modified (symlink followed / clobbered)"
+echo "$ERR" | grep -q "Pidfile is a symlink, refusing to follow" || fail "symlinked pidfile: expected symlink-refusal warning logged"
+[ ! -L "$PF_SYMLINK" ] || fail "symlinked pidfile: expected the symlink itself to be gone (unlinked, not left in place)"
+rm -f "$SENTINEL"
 
 # =============================================================================
 # Exit 4 (PIPELINE_FAILED) — deliberately NOT asserted.
