@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.5.0
+**Version:** 2.6.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -103,7 +103,7 @@ Or if you already have a PRD:
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (5)
+### Scripts (4)
 
 | Script | Platform | Purpose |
 |---|---|---|
@@ -161,6 +161,15 @@ scripts/poll-mr-reviews.sh 42 60 15
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.6.0** — Native swarm dispatch (`swarm-dispatch.sh` retired):
+- `scripts/swarm-dispatch.sh` deleted — 533 lines of bash replaced by native background subagents; script count 5 → 4
+- 3+ parallelizable steps → one background `coder` subagent per domain batch, `isolation: worktree`, model by batch complexity
+- Steps pre-assigned inline in spawn prompts; the `TaskCreate` queue is orchestrator-side progress tracking (workers can't see the Task tools)
+- Merge-back is an orchestrator-owned sequence that keeps the script's guards: skip failed/incomplete workers and absent branches, salvage dirty worktrees before removal
+- Recovery: `max_turns` → model-upgrade respawn, stalled worker → `SendMessage` continuation while its worktree lives; `launch_failure` and `claude --resume` retired
+- Turn budget fixed at `coder.md`'s `maxTurns: 30` for every worker — complexity now selects the model only
+- Orchestrator gains `TaskCreate`/`TaskList`/`TaskUpdate`/`SendMessage`; `docs/PHASE_6_NATIVE_PARALLELISM.md` §P6.3 marked superseded
 
 **v2.5.0** — Native-feature modernization (Aug 2026 audit):
 - CLAUDE.md rewritten for user scope; stack standards moved to path-scoped `rules/`
