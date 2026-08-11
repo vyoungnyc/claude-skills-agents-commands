@@ -1,6 +1,8 @@
 # PLAN_steps — script_tests
 
-**Source of truth for progress.** Contract: `PRD.md` (889eb3d). Design: `ARCHITECTURE.md`.
+**Source of truth for progress.** Contract: `PRD.md` (889eb3d). Design: `ARCHITECTURE.md` (c85cb15).
+
+**DC-06 (2026-08-10):** plan approved by user via decision card — dispatch authorized, rounds as tabled below. Epic #24, issues #17–#23.
 
 ## Plan Summary
 
