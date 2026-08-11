@@ -132,7 +132,27 @@ acquire_lock() {
     if _holder_is_live "$tholder"; then
       return 1
     fi
-    rm -f "$token"
+    # Single-winner GC of a dead token: atomically claim the link itself
+    # by renaming it — rename(2) succeeds for exactly one contender (the
+    # source vanishes for the rest). rm+ln here would repeat the bug this
+    # token exists to fix, one level down: after one earlier crash, two
+    # ordinary contenders both read the token as dead, and the loser's rm
+    # — issued from that stale read — deletes the winner's fresh live
+    # token. No second crash needed, so this level must be single-winner
+    # too.
+    local gc="$token.gc.$$"
+    mv "$token" "$gc" 2>/dev/null || return 1
+    local moved
+    moved=$(readlink "$gc" 2>/dev/null || true)
+    rm -f "$gc"
+    if [ "$moved" != "$tholder" ]; then
+      # We renamed something newer than what we judged dead: a completed
+      # reclaim installed a live token between our read and our mv.
+      # Restore an equivalent link if the spot is still empty (atomic
+      # create-if-absent) and stand down.
+      [ -n "$moved" ] && ln -s "$moved" "$token" 2>/dev/null
+      return 1
+    fi
     ln -s "$mytoken" "$token" 2>/dev/null || return 1
   fi
   # Token held: re-verify, then replace. A changed target means a new
