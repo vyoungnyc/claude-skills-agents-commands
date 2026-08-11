@@ -14,7 +14,8 @@
   },
   "effortLevel": "high",
   "tui": "fullscreen",
-  "model": "claude-fable-5[1m]",
+  "skipDangerousModePermissionPrompt": true,
+  "model": "sonnet",
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
