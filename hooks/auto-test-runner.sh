@@ -78,9 +78,19 @@ claim_marker() {
 # Acquire runner ownership: a symlink targeting the holder's PID — created
 # and owner-stamped in one atomic syscall (see header). On contention, a
 # lock held by a live process means a runner exists that will consume our
-# published marker — return failure so the caller exits. A lock whose
-# recorded PID is dead is a crashed runner's leftover: remove and retake
-# it (concurrent reclaimers race on the atomic ln — one winner).
+# published marker — return failure so the caller exits.
+#
+# A lock whose recorded PID is dead is a crashed runner's leftover, and
+# reclaiming it must be single-winner: a bare rm+ln lets a second
+# reclaimer — acting on its stale read of the same dead holder — rm the
+# first reclaimer's freshly installed LIVE lock and install its own,
+# yielding dual owners. Reclamation is therefore serialized through a
+# reclaim token taken with the same atomic ln, and the winner re-verifies
+# the lock still names the dead holder it read before removing it. Losers
+# return failure; their marker stays published for the winner to consume.
+# Residual exposure: a reclaimer crashing between token and lock leaves a
+# dead token, whose own removal has the same race one level down — that
+# requires a second crash inside a microsecond window, accepted.
 acquire_lock() {
   ln -s "$$" "$1" 2>/dev/null && return 0
   local holder
@@ -88,8 +98,26 @@ acquire_lock() {
   if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
     return 1
   fi
-  rm -f "$1"
-  ln -s "$$" "$1" 2>/dev/null
+  local token="$1.reclaim"
+  if ! ln -s "$$" "$token" 2>/dev/null; then
+    local tholder
+    tholder=$(readlink "$token" 2>/dev/null || true)
+    if [ -n "$tholder" ] && kill -0 "$tholder" 2>/dev/null; then
+      return 1
+    fi
+    rm -f "$token"
+    ln -s "$$" "$token" 2>/dev/null || return 1
+  fi
+  # Token held: re-verify, then replace. A changed target means a new
+  # owner installed between our read and the token grab — leave it alone.
+  local rc=1
+  if [ "$(readlink "$1" 2>/dev/null || true)" = "$holder" ]; then
+    rm -f "$1"
+    ln -s "$$" "$1" 2>/dev/null
+    rc=$?
+  fi
+  rm -f "$token"
+  return "$rc"
 }
 
 # Release only what we own: by the time an exit path runs, a newer runner
