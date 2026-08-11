@@ -12,24 +12,29 @@
 #             touches it first, unconditionally. Multiple edits coalesce:
 #             touch is idempotent, and one run over current disk contents
 #             satisfies every request published before it launched.
-#   lock    — runner ownership, an atomic mkdir held for the runner's whole
-#             lifetime (launch, wait, rerun loop). Exactly one invocation
-#             holds it at a time; everyone else exits immediately after
-#             publishing their marker, trusting the lock holder's rerun
-#             loop to consume it.
+#   lock    — runner ownership: a symlink whose target is the holder's PID.
+#             `ln -s` creates the link and records the owner in ONE atomic
+#             syscall, so there is no instant at which the lock exists
+#             without an owner recorded (a mkdir-then-write-pid protocol
+#             has exactly that window, and a contender reading the empty
+#             record would misjudge the lock stale and reclaim it into dual
+#             ownership). Exactly one invocation holds it at a time;
+#             everyone else exits immediately after publishing their
+#             marker, trusting the holder to consume it.
 #
-# The lock closes the claim-to-launch window that pidfile-based liveness
-# checking could not: with a pidfile, an invocation arriving after a runner
-# consumed the marker but before it wrote its child PID saw "no live
-# runner", published-and-claimed a fresh marker, and launched a second
-# concurrent suite. Ownership here is held across that entire interval, so
-# the sequence "publish marker → fail to get lock → exit" is always safe:
-# a live lock holder is guaranteed to check the marker again after its
-# current run finishes.
+# The lock is held across liveness reasoning, launch, and every rerun —
+# closing the claim-to-launch window pidfile-based liveness checking could
+# not. Handoff at the end of a runner's life is a release-then-recheck
+# loop: after the final failed claim the runner releases the lock and then
+# looks at the marker again — a publisher that saw our lock in the gap
+# between that final claim and the release has left a marker nobody owns,
+# so the runner retakes the lock and consumes it (or a newer invocation
+# already has). Release is guarded (only the recorded owner unlinks), so
+# no exit path can remove a lock some newer runner now holds.
 #
-# The lock dir records the holder's PID so a crashed runner (kill -9, no
-# trap) cannot wedge testing forever: an acquirer that finds the lock held
-# by a dead process removes and retakes it.
+# A crashed runner (kill -9, no trap) cannot wedge testing: an acquirer
+# that finds the lock held by a dead PID removes and retakes it, with
+# contenders racing on the atomic ln — one winner.
 
 INPUT=$(cat)
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
@@ -70,25 +75,27 @@ claim_marker() {
   return 0
 }
 
-# Acquire runner ownership: atomic mkdir, holder PID recorded inside. On
-# contention, a lock held by a live process means a runner exists whose
-# rerun loop will consume our published marker — return failure so the
-# caller exits. A lock held by a dead process is a crashed runner's
-# leftover: remove and retake it (two concurrent reclaimers race on the
-# inner mkdir, which only one can win).
+# Acquire runner ownership: a symlink targeting the holder's PID — created
+# and owner-stamped in one atomic syscall (see header). On contention, a
+# lock held by a live process means a runner exists that will consume our
+# published marker — return failure so the caller exits. A lock whose
+# recorded PID is dead is a crashed runner's leftover: remove and retake
+# it (concurrent reclaimers race on the atomic ln — one winner).
 acquire_lock() {
-  if mkdir "$1" 2>/dev/null; then
-    echo $$ > "$1/pid"
-    return 0
-  fi
+  ln -s "$$" "$1" 2>/dev/null && return 0
   local holder
-  holder=$(cat "$1/pid" 2>/dev/null || true)
+  holder=$(readlink "$1" 2>/dev/null || true)
   if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
     return 1
   fi
-  rm -rf "$1"
-  mkdir "$1" 2>/dev/null || return 1
-  echo $$ > "$1/pid"
+  rm -f "$1"
+  ln -s "$$" "$1" 2>/dev/null
+}
+
+# Release only what we own: by the time an exit path runs, a newer runner
+# may hold this lock — unlinking it would reopen dual ownership.
+release_lock() {
+  [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && rm -f "$1"
   return 0
 }
 
@@ -111,18 +118,27 @@ case "$FILE_PATH" in
     acquire_lock "$SH_LOCK" || exit 0
 
     SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
-    trap 'rm -rf "$SH_LOCK"; rm -f "$SH_OUT_FILE"' EXIT INT TERM
+    trap 'release_lock "$SH_LOCK"; rm -f "$SH_OUT_FILE"' EXIT INT TERM
 
-    # Run while requests exist. The first iteration normally consumes the
-    # marker we just published; a failed first claim means the previous
+    # Run while requests exist. The first inner iteration normally consumes
+    # the marker we just published; a failed first claim means the previous
     # runner consumed it in its final rerun (which tested disk contents
-    # that already included our edit), so there is nothing to do.
+    # that already included our edit), so there is nothing to do. The outer
+    # release-then-recheck loop closes the end-of-life gap: a publisher
+    # that saw our lock between our final failed claim and the release has
+    # left a marker nobody owns — retake the lock and consume it, unless a
+    # newer invocation already acquired it (then it inherits the marker).
     SH_EXIT=0
     SH_RAN=0
-    while claim_marker "$SH_MARKER"; do
-      bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1
-      SH_EXIT=$?
-      SH_RAN=1
+    while :; do
+      while claim_marker "$SH_MARKER"; do
+        bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1
+        SH_EXIT=$?
+        SH_RAN=1
+      done
+      release_lock "$SH_LOCK"
+      [ -e "$SH_MARKER" ] || break
+      acquire_lock "$SH_LOCK" || break
     done
     [ "$SH_RAN" -eq 1 ] || exit 0
     SH_OUTPUT=$(tail -30 "$SH_OUT_FILE" 2>/dev/null || true)
@@ -165,14 +181,20 @@ touch "$MARKER"
 acquire_lock "$LOCK" || exit 0
 
 OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
-trap 'rm -rf "$LOCK"; rm -f "$OUT_FILE"' EXIT INT TERM
+trap 'release_lock "$LOCK"; rm -f "$OUT_FILE"' EXIT INT TERM
 
+# Release-then-recheck handoff — same protocol as the shell branch.
 TEST_EXIT=0
 RAN=0
-while claim_marker "$MARKER"; do
-  "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1
-  TEST_EXIT=$?
-  RAN=1
+while :; do
+  while claim_marker "$MARKER"; do
+    "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1
+    TEST_EXIT=$?
+    RAN=1
+  done
+  release_lock "$LOCK"
+  [ -e "$MARKER" ] || break
+  acquire_lock "$LOCK" || break
 done
 [ "$RAN" -eq 1 ] || exit 0
 TEST_OUTPUT=$(tail -30 "$OUT_FILE" 2>/dev/null || true)
