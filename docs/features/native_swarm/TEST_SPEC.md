@@ -9,7 +9,7 @@ This feature edits markdown agent/command definitions and deletes bash; no code 
 - [UT-001] Area: reference cleanup (REQ-004)
   related_requirements: ["R-004"]
   steps_or_inputs: `grep -rn "swarm-dispatch" --include="*.md" --include="*.sh"` at repo root
-  expected_outcome: Hits only in CHANGELOG.md, docs/features/native_swarm/PRD.md, docs/PHASE_6_NATIVE_PARALLELISM.md. Zero hits in CLAUDE.md, README.md, AGENT_TEAMS_GUIDE.md, agents/, commands/, scripts/.
+  expected_outcome: Hits only in CHANGELOG.md, README.md release-history bullets, `docs/features/native_swarm/**`, and `docs/PHASE_6_NATIVE_PARALLELISM.md` (2026-08-10 review round 1 amendment — allow-list restated to include README's own historical "What Changed" entries, which reference the script by name as changelog-class history, and to scope the `native_swarm` feature-doc exception to the whole `docs/features/native_swarm/` tree rather than just PRD.md). Zero hits in CLAUDE.md, AGENT_TEAMS_GUIDE.md, agents/, commands/, scripts/.
 
 - [UT-002] Area: script deletion (REQ-004)
   steps_or_inputs: `test -f scripts/swarm-dispatch.sh; ls scripts/ | wc -l`

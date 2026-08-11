@@ -81,6 +81,14 @@ validate against issue acceptance criteria, checkpoint every 5 turns, close the 
 
 ### 3.1 Dispatch flow
 
+> **Superseded** (v2.6.0, feature `native_swarm`, review round 1) — the "workers claim from the shared
+> queue" flow below was replaced by **pre-assigned steps inline in each worker's spawn prompt** once the
+> REQ-001 spike showed the shared task queue is not visible to isolated background subagents at all
+> (`docs/features/native_swarm/SPIKE_FINDINGS.md`, answer (b), "Design revisions" #1). The task queue
+> remains useful **orchestrator-side only**, as the progress ledger the orchestrator updates as workers
+> report; it is not the workers' work list. The diagram and prose below are retained as the original
+> design record; see SPIKE_FINDINGS.md for the design that actually shipped.
+
 ```
 Orchestrator (feature branch, plan approved)
   │

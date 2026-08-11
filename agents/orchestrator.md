@@ -124,7 +124,7 @@ Parallelizable coder steps:
 1. Group plan steps by `file_domain` and `batch_hint` into domain batches. Batches must not share files — steps with overlapping domains go in **one** batch and are sequenced inside it.
 2. `TaskCreate` one entry per step, carrying `file_domain`, `issue_ref`, and `complexity` as metadata. This queue is **orchestrator-side tracking only**: spawned workers have no access to the Task tools, so it is your progress ledger, not their work list.
 3. Spawn one background `coder` subagent per batch via the Agent tool with `isolation: "worktree"`, `run_in_background: true`, and `model` = highest complexity in the batch (`high → opus`, `medium → sonnet`, `low → haiku`).
-4. **Pre-assign each batch's steps inline in its spawn prompt**: step IDs in execution order, file domain, issue numbers, acceptance criteria, and the instruction to commit every change (uncommitted work never merges).
+4. **Pre-assign each batch's steps inline in its spawn prompt**: step IDs in execution order, file domain, issue numbers, acceptance criteria, and the instruction to commit every intended, tracked change for its assigned steps — uncommitted work never merges, and workers must never `git add -A`/`-f` a blanket stage.
 5. Native worktrees are cut from `origin/main`, **not** from the dispatching branch — workers do not see feature-branch state. Every spawn prompt must therefore begin with `git merge feature/<feature_id> --no-edit`, verified before work starts.
 6. Track progress with `TaskList` / `TaskUpdate` as workers report; the harness notifies on completion — do not poll.
 7. Recover failures per step 6 below.
@@ -143,14 +143,16 @@ Parallelizable coder steps:
 
 The harness puts each worker's worktree at `.claude/worktrees/agent-<id>` on branch `worktree-agent-<id>`. Nothing merges automatically. The order below is load-bearing — each step encodes a past production failure.
 
-1. **Verify your own working tree is clean** (`git status --porcelain`); refuse to merge otherwise.
+1. **Verify your own working tree is clean, tracked files only** (`git diff --quiet && git diff --cached --quiet`); refuse to merge otherwise. This checks tracked content only — it does not fail on untracked files sitting in the checkout (e.g. `.claude/worktrees/`, which is gitignored), unlike `git status --porcelain`, which would.
 2. **Check out the feature branch explicitly** — never merge onto whatever HEAD happens to point at.
 3. **Skip the merge for any worker that failed or left its steps incomplete.** Partial work must not land (CHANGELOG 2.3.2). Recover it first (step 6 below), then merge.
 4. **Skip workers whose branch is absent.** A worktree that ended unchanged is torn down at completion and its branch deleted — there is nothing to merge, and that is not a failure.
-5. **Salvage dirty worktrees before removing them.** For each surviving worktree run `git -C .claude/worktrees/agent-<id> status --porcelain`; if dirty, either commit the changes on the worker branch (then merge) or copy them out. `git worktree remove` refuses on a dirty worktree, and `--force` destroys the work permanently — never `--force`-remove unsalvaged. This is the native successor to the old `git add -u` guard.
+5. **Salvage dirty worktrees before removing them — tracked files only, reviewed individually.** This step applies only to workers that were **not** already skipped by step 3's failed-worker guard. For each surviving worktree run `git -C .claude/worktrees/agent-<id> status --porcelain`; if dirty, stage tracked changes with `git -C .claude/worktrees/agent-<id> add -u` — **never `git add -A` and never `git add -f`** (`git add -A` once staged `.env` files, CHANGELOG 2.3.2). Review any untracked files individually before deciding whether to add them; do not blanket-add them. Commit the staged changes on the worker branch, then continue to the merge step below, or copy the salvaged changes out if the worker branch will not be merged. `git worktree remove` refuses on a dirty worktree, and `--force` destroys the work permanently — never `--force`-remove unsalvaged. This is the native successor to the old `git add -u` guard. **Salvaging a worktree preserves the work on the worker's branch; it never by itself authorizes merging that branch** — a salvaged worker still has to clear steps 3, 4, and 6 before `git merge --no-ff` runs.
 6. **Skip workers whose branch has no new commits.**
 7. `git merge --no-ff worktree-agent-<id>` for each remaining worker. Expect conflicts where a worker touched a file the feature branch also changed after `origin/main` — worker worktrees start from `origin/main`, so their common ancestor with the feature branch is older than it looks.
 8. **On conflict:** record the conflicting files, `git merge --abort`, and spawn a single conflict-resolution session — unchanged from today.
+
+**Worker-prompt guidance.** Every spawn prompt (single subagent, parallel subagents, or swarm batch) instructs the worker to commit only the tracked files it intentionally changed for its assigned step — never a blanket `git add -A`/`-f`. Salvage above is an orchestrator-side recovery step for workers that didn't follow this, not a substitute for it.
 
 #### Swarm report
 
