@@ -155,6 +155,16 @@ acquire_lock() {
     fi
     ln -s "$mytoken" "$token" 2>/dev/null || return 1
   fi
+  # Re-verify token ownership immediately before mutating the lock. The
+  # restore path above necessarily has an empty-path window (between the
+  # gc rename and the create-if-absent restore) that a third contender can
+  # win, leaving two invocations believing they hold the token. Whoever's
+  # token is on disk NOW is the one entitled to replace the lock — anyone
+  # else stands down (their marker stays published for the winner).
+  if [ "$(readlink "$token" 2>/dev/null || true)" != "$mytoken" ]; then
+    return 1
+  fi
+
   # Token held: re-verify, then replace. A changed target means a new
   # owner installed between our read and the token grab — leave it alone.
   local rc=1
