@@ -218,7 +218,7 @@ User decisions at intake: amend PR #15 (not a new feature run); cards apply to A
   title: "Decision-cards skill + wiring into all user-blocking gates"
   primary_agent: "backend-coder"
   dependencies: ["step_09"]
-  status: "pending"
+  status: "completed"  # 2026-08-10, cards-worker commits 84af0a8/abe1849/bcdb582/efba6b3 (merge c40005c); reviewer APPROVE-WITH-NITS, security PASS
   file_domain: ["skills/decision-cards/SKILL.md", "commands/execute-prd.md", "commands/discover.md", "agents/orchestrator.md", "agents/architect.md", "agents/ui-ux.md", "README.md", "CHANGELOG.md"]
   acceptance_criteria:
     - "All four REQ-013 ACs met verbatim (PRD amendment)"
