@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.10.0
+**Version:** 2.10.1
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -185,6 +185,11 @@ bash scripts/run-tests.sh
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.10.1** — Pre-merge checklist codified in CLAUDE.md + `/git`:
+- New `## Git` bullet: before every squash-merge, check whether the branch is behind the target and rebase if so, and — if the repo tracks a version (README `**Version:**` + matching `CHANGELOG.md` entry) — verify the bump is still correct against the target branch's current version before merging
+- `commands/git.md`'s `sync-branch` guidance extended to match, so the check is visible to anyone running `/git` too
+- Deploys with CLAUDE.md via `scripts/sync-claude-config.sh`, so any project using this repo's config picks up the same habit — this version bump is itself the first real exercise of the rule it adds
 
 **v2.10.0** — `pr-merge-sync-reminder.sh`: nudge to sync after a squash merge:
 - New PostToolUse hook fires when a `Bash` call runs `gh pr merge` with `--squash`/`-s`, and surfaces a `systemMessage` telling the agent to ask whether to run `scripts/sync-claude-config.sh --apply`

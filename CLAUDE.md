@@ -23,6 +23,7 @@ Never save working files, scratch notes/markdown, or tests to a project root. Us
 - Conventional commits: `type(scope): subject` (feat/fix/refactor/test/docs/chore).
 - Feature branches (`feature/<id>`); never commit directly to main; never force-push shared branches.
 - Commit and push only when asked, or when an approved workflow step requires it.
+- **Before every squash-merge:** check whether the branch is behind the target branch and rebase if so (`git fetch && git merge-base --is-ancestor origin/<target> <branch>`). If the repo tracks a version (e.g. a README `**Version:**` line plus a matching top `CHANGELOG.md` entry), diff the branch's version against the target branch's current version and fix the bump before merging if it's stale, colliding, or was cut before another PR landed.
 
 ## Testing
 
