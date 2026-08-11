@@ -2,6 +2,22 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.9.0] - 2026-08-11
+
+### `sync-claude-config.sh` — Deploy This Repo To The Live Global Config
+
+The README's Quick Start has always documented a manual `cp -r` deployment (project scope) or a manual copy-and-merge (global scope), and this project's own drift — CLAUDE.md, hooks, and `settings.json` are edited here but only ever synced to `~/.claude` by hand — was the concrete motivating case: at the time this script was written, `~/.claude/CLAUDE.md` was missing the `## Response Style` section, `~/.claude/hooks/` was missing `response-style.sh`, and `~/.claude/settings.json` was missing the `UserPromptSubmit` hook entry, all merged in this repo but never pushed live.
+
+- **New `scripts/sync-claude-config.sh`:**
+  - Dry run by default — prints exactly what differs and touches nothing; `--apply` performs the sync.
+  - `agents/`, `skills/`, `commands/`, `rules/`, and `hooks/*.sh` are overlay-copied: added or updated, never deleted, so a live-only file with no repo counterpart survives untouched.
+  - `CLAUDE.md` is fully overwritten, but only when it differs from the live copy, and only after backing up the live version.
+  - `settings.json` is never overwritten wholesale. Only the `hooks` and `env` keys are merged in: a hook event present in the repo but missing live is added; a hook event already present live is left alone unless the repo has an entry (matched by its `hooks` array) not already there, in which case it's appended. Every other live-only top-level key (`enabledPlugins`, `extraKnownMarketplaces`, `effortLevel`, `tui`, `model`, `skipDangerousModePermissionPrompt`, `_comment`, etc.) is preserved untouched. The merge is idempotent — a second `--apply` run is a no-op.
+  - Every file this script overwrites is backed up first under `<CLAUDE_HOME>/backups/sync-<timestamp>/` (uses the existing `~/.claude/backups/` convention).
+  - `CLAUDE_HOME` env var overrides the target directory (default `$HOME/.claude`) — used by the test suite and available for deploying to an alternate location.
+- **New `scripts/sync-claude-config.test.sh`:** sandboxed against throwaway fake-repo and fake-`CLAUDE_HOME` trees (never reads or writes the real `$HOME/.claude`) — dry run vs. `--apply`, no-op detection, overlay-copy preserving a live-only file, `CLAUDE.md` backup-then-overwrite, `settings.json` merge preserving live-only keys, and second-run idempotency (no duplicated hook entry).
+- `scripts/run-tests.sh` picks the new suite up automatically (no registration needed). Script count 5 → 6.
+
 ## [2.8.0] - 2026-08-11
 
 ### Response Style Rules + Drift-Resistant Reinjection
