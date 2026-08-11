@@ -162,18 +162,19 @@ ISSUE_EOF
 - [ ] [${STEP_ID}: ${TITLE}](${ISSUE_FILE}) — complexity: ${COMPLEXITY}, domain: ${BATCH_HINT}"
 done
 
-# Build roadmap section
+# Build roadmap section. Parse first (DEF-6: malformed roadmap JSON must
+# omit the whole "## Roadmap" section, not just the data rows) — only
+# construct the heading/table header once jq has actually produced rows.
 ROADMAP_SECTION=""
 if [ -n "$ROADMAP_FILE" ] && [ -f "$ROADMAP_FILE" ]; then
-  ROADMAP_SECTION="
-## Roadmap
-
-| Phase | Status | Summary |
-|-------|--------|---------|"
   ROADMAP_DATA=$(cat "$ROADMAP_FILE")
   ROADMAP_ROWS=$(jq -r 'to_entries | .[] | "| \(.value.phase) | \(if .key == 0 then "In Progress" else "Planned" end) | \(.value.summary) |"' <<< "$ROADMAP_DATA" 2>/dev/null || true)
   if [ -n "$ROADMAP_ROWS" ]; then
-    ROADMAP_SECTION="${ROADMAP_SECTION}
+    ROADMAP_SECTION="
+## Roadmap
+
+| Phase | Status | Summary |
+|-------|--------|---------|
 ${ROADMAP_ROWS}"
   fi
 fi
