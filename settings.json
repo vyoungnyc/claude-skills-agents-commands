@@ -14,7 +14,6 @@
   },
   "effortLevel": "high",
   "tui": "fullscreen",
-  "skipDangerousModePermissionPrompt": true,
   "model": "sonnet",
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
