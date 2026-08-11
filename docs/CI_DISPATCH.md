@@ -105,7 +105,9 @@ in `PLAN_steps.md`) rather than assumed to complete in one invocation.
   to the user — see `agents/orchestrator.md` "Blockers and escalations") has no answerer in CI. The
   prompt (below) must instruct the orchestrator that any condition it would normally escalate via
   `AskUserQuestion` instead **fails the job with a clear error message** describing the blocker,
-  rather than emitting a prompt that will hang or be silently auto-answered.
+  rather than emitting a prompt that will hang or be silently auto-answered. The `skills/decision-cards`
+  protocol likewise does not apply in headless runs — a card is an `AskUserQuestion` call, so any
+  would-be card fails the job the same way instead of being presented.
 - **Timeouts:** set both a job-level timeout (`timeout-minutes` in the workflow, sized to the
   orchestrator's `maxTurns: 50` ceiling plus the parallel workers' `maxTurns: 30` each) and rely on
   the harness's own turn limits as the inner bound. An unattended run that exceeds its timeout
