@@ -28,7 +28,7 @@ Test suites for the four untested scripts, plus the REQ-000 repair of the live-b
   primary_agent: "coder"
   dependencies: []
   related_requirements: ["REQ-001", "REQ-009"]
-  status: "pending"
+  status: "completed"  # 2026-08-10, suite-A worker 0497474 (merge into round-2 wave)
   file_domain: ["scripts/create-github-issues.test.sh"]
   acceptance_criteria:
     - "All REQ-001 ACs met verbatim (PRD lines 49-57), incl. DEF-4 documented at the assertion site"
@@ -41,7 +41,7 @@ Test suites for the four untested scripts, plus the REQ-000 repair of the live-b
   primary_agent: "coder"
   dependencies: []
   related_requirements: ["REQ-002", "REQ-009"]
-  status: "pending"
+  status: "completed"  # 2026-08-10, suite-B worker fe92cf0 (SendMessage continuation recovery)
   file_domain: ["scripts/create-local-issues.test.sh"]
   acceptance_criteria:
     - "All REQ-002 ACs met verbatim (PRD lines 59-69), incl. temp-git-repo isolation + repo .gitignore self-check and DEF-5 documented"
@@ -54,7 +54,7 @@ Test suites for the four untested scripts, plus the REQ-000 repair of the live-b
   primary_agent: "coder"
   dependencies: ["step_01"]
   related_requirements: ["REQ-003", "REQ-009"]
-  status: "pending"
+  status: "completed"  # 2026-08-10, suite-C worker 75800ef; further hardened in review round 2 (40e9e26)
   file_domain: ["scripts/poll-pr-reviews.test.sh"]
   acceptance_criteria:
     - "All REQ-003 ACs met verbatim (PRD lines 71-83), incl. per-call fixtures, pidfile safety, run-unique ids, exit-4 omission comment"
@@ -67,7 +67,7 @@ Test suites for the four untested scripts, plus the REQ-000 repair of the live-b
   primary_agent: "coder"
   dependencies: ["step_01"]
   related_requirements: ["REQ-004", "REQ-009"]
-  status: "pending"
+  status: "completed"  # 2026-08-10, suite-D worker 6169121
   file_domain: ["scripts/poll-mr-reviews.test.sh"]
   acceptance_criteria:
     - "All REQ-004 ACs met verbatim (PRD lines 85-97), incl. temp-repo + fake origin, concurrent-safe stub, both-remote-forms slug, approval-before-discussions ordering"
@@ -80,7 +80,7 @@ Test suites for the four untested scripts, plus the REQ-000 repair of the live-b
   primary_agent: "backend-coder"
   dependencies: ["step_02", "step_03", "step_04", "step_05"]
   related_requirements: ["REQ-005", "REQ-006", "REQ-007", "REQ-008", "REQ-009", "REQ-010"]
-  status: "pending"
+  status: "completed"  # 2026-08-10/11, closure-worker 066f58c/108460b/5b2337d (merge 0a31a07); 4 review rounds resolved (see step_07)
   file_domain: ["scripts/run-tests.sh", "docs/features/script_tests/FINDINGS.md", "README.md", "CHANGELOG.md", "docs/PHASE_6_NATIVE_PARALLELISM.md", "hooks/auto-test-runner.sh"]
   acceptance_criteria:
     - "run-tests.sh per REQ-005 (discovery without hardcoded list, bash <file> invocation, per-suite isolation, summary, green on branch)"
@@ -96,7 +96,7 @@ Test suites for the four untested scripts, plus the REQ-000 repair of the live-b
   primary_agent: "orchestrator"
   dependencies: ["step_06"]
   related_requirements: ["all"]
-  status: "pending"
+  status: "completed"  # 2026-08-11, orchestrator-run; issue #23 closed; PHASE_6 P6.3 marked MET (bee2bc1)
   file_domain: []
   acceptance_criteria:
     - "bash scripts/run-tests.sh green on the merged feature branch; output quoted"
