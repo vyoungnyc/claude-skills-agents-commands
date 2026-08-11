@@ -121,9 +121,41 @@ fi
 # --- Validate conventional commit messages ---
 # Use NORMALIZED so global options (git -C repo commit ...) don't bypass the check
 if echo "$NORMALIZED" | grep -qE 'git\s+commit'; then
-  # Extract commit message from the original COMMAND (which has the full args):
-  # 1. -m "message" or -m 'message'
-  COMMIT_MSG=$(echo "$COMMAND" | sed -n "s/.*-m[[:space:]]*[\"']\([^\"']*\)[\"'].*/\1/p" | head -1)
+  # Extract the FIRST -m/--message value from the original COMMAND, then
+  # validate only its first line (the subject). The previous sed-based
+  # extraction had three real failure modes, all hit in practice:
+  #   * greedy `.*-m` matched the LAST -m, so `-m "subject" -m "body"`
+  #     validated the body text and rejected valid commits;
+  #   * `[^"']*` stopped at the first quote of EITHER kind, so an
+  #     apostrophe inside a double-quoted subject truncated the message;
+  #   * sed is line-based, so a multiline -m "..." never matched at all
+  #     and fell through to "no inline message".
+  # Bash parameter expansion is byte-wise (newlines included) and
+  # `${var#*pattern}` strips the SHORTEST prefix — i.e. finds the FIRST
+  # occurrence. Known accepted limitation: an escaped quote of the same
+  # kind inside the message still truncates the extraction early; the
+  # subject line is virtually always before any such escape.
+  COMMIT_MSG=""
+  _REST=""
+  if [[ "$COMMAND" == *" --message"* ]]; then
+    _REST="${COMMAND#* --message}"
+    _REST="${_REST#=}"
+  elif [[ "$COMMAND" == *" -m"* ]]; then
+    _REST="${COMMAND#* -m}"
+  fi
+  if [ -n "$_REST" ]; then
+    # Trim leading whitespace before the (possibly quoted) value
+    while [ "${_REST# }" != "$_REST" ] || [ "${_REST#	}" != "$_REST" ]; do
+      _REST="${_REST# }"; _REST="${_REST#	}"
+    done
+    case "$_REST" in
+      \"*) _REST="${_REST#\"}"; COMMIT_MSG="${_REST%%\"*}" ;;
+      \'*) _REST="${_REST#\'}"; COMMIT_MSG="${_REST%%\'*}" ;;
+      *)   COMMIT_MSG="${_REST%%[[:space:]]*}" ;;
+    esac
+  fi
+  # Only the subject (first line) is format-validated — bodies are free text.
+  COMMIT_MSG=$(printf '%s\n' "$COMMIT_MSG" | head -1)
 
   # 2. Heredoc-style: $(cat <<'EOF' ... EOF) — extract first non-blank line after EOF marker
   if [ -z "$COMMIT_MSG" ]; then
@@ -143,8 +175,10 @@ if echo "$NORMALIZED" | grep -qE 'git\s+commit'; then
     exit 0
   fi
 
-  # Check conventional commit format: type(scope): subject
-  if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|test|docs|chore|ci|perf|build|style|revert)(\([a-zA-Z0-9_-]+\))?(!)?:\s+.+'; then
+  # Check conventional commit format: type(scope): subject. Scope may be a
+  # comma-separated list (fix(hooks,scripts): ...) — common practice for
+  # changes spanning a few areas, and previously rejected.
+  if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|test|docs|chore|ci|perf|build|style|revert)(\([a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*\))?(!)?:\s+.+'; then
     jq -n --arg msg "$COMMIT_MSG" '{
       hookSpecificOutput: {
         hookEventName: "PreToolUse",

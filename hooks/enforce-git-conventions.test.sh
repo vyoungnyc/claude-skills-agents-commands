@@ -13,7 +13,10 @@ fail() {
 
 run_hook() {
   local cmd="$1"
-  printf '{"tool_input":{"command":"%s"}}' "$cmd" | "$HOOK"
+  # jq builds the payload so quotes and literal newlines inside the command
+  # are JSON-escaped correctly (printf '%s' into a JSON template breaks on
+  # any command containing a double quote — i.e. every commit message case).
+  jq -cn --arg cmd "$cmd" '{"tool_input":{"command":$cmd}}' | "$HOOK"
 }
 
 expect_denied() {
@@ -43,5 +46,35 @@ expect_denied "git push origin +HEAD:feature/foo" "\\+ refspec prefix"
 expect_denied "git push --force-with-lease origin +HEAD:feature/foo" "overrides --force-with-lease safety"
 expect_allowed "git push --force-with-lease origin feature/foo"
 expect_allowed "git push origin feature/foo"
+
+# --- Commit-message extraction regressions (all three previously bounced
+# valid commits: greedy last--m match, quote-of-either-kind truncation,
+# line-based sed missing multiline messages; plus comma multi-scope) ---
+
+# Baseline: simple valid and invalid subjects
+expect_allowed 'git commit -m "fix(hooks): simple valid subject"'
+expect_denied 'git commit -m "bad message with no type"' "conventional commits format"
+
+# Multi -m: first message is the subject, second is free-text body —
+# the old parser validated the SECOND and rejected this.
+expect_allowed 'git commit -m "fix(hooks): subject line" -m "body: free text, not format-checked. plan-context.sh pairs step_id lines."'
+# Multi -m with an INVALID first subject must still be denied.
+expect_denied 'git commit -m "not conventional" -m "fix(hooks): valid-looking body"' "conventional commits format"
+
+# Apostrophe inside a double-quoted subject — old parser truncated at it.
+expect_allowed "git commit -m \"fix(hooks): don't truncate on apostrophes\""
+
+# Multiline -m: only the first line (subject) is format-checked.
+expect_allowed 'git commit -m "fix(hooks): multiline subject
+body line two, free text"'
+
+# Single-quoted message.
+expect_allowed "git commit -m 'feat: single-quoted subject'"
+
+# Comma-separated multi-scope — previously rejected by the scope charset.
+expect_allowed 'git commit -m "fix(hooks,scripts,commands): multi-scope subject"'
+
+# No inline message still denied.
+expect_denied 'git commit' "inline message"
 
 echo "enforce-git-conventions.sh tests passed"
