@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.8.0
+**Version:** 2.9.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -105,7 +105,7 @@ Or if you already have a PRD:
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (5)
+### Scripts (6)
 
 | Script | Platform | Purpose |
 |---|---|---|
@@ -113,6 +113,7 @@ Or if you already have a PRD:
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
+| sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env` are merged in, idempotently, preserving every other live-only key. |
 | run-tests.sh | Any | Discovers and runs every `*.test.sh` suite in the repo (no hardcoded list); prints per-suite PASS/FAIL plus a final summary; exits 0 only if every suite passes. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
@@ -124,6 +125,13 @@ scripts/poll-pr-reviews.sh owner/repo 42 60 15
 
 # GitLab MR polling (run from inside a GitLab repo)
 scripts/poll-mr-reviews.sh 42 60 15
+
+# Deploy this repo's config to ~/.claude — dry run first, then apply
+scripts/sync-claude-config.sh
+scripts/sync-claude-config.sh --apply
+
+# Sync to an alternate target instead of $HOME/.claude
+CLAUDE_HOME=/path/to/.claude scripts/sync-claude-config.sh --apply
 ```
 
 ### Testing
@@ -176,6 +184,12 @@ bash scripts/run-tests.sh
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.9.0** — `sync-claude-config.sh`: deploy this repo to `~/.claude`:
+- New script closes the gap this repo has always had: agents/skills/commands/rules deploy instructions existed in this README, but nothing automated pushing changes to the live global config, and `settings.json` had to be hand-merged
+- Dry run by default (prints planned changes, touches nothing); `--apply` writes. Directories are overlay-copied (never deletes a live-only file); `CLAUDE.md` is fully replaced only when it differs; `settings.json` gets only `hooks`/`env` merged in, idempotently, preserving every other live-only key (`enabledPlugins`, `effortLevel`, etc.)
+- Every overwritten file is backed up first under `<CLAUDE_HOME>/backups/sync-<timestamp>/`
+- `CLAUDE_HOME` env var overrides the target for testing or an alternate deploy location. Script count 5 → 6
 
 **v2.8.0** — Response Style rules + drift-resistant reinjection:
 - New `## Response Style` section in CLAUDE.md: BLUF always (conclusion first, max 5 bullets, then decreasing importance), no preamble/recap, no validation-as-move or reflexive praise, no performed insight, plain language tested by portability, compression rules with exceptions for security/destructive/ordered-instruction content, don't re-suggest declined follow-ups, label epistemic status (known/inferred/guessed)
@@ -300,6 +314,8 @@ scripts/
   create-github-issues.test.sh  # Test suite for create-github-issues.sh
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
   create-local-issues.test.sh   # Test suite for create-local-issues.sh
+  sync-claude-config.sh      # Deploy agents/skills/commands/rules/hooks/CLAUDE.md to ~/.claude
+  sync-claude-config.test.sh    # Test suite for sync-claude-config.sh
   run-tests.sh                # Discovers and runs every *.test.sh suite in the repo
 rules/
   typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
