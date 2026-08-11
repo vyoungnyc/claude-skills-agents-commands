@@ -72,11 +72,13 @@ After `PLAN_steps.md` is first created or significantly updated:
   - Which parts will run in parallel.
   - Tradeoffs, risks, and open questions.
   - Epic link and issue links (from step 1b).
-- Present the summary with these options:
-  - **A)** Approve the plan and start the workflow.
+- Present that summary, then run the `decision-cards` skill (step 10a): the summary is the preamble, and approval is one card with these options:
+  - **A)** Approve the plan and start the workflow *(recommended when the plan is ready — say why)*.
   - **B)** Request changes to the plan.
   - **C)** Pause and do nothing yet.
-- Wait for **explicit user approval** before dispatching any implementation steps.
+  - **D)** Discuss this card.
+- Each change area the user wants reworked becomes its own card, so reworks are decided individually.
+- Wait for **explicit user approval** and a clear card ledger before dispatching any implementation steps.
 - If the user requests changes, invoke `update-plan-from-review-feedback`, update `PLAN_steps.md`, and repeat this checkpoint.
 
 ### 3. Test strategy (before implementation begins)
@@ -264,8 +266,21 @@ When an agent completes work:
 ### 10. Blockers and escalations
 
 - Design blockers → **architect** and/or **ui-ux**.
-- Scope/priority/sequencing unclear → invoke `AskUserQuestion` directly.
-- User/business decisions required → summarize options and escalate to the user.
+- Scope/priority/sequencing unclear → decide it with the user via the decision-cards protocol below.
+- User/business decisions required → summarize options and escalate to the user as cards.
+
+### 10a. User interaction policy — decision cards
+
+**Every question that blocks work on the user goes through the `decision-cards` skill.** No ad-hoc inline questions at a gate.
+
+- **Summary first** — all open decisions at once: card ID (`DC-01`, …), title, why it blocks, one-line recommendation.
+- **Then cards** — `AskUserQuestion` in batches of ≤4, one card per decision. Header chip is the card ID; the question text carries the context; the first option is your recommendation labeled `(Recommended)`; then concrete alternatives; then the standing `Discuss this card` option.
+- **Discuss loop** — if the user picks `Discuss this card`, answer follow-ups about that card only, then re-present it (same ID, refined context, plus any option the discussion produced).
+- **Track and re-present** — keep an answered/unanswered ledger and re-present open cards in the next batch. Never proceed while a card is open; never start on "the settled parts."
+- **Record, then resume** — write each answer as a dated decision into its owning artifact (PRD Agreement for requirement decisions, `UX_NOTES.md` for UX, `PLAN_steps.md` for plan/dispatch decisions) and resume strictly per the answers.
+- **Single-card fast path** — one urgent question, most often a `tool_error` or exhausted-model escalation from step 6, may be presented as a single card with no summary preamble.
+
+This applies to the plan approval checkpoint (step 2), scope/priority/sequencing calls, and every escalate-to-user branch in failure recovery (step 6). Requirement clarifications still route through **architect** or **ui-ux**, who run the same protocol.
 
 ### 11. Reporting
 
@@ -314,7 +329,7 @@ epic closes on PR merge
 ## Rules
 
 1. **Never start implementation without explicit user plan approval.**
-2. **Never ask the user clarifying questions about requirements directly.** Route to **architect** or **ui-ux**. Use `AskUserQuestion` only for scope/priority/sequencing decisions you cannot resolve from existing context.
+2. **Never ask the user clarifying questions about requirements directly.** Route to **architect** or **ui-ux**. Use `AskUserQuestion` only for scope/priority/sequencing decisions you cannot resolve from existing context — and always as decision cards (step 10a), never as ad-hoc inline questions.
 3. **Always run reviewer and security-researcher in parallel**, never sequentially.
 4. **Always run parallel where dependencies allow** — no sequential mode.
 5. Do not bypass gate steps (review, security) even when parallel implementation finishes cleanly.
@@ -322,6 +337,7 @@ epic closes on PR merge
 
 ## Skills invoked directly by orchestrator
 
+- `decision-cards`: every user-blocking question — plan approval, scope/priority calls, escalations.
 - `scan-feature-context`: at feature kickoff or when context is unclear.
 - `derive-plan-from-spec`: create structured `PLAN_steps.md` from architecture and specs.
 - `update-plan-from-review-feedback`: convert review/security findings into fix tasks and update the plan.
