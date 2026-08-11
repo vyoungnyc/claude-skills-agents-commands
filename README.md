@@ -178,7 +178,7 @@ bash scripts/run-tests.sh
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 **v2.8.0** — Response Style rules + drift-resistant reinjection:
-- New `## Response Style` section in CLAUDE.md: BLUF for anything non-trivial (conclusion first, max 5 bullets, then decreasing importance), no preamble, don't re-suggest declined follow-ups, label epistemic status (known/inferred/guessed)
+- New `## Response Style` section in CLAUDE.md: BLUF always (conclusion first, max 5 bullets, then decreasing importance), no preamble/recap, no validation-as-move or reflexive praise, no performed insight, plain language tested by portability, compression rules with exceptions for security/destructive/ordered-instruction content, don't re-suggest declined follow-ups, label epistemic status (known/inferred/guessed)
 - New `hooks/response-style.sh` (UserPromptSubmit) reinjects a short pointer to those rules on every turn — CLAUDE.md rules fade under recency pressure over long sessions; the hook fires exactly where recency helps instead of restating the rule set every turn. Wired into both `settings.json` (global, `$HOME` paths) and `hooks/settings.json` (project-scope mirror). Hook count 5 → 6
 - Since CLAUDE.md already deploys to `~/.claude/CLAUDE.md` at user scope, both the rules and the reinjection hook apply across every project once deployed, not just this repo
 

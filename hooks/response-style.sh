@@ -11,4 +11,4 @@
 #
 # Pattern source: https://joecotellese.com/posts/steering-claude-code-bluf/
 
-echo "Reminder: apply the Response Style rules in CLAUDE.md — BLUF (conclusion first, max 5 bullets, then detail in decreasing importance) for anything non-trivial, no preamble, label epistemic status (known/inferred/guessed) when it matters, don't re-suggest a follow-up the user didn't take."
+echo "Reminder: apply the Response Style rules in CLAUDE.md — BLUF always, no preamble/recap, no validation-as-move or reflexive praise, plain language over polished phrasing, compress ceremony not reasoning, label epistemic status (known/inferred/guessed) when it matters, don't re-suggest a follow-up the user didn't take."

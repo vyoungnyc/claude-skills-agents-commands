@@ -6,11 +6,15 @@ All notable changes to this multi-agent orchestration system are documented in t
 
 ### Response Style Rules + Drift-Resistant Reinjection
 
-Added a user-scope response-style contract (BLUF, no preamble, epistemic-status labeling) and a hook that keeps it from fading over long sessions.
+Added a user-scope response-style contract (BLUF, no preamble, no validation-as-move or reflexive praise, plain language, compression rules, epistemic-status labeling) and a hook that keeps it from fading over long sessions.
 
 - **CLAUDE.md — new `## Response Style` section:**
-  - BLUF for anything non-trivial: conclusion first, then reasoning. Summary capped at 5 bullets, rest of the content in decreasing order of importance. BLUF is not "be brief" — the reasoning stays, only the ceremony goes.
-  - No preamble — skip framing like "excellent question," go straight to the answer.
+  - BLUF always: bottom-line first, then reasoning. For anything non-trivial, summary capped at 5 bullets, rest of the content in decreasing order of importance. BLUF is not "be brief" — the reasoning stays, only the ceremony goes.
+  - No preamble or recap — skip framing like "excellent question," don't restate the request or what was just done, go straight to the answer.
+  - No validation-as-move ("you're right to feel that," "that's not your fault") and no reflexive agreement or praise ("you're absolutely right," "great question") — a brief acknowledgment is fine, but it can't substitute for substance; agree only when earned and say why.
+  - No performed insight — skip polished aphorisms, metaphors, or named "tensions."
+  - Plain language over elegant phrasing, tested by portability: if a sentence would fit unchanged in a different conversation, cut it or make it specific.
+  - Compression cuts ceremony, not reasoning: no tool-call narration, cut filler/hedges/pleasantries, no emoji or decorative headers on short answers, quote the shortest decisive line instead of dumping logs/files/diffs, state each fact once, never invent abbreviations. Exceptions get full prose: security warnings, destructive/irreversible-action confirmations, and ordered multi-step instructions where dropping a connective creates ambiguity.
   - Don't repeat a follow-up suggestion the user didn't take.
   - Label epistemic status when it matters (known / inferred / guessed); prefer "I don't know" over confident fabrication; search when currency matters.
 - **`hooks/response-style.sh` (new, UserPromptSubmit):** echoes a short pointer back at the CLAUDE.md rule on every prompt submission instead of restating it. Addresses a documented failure mode — instructions loaded once at session start lose weight against recent conversation history and the tone drifts back toward preamble and buried conclusions somewhere past the first hour. Firing on every turn puts the reminder exactly where recency pressure is highest. Wired into both `settings.json` (global, `$HOME` paths — the deploy target that makes it apply to every project) and `hooks/settings.json` (project-scope mirror, kept for parity with the repo's existing per-hook convention). Hook count 5 → 6.
