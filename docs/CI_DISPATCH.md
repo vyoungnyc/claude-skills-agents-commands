@@ -77,7 +77,7 @@ interactively — nothing about running in CI changes them:
 - The shared task queue is not visible to isolated background workers — steps must be
   **pre-assigned in each worker's spawn prompt** (step id, `file_domain`, `issue_ref`,
   `complexity`, acceptance criteria), not claimed from a queue at runtime.
-- Each worker runs under `agents/coder.md`'s fixed `maxTurns: 30` — CI does not get a larger
+- Each worker runs under `agents/coder.md`'s fixed `maxTurns: 45` — CI does not get a larger
   per-worker turn budget than an interactive run does.
 
 ## Turn budget ceiling
@@ -109,7 +109,7 @@ in `PLAN_steps.md`) rather than assumed to complete in one invocation.
   protocol likewise does not apply in headless runs — a card is an `AskUserQuestion` call, so any
   would-be card fails the job the same way instead of being presented.
 - **Timeouts:** set both a job-level timeout (`timeout-minutes` in the workflow, sized to the
-  orchestrator's `maxTurns: 50` ceiling plus the parallel workers' `maxTurns: 30` each) and rely on
+  orchestrator's `maxTurns: 50` ceiling plus the parallel workers' `maxTurns: 45` each) and rely on
   the harness's own turn limits as the inner bound. An unattended run that exceeds its timeout
   should fail the job rather than continue silently — there is no human present to notice a stuck
   run otherwise.
@@ -227,6 +227,26 @@ jobs:
         with:
           name: ci-dispatch-result-${{ env.FEATURE_ID }}
           path: run-result.json
+          retention-days: 14
+
+      # The prompt prohibits pushing and checkout ran with
+      # persist-credentials: false, so every commit the orchestrator and its
+      # workers made exists only in this ephemeral checkout. Without this
+      # step the implementation is discarded when the runner is torn down —
+      # while coders may already have closed issues referencing those
+      # now-unreachable commits. A git bundle preserves the full branch
+      # history as a downloadable artifact; a human reviews it and pushes
+      # from a trusted machine (`git bundle verify`, then fetch + push).
+      - name: Bundle implementation branch
+        if: always()
+        run: git bundle create implementation.bundle --all
+
+      - name: Upload implementation bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-dispatch-branch-${{ env.FEATURE_ID }}
+          path: implementation.bundle
           retention-days: 14
 ```
 

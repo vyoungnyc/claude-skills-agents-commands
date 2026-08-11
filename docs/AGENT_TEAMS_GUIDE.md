@@ -183,7 +183,7 @@ Worker worktrees are cut from `origin/main`, **not** from the dispatching branch
 
 Model per worker = max complexity in the batch (highest wins).
 
-**Turn budget:** fixed. The Agent tool has no per-spawn turn parameter, so `agents/coder.md`'s frontmatter `maxTurns: 30` applies to every worker regardless of complexity — complexity selects the model and nothing else. High-complexity batches get 30 turns rather than the 40 they once did, so keep batches small.
+**Turn budget:** fixed. The Agent tool has no per-spawn turn parameter, so `agents/coder.md`'s frontmatter `maxTurns: 45` applies to every worker regardless of complexity — complexity selects the model and nothing else. Every batch gets the same 45 turns, so keep batches sized to fit that budget.
 
 **GitHub integration:** Each spawn prompt carries its GitHub issue numbers. Coders read acceptance criteria via `gh issue view`, validate each criterion before completing, and close issues with a commit reference: `gh issue close N -c "Fixed in abc123. All criteria met."` The orchestrator tracks progress via `gh issue list --label "feature:{id}"`.
 
