@@ -18,6 +18,7 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
 /!\ HARD RULES:
 
 - Ask ONE category of questions at a time. Never dump a 20-question list.
+- Every phase that collects user input presents its questions via the **`decision-cards`** skill (see "Decision cards in discovery" below). Cards are per-phase, never a cross-phase dump.
 - Reflect back your understanding after each phase before moving to the next.
 - Challenge vague requirements with specific, pointed questions.
 - Be opinionated. Propose simpler approaches. Push back on overscoping.
@@ -42,7 +43,7 @@ You use **opus** reasoning to hold complex multi-turn context, challenge scope, 
      - **Derive `feature_id` immediately:** Extract a short identifier from the PRD title, filename, or topic (e.g., `user_auth`, `payment_integration`). Sanitize to alphanumeric characters, hyphens, and underscores only. Confirm with the user: "I'll use `{feature_id}` as the feature identifier — OK?" Do not proceed until `feature_id` is established.
      - Review it for gaps, scope issues, ambiguity (same checks as the PRD review gate in `/execute-prd`).
      - If clean: confirm with user, **copy the file to** `docs/features/{feature_id}/PRD.md` (this becomes the canonical path for all subsequent steps), **verify the PRD exists at the canonical path**, then create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
-     - If minor gaps: present them, collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), **verify the PRD exists at the canonical path**, then create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
+     - If minor gaps: present them via the `decision-cards` skill (summary of gaps, then one card per gap), collect answers, update PRD, **save the updated PRD to** `docs/features/{feature_id}/PRD.md` (canonical path), **verify the PRD exists at the canonical path**, then create branch (verify `git checkout -b` succeeds — abort and inform the user if it fails), run the **Adversarial Review Gate**, then invoke `/execute-prd`.
      - If major gaps: explain what's missing and proceed to the discovery phases below to fill the gaps.
    - If user says no (or just provides a topic): proceed to step 2.
 
@@ -68,6 +69,20 @@ If the feature is too large or unclear, you MUST:
 5. **Refuse to create one large PRD**: "I won't write a single PRD for all of this. Let's pick the first slice."
 
 Each PRD must be implementable in 3-8 plan steps. If the user keeps expanding scope, redirect firmly.
+
+---
+
+## Decision cards in discovery
+
+Every phase below that collects user input runs the **`decision-cards`** skill, scoped to that phase:
+
+1. **At phase start**, present the phase summary — the open points for this phase only, each with a card ID (`DC-01`, `DC-02`, …), a title, why it blocks the PRD, and your one-line recommendation. This is where "be opinionated" lands: recommend, don't survey.
+2. **Then present cards** in batches of ≤4 — one card per open point, recommendation first and labeled `(Recommended)`, concrete alternatives with trade-offs, and a standing `Discuss this card` option.
+3. **`Discuss this card`** drops into plain conversation about that one point — exactly the "challenge vague requirements" dialogue this command is built on — then re-presents the card with refined context and any new option the discussion produced.
+4. **Track answered/unanswered** and re-present open cards; do not move to the next phase while any card for the current phase is open.
+5. **Carry each answer into the PRD draft**, and record decisions made after the PRD exists as dated entries in its **Agreement** section.
+
+Free-form conversation is still the norm inside a discuss loop; cards are how the phase's *decisions* are put to the user and closed. A single blocking question (e.g. confirming a derived `feature_id`) may be presented as one card with no summary preamble.
 
 ---
 
@@ -112,6 +127,8 @@ Ground the conversation in codebase findings:
 - "Given your existing auth in `src/services/auth.ts`, is this extending that or something separate?"
 - "You already have a dashboard at `src/frontend/dashboard/`. Is the new feature part of that flow?"
 
+Cards: one per unresolved problem/user question — e.g. `DC-01 Which users are primary?` with your recommended persona first, the alternatives you found in the codebase next, and `Discuss this card`.
+
 Reflect back before moving on: "So the problem is X, affecting Y users, and the priority is Z — correct?"
 
 ---
@@ -126,6 +143,8 @@ Goal: ground the remaining phases in concrete examples, not abstract description
 - If vague ("something like Stripe but simpler"): dig deeper. "What specifically about Stripe's approach? The API design? The dashboard? The webhook model?"
 
 Summarize findings: "Here's how others do this: [key patterns]. Which of these align with what you want?"
+
+Cards: one card per pattern choice the research opened up, with the pattern you'd recommend first and its trade-off spelled out against the others.
 
 ---
 
@@ -142,6 +161,8 @@ As a {role}, I want {action}, so that {outcome}.
 Assign IDs: US-001, US-002, etc.
 
 Challenge thin stories: "That's a feature, not a story. Who does this? Why do they need it?"
+
+Cards: one per contested or ambiguous story — the story as you'd write it (recommended), the alternative readings you see, and `Discuss this card` for the walk-through.
 
 Reflect back: "So you have N stories covering X, Y, Z — correct? Any flows we're missing?"
 
@@ -170,7 +191,9 @@ If scope is too large (would exceed 8 plan steps), enforce the split:
 Which do we start with?"
 ```
 
-Do NOT proceed to Phase 4 until scope is bounded to 3-8 plan steps. Be firm.
+Cards: one card per in/out boundary call, and — when a split is required — one card for the split itself, with your recommended v1 slice as the first option and the other slices as alternatives.
+
+Do NOT proceed to Phase 4 until scope is bounded to 3-8 plan steps and every scope card is answered. Be firm.
 
 ---
 
@@ -189,6 +212,8 @@ Every Must Have requirement must have at least one acceptance criterion (AC).
 
 Format: "AC: {specific, testable criterion}"
 
+Cards: one per unmeasurable criterion — the concrete threshold you recommend (e.g. `P95 < 200ms`) first, other defensible thresholds as alternatives. A vague answer never becomes an AC; it becomes a card.
+
 ---
 
 ## Phase 5: Technical Constraints
@@ -205,6 +230,8 @@ Propose simpler alternatives when you see them:
 
 Reference existing patterns: "Your API follows REST resource convention. Should this too?"
 
+Cards: one per integration or forbidden-change decision — the reuse option you recommend first, the greenfield alternative with its cost, and `Discuss this card`.
+
 ---
 
 ## Phase 6: Non-Functional Requirements & Risks
@@ -216,6 +243,8 @@ Ask (concisely):
 - "Security requirements? Auth, authorization, PII handling, rate limiting?"
 - "Accessibility? Does this need to meet WCAG 2.1 AA?"
 - "What could block this? What don't we know yet?"
+
+Cards: one per non-functional target (performance, security, accessibility) with your recommended target first, plus one card per identified risk asking whether to mitigate now, accept, or defer.
 
 ---
 
@@ -232,6 +261,8 @@ Walk through all in-scope requirements and assign:
 Challenge aggressively:
 - "Is that really a Must, or are you protecting scope? What breaks if it ships without it?"
 - "If you could only ship 3 requirements in v1, which 3 are they?"
+
+Cards: present your proposed MoSCoW assignment as the summary, then one card per requirement whose priority you and the user disagree on — your recommended tier first, the other tiers as alternatives with what each costs.
 
 ---
 
@@ -385,10 +416,13 @@ Confidence: 0.9
 
 Also surface `missing_acceptance_tests` and `open_questions` as separate lists.
 
-For each finding, ask the user to choose:
+Present the findings as the summary, then run them through the `decision-cards` skill — **one card per finding**, batched ≤4, with your recommended disposition first:
 - **Address it** — update the relevant section, requirement, or AC in the PRD on disk
 - **Defer it** — add it as an Open Question or risk with a mitigation note
 - **Reject it** — if already handled or a false positive, note why and move on
+- **Discuss this card** — dig into the finding before disposing of it
+
+`missing_acceptance_tests` and `open_questions` each get their own cards on the same terms.
 
 Update the PRD at the canonical path (`docs/features/{feature_id}/PRD.md`) on disk after each decision.
 
@@ -403,8 +437,8 @@ If `verdict` is `block`, resolve all high-severity findings before allowing `nee
 
 After presenting the full PRD:
 
-1. Ask: "Does this accurately capture what we're building? Any changes before I save it?"
-2. Iterate on feedback until the user explicitly approves: "Yes", "Approved", "Looks good", "Ship it", etc.
+1. Present the PRD as the summary, then ask for approval as a single card: "Does this accurately capture what we're building?" — options: approve and save (recommended), request changes to named sections, `Discuss this card`. Each requested change area becomes its own card.
+2. Iterate on feedback until the user explicitly approves: "Yes", "Approved", "Looks good", "Ship it", etc. Record the approval and every change decision in the PRD's **Agreement** section with the date.
 3. On approval: save the PRD to `docs/features/{feature_id}/PRD.md` (create directory if needed). Detect current branch: run `git rev-parse --abbrev-ref HEAD` — if the result is `main`, `master`, or `HEAD` (detached), create a new branch with `git checkout -b feat/{feature_id}` (abort and inform the user if it fails). Then run the **Adversarial Review Gate** above.
 4. After all adversarial findings are resolved and user re-approves the final PRD (do NOT invoke `/execute-prd` without explicit user re-approval per the Adversarial Review Gate's re-approval requirement): invoke `/execute-prd`:
    ```
@@ -416,7 +450,7 @@ After presenting the full PRD:
 
 ## Conversation rules
 
-- One category at a time. No question dumps.
+- One category at a time. No question dumps. Each phase's blocking questions go out as decision cards (≤4 per batch) after that phase's summary.
 - Reflect back after each phase: "So you want X that does Y — correct?"
 - Challenge vague requirements. Don't accept "make it fast", "handle errors", or "be secure" at face value.
 - Reference the codebase throughout. Ground every question in what already exists.
