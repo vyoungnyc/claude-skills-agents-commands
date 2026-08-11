@@ -143,7 +143,7 @@ Parallelizable coder steps:
 
 The harness puts each worker's worktree at `.claude/worktrees/agent-<id>` on branch `worktree-agent-<id>`. Nothing merges automatically. The order below is load-bearing — each step encodes a past production failure.
 
-1. **Verify your own working tree is clean, tracked files only** (`git diff --quiet && git diff --cached --quiet`); refuse to merge otherwise. This checks tracked content only — it does not fail on untracked files sitting in the checkout (e.g. `.claude/worktrees/`, which is gitignored), unlike `git status --porcelain`, which would.
+1. **Verify your own working tree is clean** (`git status --porcelain`; empty output = clean); refuse to merge otherwise. `git status --porcelain` does not report ignored paths, so it stays quiet for gitignored churn like `.claude/worktrees/` — the `.claude/` gitignore entry is what makes this check viable at all. It does, however, still surface any untracked file that is *not* covered by `.gitignore` (a stray `.env`, a dumped artifact, etc.), and that is intentional: an untracked non-ignored file in the orchestrator checkout must block merge-back rather than merge silently.
 2. **Check out the feature branch explicitly** — never merge onto whatever HEAD happens to point at.
 3. **Skip the merge for any worker that failed or left its steps incomplete.** Partial work must not land (CHANGELOG 2.3.2). Recover it first (step 6 below), then merge.
 4. **Skip workers whose branch is absent.** A worktree that ended unchanged is torn down at completion and its branch deleted — there is nothing to merge, and that is not a failure.
