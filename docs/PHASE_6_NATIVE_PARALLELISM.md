@@ -49,6 +49,15 @@ Run one real 3-batch feature both ways and compare:
 
 > **Superseded** (v2.6.0, feature `native_swarm`) — this section is retained as a historical record only. The script was **fully retired and deleted**, not demoted to a fallback, which is what the Decisions section above already called for. Cross-machine/CI dispatch is covered by `docs/CI_DISPATCH.md`; per-session cost JSON was explicitly dropped; and the spike (`docs/features/native_swarm/SPIKE_FINDINGS.md`) found native worktree merge semantics sufficient. The exit criterion below remains open and lands on the next feature run through the pipeline.
 
+> **P6.3 exit criterion — MET (2026-08-10)** (v2.7.0, feature `script_tests`) — "one full `/execute-prd` feature shipped through native dispatch with no regression in review gates or issue tracking" is satisfied by this feature's own run. Evidence, quoted from the swarm report rather than asserted:
+>
+> - Round 2 dispatched 4 parallel worktree-isolated coder batches (suite-A/B/C/D), one file domain each, wave wall-clock 703s, four `--no-ff` merges with zero conflicts, each suite verified green on the feature branch post-merge.
+> - Per-worker rows: suite-A sonnet 331s success (#18 closed); suite-B sonnet 295s+400s, stalled → SendMessage continuation → success (#19 closed); suite-C sonnet 422s success (#20 closed); suite-D sonnet 607s success (#21 closed). Turn counts unavailable from the harness; durations are orchestrator-observed. Cost not itemized.
+> - Issue tracking: epic #24, child issues #17-#23 opened by `scripts/create-github-issues.sh`, closed by workers upon AC satisfaction — no regression.
+> - Round 1 (repair, opus, 328s) preceded the wave behind a merge-back gate, per the documented sequencing precondition.
+> - Review gates: reviewer + security-researcher ran in parallel post-implementation; verdicts appended at step_07 verification.
+> - Environment nuance: this wave's worktrees were cut at the feature branch head (`346be95`), unlike earlier spawns cut at `origin/main`.
+
 - Keep the script for: cross-machine/CI dispatch, runs needing per-session cost JSON, or if native worktree merge semantics prove insufficient.
 - Update: `orchestrator.md` dispatch decision, `execute-prd.md`, `AGENT_TEAMS_GUIDE.md` Pattern 5, README tables.
 
