@@ -65,10 +65,11 @@ Or if you already have a PRD:
 | **reviewer** | opus | permissionMode: plan, memory: project | Step-level review of implemented work against DoD and acceptance criteria. PR-scale multi-angle review is delegated to `/codereview` (Codex cross-check) or native `/code-review`. Runs in parallel with security-researcher |
 | **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit, runs in parallel with reviewer |
 
-### Skills (10 — orchestrator invokes directly)
+### Skills (11 — orchestrator invokes directly)
 
 | Skill | Purpose |
 |---|---|
+| decision-cards | Present user-blocking questions as summary + recommendation-first cards with a per-card discuss loop |
 | scan-feature-context | Gather relevant code/docs at feature kickoff |
 | propose-architecture-for-feature | Design aligned with existing patterns |
 | extract-requirements-from-ticket | Structure requirements from tickets |
@@ -129,7 +130,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 |---|---|---|---|
 | **Hooks** (all 5) | ✅ | ✅ | Platform-agnostic — operates at the git level |
 | **Agents** (all 8) | ✅ | ✅ | No platform-specific logic |
-| **Skills** (all 10) | ✅ | ✅ | No platform-specific logic |
+| **Skills** (all 11) | ✅ | ✅ | No platform-specific logic |
 | **/discover** | ✅ | ✅ | Platform-agnostic — produces PRD files |
 | **/execute-prd** | ✅ | ✅ | Auto-detects GitHub vs local issue tracking |
 | **/backend-test-runner** | ✅ | ✅ | No platform-specific logic |
@@ -252,6 +253,7 @@ docs/
   REMOTE_DISPATCH_NOTES.md   # Research note: remote (cloud) workers vs local worktrees
   PHASE_6_NATIVE_PARALLELISM.md  # Decision record (historical; §P6.3 superseded)
 skills/
+  decision-cards/            # User-blocking questions: summary + cards + discuss loop
   derive-plan-from-spec/
   derive-test-spec-from-requirements/
   extract-requirements-from-ticket/

@@ -32,6 +32,8 @@ Your job is ONLY to coordinate and route work between these 8 agents and skills:
 - **reviewer**
 - **security-researcher**
 
+Skills you invoke directly: `extract-requirements-from-ticket`, `derive-plan-from-spec`, `derive-test-spec-from-requirements`, `summarize-diff-for-agents`, `update-plan-from-review-feedback`, `sync-docs-with-implementation`, and `decision-cards` (every user-blocking question in this command).
+
 ---
 
 ## Inputs
@@ -78,7 +80,7 @@ Spawn **architect** to review the provided spec for:
 
 **Three outcomes:**
 - **PRD is clean** → proceed to Phase 1.
-- **Minor gaps** → present gaps to user, collect answers inline, architect updates PRD, proceed to Phase 1.
+- **Minor gaps** → invoke the `decision-cards` skill: present a summary of all gaps, then one card per gap (recommended resolution first, alternatives, `Discuss this card`). Architect updates the PRD from the answers and records them as dated decisions in the PRD Agreement section, then proceed to Phase 1.
 - **Major gaps or scope issues** → stop, report findings, redirect user to `/discover {feature_id}` for structured refinement before proceeding.
 
 Do not proceed to Phase 1 until the PRD review resolves.
@@ -129,18 +131,22 @@ fi
 Both scripts output the same JSON shape: `{"epic": ..., "issues": {"step_01": ..., "step_02": ...}}` — store this mapping. The rest of the pipeline works identically regardless of platform.
 
 ### 1.6 User approval (REQUIRED — mandatory gate)
-Present a summary to the user via `AskUserQuestion`:
+Present a summary to the user:
 - Architecture highlights
 - Plan steps with `file_domain`, `complexity`, and `batch_hint` per step
 - Test strategy overview
 - If GitHub: epic link + issue links
 - If local: path to `plans/{feature_id}/` with issue files
 
-**Do not proceed to Phase 2 until the user explicitly approves.**
+Then invoke the `decision-cards` skill to collect approval and any change requests. The summary above **is** the cards' summary preamble; do not repeat it. Cards for this gate:
+- **Approval itself is one card** — options: approve and start (recommended, with why the plan is ready), request changes, pause.
+- **Each requested change area is its own card** — one per plan area the user wants reworked, so the reworks are decided individually rather than as one open-ended "what should change?".
+
+**Do not proceed to Phase 2 until every card is answered and the approval card returns an approval.**
 
 If the user requests changes:
 - Invoke `update-plan-from-review-feedback` skill.
-- Update `PLAN_steps.md`.
+- Update `PLAN_steps.md`, recording each change-request card as a dated decision there.
 - Re-run step 1.5 (update GitHub issues to match).
 - Repeat this approval checkpoint.
 
@@ -209,6 +215,8 @@ Monitor via `TaskList` / `TaskUpdate` as workers report; the harness notifies on
 | `tool_error` | Escalate to user immediately — unrecoverable without human input. |
 | `context_overflow` | Respawn with opus (1M context). If already opus, escalate to user. |
 
+**Every "escalate to user" above goes through the `decision-cards` skill** — one card naming the failed batch, the error, and the affected steps, with options for the recovery paths (retry with a narrower batch, drop the step, fix the underlying issue and resume). Escalations take the **single-card fast path**: no summary preamble, one card straight away, so recovery is not slowed by ceremony. Record the answer as a dated decision in `PLAN_steps.md` before acting on it.
+
 **Swarm report:** after all workers settle, report per worker — batch, model, duration, turns, steps completed, issues closed, and outcome/recovery — covering failed and incomplete workers too. If the harness exposes no duration/turn metrics, use observed spawn/finish timestamps and mark turns `unavailable`. Cost is not itemized.
 
 ---
@@ -242,18 +250,21 @@ Both are read-only. Collect both outputs before proceeding.
 
 ### 5.1 Ask the user
 
-Before pushing, ask via `AskUserQuestion`:
+Before pushing, invoke the `decision-cards` skill with a single card (single-card fast path — no summary preamble):
 
 ```
+DC — Push and open a PR/MR?
+
 Implementation is complete, all reviews passed, docs are updated.
 
-Ready to push feature/{feature_id} to origin and create a PR/MR?
-- If GitHub: I'll push and create a PR via `gh pr create`
-- If GitLab: I'll push and create an MR via `glab mr create`
-- If you'd prefer to handle this manually, I'll just push the branch
-
-What would you like to do?
+Options:
+- Push and create the PR/MR (Recommended) — GitHub: `gh pr create`; GitLab: `glab mr create`
+- Push the branch only — you open the PR/MR yourself
+- Don't push yet — leave the branch local
+- Discuss this card — ask follow-ups before deciding
 ```
+
+Record the answer as a dated decision in `PLAN_steps.md`, then act on it. Do not push until the card is answered.
 
 ### 5.2 Push feature branch
 ```
@@ -301,8 +312,10 @@ After PR/MR is approved and merged:
 
 ## User interaction policy
 
-- Phase 0.2 (PRD review): present gaps and wait for resolution before continuing.
-- Phase 1.6 (plan approval): present plan + epic/issue links and wait for explicit approval.
+- **Every user-blocking question goes through the `decision-cards` skill** — Phase 0.2 gaps, Phase 1.6 approval and change requests, escalate-to-user recovery rows, and the Phase 5.1 push/PR gate. Summary first, then cards in batches of ≤4, each with a recommended option and a standing `Discuss this card` option; a single urgent question skips the summary.
+- Phase 0.2 (PRD review): present gaps as cards and wait for every card to resolve before continuing.
+- Phase 1.6 (plan approval): present plan + epic/issue links as the summary, then the approval card and one card per change area; wait for explicit approval.
+- Never proceed while a card is unanswered, and record each answer as a dated decision in its owning artifact (PRD Agreement, `UX_NOTES.md`, or `PLAN_steps.md`).
 - Only ask again when specs conflict irreconcilably or a blocker cannot be resolved autonomously.
 - Route clarifying questions through **architect** or **ui-ux** only.
 
