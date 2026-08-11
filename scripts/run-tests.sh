@@ -54,15 +54,18 @@ else
     # git repo, so this fallback is its live path): Claude Code runtime dirs
     # there (projects/ file-history/ paste-cache/) hold stale copies of
     # edited files, including *.test.sh — executing those would run
-    # arbitrary out-of-date code. Harmless in a normal repo checkout where
-    # these dirs don't exist.
+    # arbitrary out-of-date code. They are anchored to $REPO_ROOT because
+    # those runtime dirs live only at the deployed root — an any-depth
+    # wildcard would also silently drop legitimate suites like
+    # src/projects/widget.test.sh in other non-git copies. Harmless in a
+    # normal repo checkout where the root-level dirs don't exist.
     find "$REPO_ROOT" -type f -name "*.test.sh" \
       -not -path "*/.git/*" \
       -not -path "*/.claude/worktrees/*" \
       -not -path "*/node_modules/*" \
-      -not -path "*/projects/*" \
-      -not -path "*/file-history/*" \
-      -not -path "*/paste-cache/*" \
+      -not -path "$REPO_ROOT/projects/*" \
+      -not -path "$REPO_ROOT/file-history/*" \
+      -not -path "$REPO_ROOT/paste-cache/*" \
       -print0 | sort -z
   }
 fi

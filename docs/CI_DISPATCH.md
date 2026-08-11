@@ -237,9 +237,22 @@ jobs:
       # now-unreachable commits. A git bundle preserves the full branch
       # history as a downloadable artifact; a human reviews it and pushes
       # from a trusted machine (`git bundle verify`, then fetch + push).
-      - name: Bundle implementation branch
+      #
+      # Snapshot-commit first: `git bundle` captures only objects reachable
+      # from refs, never modified or untracked working-tree files — and a
+      # successful run's final Phase 4 documentation/plan-status edits may
+      # be exactly that. Committing them (locally only; nothing is pushed)
+      # makes them reachable so the bundle actually preserves them.
+      - name: Snapshot uncommitted changes, then bundle branch
         if: always()
-        run: git bundle create implementation.bundle --all
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "ci-dispatch"
+            git config user.email "ci-dispatch@users.noreply.github.com"
+            git add -A
+            git commit -m "chore(ci): snapshot uncommitted working-tree changes before bundling"
+          fi
+          git bundle create implementation.bundle --all
 
       - name: Upload implementation bundle
         if: always()
