@@ -248,6 +248,9 @@ commands/
   pr-fix-loop.md
 docs/
   AGENT_TEAMS_GUIDE.md
+  CI_DISPATCH.md             # Headless implementation-phase dispatch from GitHub Actions
+  REMOTE_DISPATCH_NOTES.md   # Research note: remote (cloud) workers vs local worktrees
+  PHASE_6_NATIVE_PARALLELISM.md  # Decision record (historical; §P6.3 superseded)
 skills/
   derive-plan-from-spec/
   derive-test-spec-from-requirements/
