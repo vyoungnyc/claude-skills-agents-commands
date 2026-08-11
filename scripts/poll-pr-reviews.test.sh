@@ -405,11 +405,17 @@ sleep 0.3
 wait "$BGPID" 2>/dev/null || true
 [ ! -f "$PF" ] || fail "pidfile lifecycle: expected pidfile $PF to be removed after exit"
 
-# Stale-pidfile kill (back-compat, bare-PID format, no "pid:lstart"
-# separator) — asserted only against a process the suite itself spawned
-# (never a PID we did not create). Proves acquire_pidfile's back-compat
-# branch (raw pidfile content with no identity token) still unconditionally
-# kills a live process at that PID, same as pre-identity-check behavior.
+# Stale-pidfile, bare-PID format (no "pid:lstart" separator) — asserted only
+# against a process the suite itself spawned (never a PID we did not
+# create). A colon-less pidfile carries no identity token to verify against,
+# and its path is fully predictable from owner/name/pr — on a shared host an
+# attacker could pre-create it naming an arbitrary live process, then wait
+# for a legitimate run to kill it on their behalf (a same-user DoS). Per the
+# FINDINGS.md remediation, acquire_pidfile's back-compat branch no longer
+# falls back to unconditional kill-if-alive in this shape: the self-spawned
+# process must be left ALIVE and a "no identity token" warning logged
+# instead. This flips the prior assertion (kill-if-alive) intentionally —
+# it is a DoS closure, not a regression.
 new_case; new_pr
 OWNER_STALE="staleowner$$"
 NAME_STALE="stalerepo"
@@ -420,9 +426,12 @@ sleep 30 &
 SLEEP_PID=$!
 echo "$SLEEP_PID" > "$PF_STALE"
 run_pr "$CASE_DIR" "$OWNER_STALE/$NAME_STALE" "$PR" 1 4
-expect_exit 0 "stale pidfile kill: run still completes normally"
-kill -0 "$SLEEP_PID" 2>/dev/null && fail "stale pidfile kill: self-spawned sleep should have been killed" || true
-echo "$ERR" | grep -q "Killed previous polling instance (PID $SLEEP_PID)" || fail "stale pidfile kill: expected kill message logged"
+expect_exit 0 "stale pidfile, bare-PID format: run still completes normally"
+kill -0 "$SLEEP_PID" 2>/dev/null || fail "stale pidfile, bare-PID format: self-spawned sleep should have been left ALIVE (no identity token must block the kill)"
+expect_stderr_no_match "Killed previous polling instance" "stale pidfile, bare-PID format: no kill message should be logged"
+echo "$ERR" | grep -q "Pidfile has no identity token, not killing (PID $SLEEP_PID)" || fail "stale pidfile, bare-PID format: expected no-identity-token warning logged"
+kill "$SLEEP_PID" 2>/dev/null || true
+wait "$SLEEP_PID" 2>/dev/null || true
 rm -f "$PF_STALE"
 
 # Stale-pidfile identity mismatch ("pid:lstart" format, wrong start time) —
