@@ -55,8 +55,8 @@ fi
 STUBEOF
 chmod +x "$STUB_BIN/gh"
 
-# Cleanup: pidfiles live in /tmp (hardcoded by the script under test, see
-# DEF/FINDINGS note below), never inside SUITE_TMP; remove SUITE_TMP itself.
+# Cleanup: pidfiles live in ${TMPDIR:-/tmp} (per the script under test),
+# never inside SUITE_TMP; remove SUITE_TMP itself.
 cleanup_suite() {
   rm -rf "$SUITE_TMP"
 }
@@ -125,7 +125,7 @@ new_pr() {
 
 pidfile_for() {
   local owner="$1" name="$2" pr="$3"
-  echo "/tmp/poll-pr-reviews-${owner}-${name}-${pr}.pid"
+  echo "${TMPDIR:-/tmp}/poll-pr-reviews-${owner}-${name}-${pr}.pid"
 }
 
 EXERCISED_CODES=""

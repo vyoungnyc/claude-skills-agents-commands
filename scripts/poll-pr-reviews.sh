@@ -28,7 +28,7 @@ if ! [[ "$OWNER" =~ ^[A-Za-z0-9._-]+$ ]] || ! [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]]
   exit $EXIT_USAGE_ERROR
 fi
 
-acquire_pidfile "/tmp/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
+acquire_pidfile "${TMPDIR:-/tmp}/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
 
 BOT_PATTERNS="$BASE_BOT_PATTERNS"
 

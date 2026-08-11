@@ -180,7 +180,7 @@ assert_slug_and_pidfile_lifecycle() {
   seed_neutral_defaults
   fixture approvals 1 '{"approved": true, "approvals_left": 5, "approved_by": [{"user": {"username": "alice"}}]}'
 
-  pidfile="/tmp/poll-mr-reviews-${expected_slug}-${mr}.pid"
+  pidfile="${TMPDIR:-/tmp}/poll-mr-reviews-${expected_slug}-${mr}.pid"
   rm -f "$pidfile"
 
   "$POLL_MR" "$mr" 1 1 >"$SCRATCH/out.json" 2>"$ERR_FILE" &
@@ -224,7 +224,7 @@ test_kill_previous_instance() {
   local mr slug pidfile old_pid
   mr=$(next_mr_iid)
   slug="default-repo"
-  pidfile="/tmp/poll-mr-reviews-${slug}-${mr}.pid"
+  pidfile="${TMPDIR:-/tmp}/poll-mr-reviews-${slug}-${mr}.pid"
 
   sleep 30 &
   old_pid=$!

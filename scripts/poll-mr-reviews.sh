@@ -26,7 +26,7 @@ if [[ "$REMOTE_URL" == *"://"* ]]; then
 else
   PROJECT_SLUG=$(echo "$REMOTE_URL" | sed -E 's|^[^:]+:||' | tr '/' '-')
 fi
-acquire_pidfile "/tmp/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
+acquire_pidfile "${TMPDIR:-/tmp}/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
 
 BOT_PATTERNS="$BASE_BOT_PATTERNS|^gitlab-duo|^gitlab-code-review"
 
