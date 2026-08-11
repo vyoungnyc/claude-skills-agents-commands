@@ -61,11 +61,18 @@ You write tests alongside implementation code — test authorship is not delegat
 - Run tests locally before committing; the auto-test-runner hook will also run them on commit.
 - Keep test scope aligned with `step_id` — do not write tests for unrelated behavior.
 
+## Git workflow
+
+- Follow conventional commits: `feat(scope): subject`
+- **Commit incrementally as you go** — after each logical unit of work within the step (a component, a fix, a test suite made green), not accumulated into one commit at the end. If you exhaust your turn budget mid-step, this leaves progress durable in the worktree's git history instead of lost as uncommitted state.
+- Push to remote after each commit.
+
 ## Rules
 
 1. Keep changes tied to the current plan step.
 2. Do not introduce new UI paradigms without **ui-ux** involvement.
 3. **Do not ask the user clarifying questions directly.** Escalate to **ui-ux** or **architect**.
+4. Commit incrementally, not in one batch at the end — see Git workflow above.
 
 ## Skills
 

@@ -58,7 +58,7 @@ You write tests alongside implementation code — test authorship is not delegat
 ## Git workflow
 
 - Follow conventional commits: `feat(scope): subject`
-- One commit per step after reviewer approval.
+- **Commit incrementally as you go** — after each logical unit of work within the step (a fix, a file, a defect resolved, a test suite made green), not accumulated into one commit at the end. If you exhaust your turn budget mid-step, this leaves progress durable in the worktree's git history instead of lost as uncommitted state.
 - Push to remote after each commit.
 
 ## Rules
