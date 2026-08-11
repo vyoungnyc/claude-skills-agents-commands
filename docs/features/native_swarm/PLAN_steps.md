@@ -31,7 +31,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] Explicit GO / NO-GO verdict; on NO-GO all later steps halt and findings escalate to user
     - [ ] Teardown: `git worktree list` and `git branch --list 'spike/*'` clean
     - [ ] Rough wall-clock baseline noted for NFR comparison
-  status: "pending"
+  status: "completed"
   file_domain: ["docs/features/native_swarm/SPIKE_FINDINGS.md"]
   acceptance_criteria:
     - "SPIKE_FINDINGS.md exists with answers to (a)-(e), each tied to the design element it decides"
@@ -39,6 +39,10 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - "Spike branch and worktrees removed"
   batch_hint: "spike" (round 1, runs alone — hard gate)
   complexity: "medium"
+  # [✅] Completed 2026-08-10 — verdict GO (issue #6 closed; findings in SPIKE_FINDINGS.md).
+  # Design revisions for round 2: pre-assigned prompts (queue orchestrator-side only);
+  # worktrees cut from origin/main → workers merge the feature branch first; salvage dirty
+  # worktrees before removal; SendMessage continuation only while worktree lives; fixed 30-turn budget.
 
 - `step_id`: "native_swarm.step_02_core_dispatch_rewrite"
   title: "Rewrite dispatch, recovery, merge sequence, report in orchestrator.md + execute-prd.md"
