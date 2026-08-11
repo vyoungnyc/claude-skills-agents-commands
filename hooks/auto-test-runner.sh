@@ -51,6 +51,20 @@ if [ -L "$HOOK_STATE_DIR" ] || [ ! -d "$HOOK_STATE_DIR" ] || [ ! -O "$HOOK_STATE
   exit 0
 fi
 
+# Atomically claim a rerun request. `rm`-based consumption is not mutually
+# exclusive: when the previous child has just exited, the owner's rerun
+# loop and a touch-first later invocation can each see the marker, each
+# "consume" it (rm -f of an already-unlinked file still succeeds), and
+# both launch the suite, racing on the shared pidfile. rename(2) is atomic
+# — exactly one mv wins, so exactly one invocation becomes the runner for
+# any published request. A failed claim also cleanly ends the rerun loop
+# if the marker were ever unremovable, so no spin guard is needed.
+claim_marker() {
+  mv "$1" "$1.claimed.$$" 2>/dev/null || return 1
+  rm -f "$1.claimed.$$"
+  return 0
+}
+
 # A *.sh edit runs the repo's own shell test suite (REQ-010,
 # docs/features/script_tests/PRD.md) instead of the JS runner below — this
 # repo's shell scripts have no vitest/jest coverage, only *.test.sh suites.
@@ -108,9 +122,12 @@ case "$FILE_PATH" in
     SH_OUT_FILE=$(mktemp "$HOOK_STATE_DIR/shell-out.XXXXXX")
     trap 'rm -f "$SH_PIDFILE" "$SH_OUT_FILE"' EXIT INT TERM
 
-    # Consume any marker left before this run started: the run below tests
-    # current disk contents, which already include whatever edit set it.
-    rm -f "$SH_RERUN_MARKER"
+    # Become the runner only by atomically claiming the request published
+    # above (the run below tests current disk contents, which already
+    # include whatever edit set the marker). A failed claim means another
+    # invocation — an in-flight owner's rerun loop — took it and will run
+    # the suite; launching here too would duplicate the run.
+    claim_marker "$SH_RERUN_MARKER" || exit 0
 
     # `set -m` gives the backgrounded run its own process group (where the
     # shell supports job control in a script), so a future kill of the
@@ -128,15 +145,10 @@ case "$FILE_PATH" in
     # the result above may describe stale contents. Re-run once against
     # what's on disk now and report that instead. Loop bounded at one extra
     # pass per marker cycle — a marker set during the rerun triggers another.
-    while [ -f "$SH_RERUN_MARKER" ]; do
-      rm -f "$SH_RERUN_MARKER"
-      if [ -e "$SH_RERUN_MARKER" ]; then
-        # Marker survived rm (shouldn't happen inside our own 0700 dir, but
-        # never spin on it): an unconsumable marker would otherwise rerun
-        # the full suite forever. Warn and stop rerunning.
-        echo "auto-test-runner: rerun marker could not be consumed, aborting rerun loop (path: $SH_RERUN_MARKER)" >&2
-        break
-      fi
+    # claim_marker keeps runner ownership exclusive: if a newer invocation
+    # claimed this request first (its liveness check saw our child already
+    # exited), the claim fails and that invocation runs instead.
+    while claim_marker "$SH_RERUN_MARKER"; do
       set -m 2>/dev/null || true
       bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
       SH_PID=$!
@@ -211,7 +223,10 @@ fi
 OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
 trap 'rm -f "$PIDFILE" "$OUT_FILE"' EXIT INT TERM
 
-rm -f "$RERUN_MARKER"
+# Become the runner only via atomic claim — same reasoning as the shell
+# branch: a failed claim means an in-flight owner's rerun loop took this
+# request and will run.
+claim_marker "$RERUN_MARKER" || exit 0
 
 set -m 2>/dev/null || true
 "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
@@ -222,13 +237,9 @@ echo "$TEST_PID" > "$PIDFILE"
 wait "$TEST_PID"
 TEST_EXIT=$?
 
-while [ -f "$RERUN_MARKER" ]; do
-  rm -f "$RERUN_MARKER"
-  if [ -e "$RERUN_MARKER" ]; then
-    # Same unconsumable-marker guard as the shell branch — never spin.
-    echo "auto-test-runner: rerun marker could not be consumed, aborting rerun loop (path: $RERUN_MARKER)" >&2
-    break
-  fi
+# claim_marker keeps runner ownership exclusive — same reasoning as the
+# shell branch's rerun loop.
+while claim_marker "$RERUN_MARKER"; do
   set -m 2>/dev/null || true
   "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
   TEST_PID=$!
