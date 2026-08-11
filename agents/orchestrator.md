@@ -1,7 +1,7 @@
 ---
 name: orchestrator
 description: "Supervisor/orchestrator. Coordinates subagents, advances plan steps, and maintains overall task progress. Directly handles planning, test strategy, and documentation via skills."
-tools: Read, Write, Edit, Grep, Glob, Bash, Agent, AskUserQuestion
+tools: Read, Write, Edit, Grep, Glob, Bash, Agent, AskUserQuestion, TaskCreate, TaskList, TaskUpdate, SendMessage
 model: sonnet
 memory: project
 maxTurns: 50
@@ -93,7 +93,7 @@ Embed the test spec output into the context you provide to coders.
 For each step, route to the appropriate agent based on `primary_agent` in `PLAN_steps.md`:
 - `backend-coder` — backend implementation (runs in worktree isolation).
 - `frontend-coder` — frontend implementation (runs in worktree isolation).
-- `coder` — general-purpose implementation inside swarm sessions (not dispatched directly by orchestrator — used by swarm sessions internally).
+- `coder` — general-purpose swarm worker; spawned directly as a background subagent with worktree isolation, one per batch (pattern C below).
 - `reviewer` — code review of completed steps or PRs.
 - `security-researcher` — security audit.
 - `ui-ux` — UX design or interaction adjustments.
@@ -113,28 +113,55 @@ Provide each agent:
 Parallelizable coder steps:
   1 step      → single subagent (backend-coder or frontend-coder, worktree)
   2 steps     → parallel subagents (worktree isolation each)
-  3+ steps    → swarm: group into domain batches, call scripts/swarm-dispatch.sh
+  3+ steps    → native swarm: group into domain batches, one background coder subagent per batch
 ```
 
 **A) Single subagent** — 1 parallelizable step. Spawn via Agent tool with worktree isolation.
 
 **B) Parallel subagents** — 2 parallelizable steps. Spawn both via Agent tool concurrently; each gets worktree isolation.
 
-**C) Swarm dispatch** — 3+ parallelizable steps:
-1. Group plan steps by `file_domain` and `batch_hint` into domain batches.
-2. Build batch config JSON: step IDs, issue numbers, prompts, acceptance criteria.
-3. Call `scripts/swarm-dispatch.sh <feature_id> feature/<feature_id> <batch_config_json>` via Bash.
-4. Script launches N parallel `claude` sessions, each in its own worktree.
-5. Each session can spawn an agent team (using `coder` agents) for work-stealing within its batch.
-6. Wait for all sessions to complete; parse JSON results (success/failure, costs, session IDs).
-7. Merge worktrees; if conflicts occur, spawn a conflict-resolution session.
-8. Proceed to streaming review (step 5 below).
+**C) Native swarm dispatch** — 3+ parallelizable steps:
+1. Group plan steps by `file_domain` and `batch_hint` into domain batches. Batches must not share files — steps with overlapping domains go in **one** batch and are sequenced inside it.
+2. `TaskCreate` one entry per step, carrying `file_domain`, `issue_ref`, and `complexity` as metadata. This queue is **orchestrator-side tracking only**: spawned workers have no access to the Task tools, so it is your progress ledger, not their work list.
+3. Spawn one background `coder` subagent per batch via the Agent tool with `isolation: "worktree"`, `run_in_background: true`, and `model` = highest complexity in the batch (`high → opus`, `medium → sonnet`, `low → haiku`).
+4. **Pre-assign each batch's steps inline in its spawn prompt**: step IDs in execution order, file domain, issue numbers, acceptance criteria, and the instruction to commit every change (uncommitted work never merges).
+5. Native worktrees are cut from `origin/main`, **not** from the dispatching branch — workers do not see feature-branch state. Every spawn prompt must therefore begin with `git merge feature/<feature_id> --no-edit`, verified before work starts.
+6. Track progress with `TaskList` / `TaskUpdate` as workers report; the harness notifies on completion — do not poll.
+7. Recover failures per step 6 below.
+8. Merge worker branches back per **Post-swarm merge-back** below.
+9. Emit the **swarm report**, then proceed to streaming review (step 5 below).
+
+**Turn budget.** There is no per-spawn turn budget — the Agent tool accepts `subagent_type`, `model`, `isolation`, `name`, `prompt`, and `run_in_background`, and nothing for turns. `agents/coder.md`'s frontmatter `maxTurns: 30` applies to **every** worker regardless of batch complexity; complexity drives **model selection only**. High-complexity batches therefore run on 30 turns rather than the 40 they once received, which makes the `max_turns` recovery row *more* likely to fire — size batches accordingly.
 
 **Agent team rules (for subagent pattern B):**
 - ALWAYS assign non-overlapping file domains (no worktree isolation in teams).
 - Limit to 3–5 teammates.
 - All gate steps run as subagents after team work completes.
 - Verify team task completion — teammates sometimes don't mark tasks done.
+
+#### Post-swarm merge-back (orchestrator-owned)
+
+The harness puts each worker's worktree at `.claude/worktrees/agent-<id>` on branch `worktree-agent-<id>`. Nothing merges automatically. The order below is load-bearing — each step encodes a past production failure.
+
+1. **Verify your own working tree is clean** (`git status --porcelain`); refuse to merge otherwise.
+2. **Check out the feature branch explicitly** — never merge onto whatever HEAD happens to point at.
+3. **Skip the merge for any worker that failed or left its steps incomplete.** Partial work must not land (CHANGELOG 2.3.2). Recover it first (step 6 below), then merge.
+4. **Skip workers whose branch is absent.** A worktree that ended unchanged is torn down at completion and its branch deleted — there is nothing to merge, and that is not a failure.
+5. **Salvage dirty worktrees before removing them.** For each surviving worktree run `git -C .claude/worktrees/agent-<id> status --porcelain`; if dirty, either commit the changes on the worker branch (then merge) or copy them out. `git worktree remove` refuses on a dirty worktree, and `--force` destroys the work permanently — never `--force`-remove unsalvaged. This is the native successor to the old `git add -u` guard.
+6. **Skip workers whose branch has no new commits.**
+7. `git merge --no-ff worktree-agent-<id>` for each remaining worker. Expect conflicts where a worker touched a file the feature branch also changed after `origin/main` — worker worktrees start from `origin/main`, so their common ancestor with the feature branch is older than it looks.
+8. **On conflict:** record the conflicting files, `git merge --abort`, and spawn a single conflict-resolution session — unchanged from today.
+
+#### Swarm report
+
+After all workers settle and merge-back completes, emit a best-effort report — one row per worker, **including failed and incomplete workers**:
+
+| Batch | Model | Duration | Turns | Steps completed | Issues closed | Outcome / recovery |
+|---|---|---|---|---|---|---|
+
+- **Outcome / recovery** names the failure mode and the recovery action taken (model-upgrade respawn, `SendMessage` continuation, or escalation) for any worker that did not finish cleanly.
+- **Fallback when the harness exposes no duration/turn metrics:** report your own observed spawn and finish timestamps as the duration and mark turns `unavailable`. Never drop the row.
+- **Cost is not itemized** — per-worker cost is unavailable and deliberately out of scope.
 
 ### 5. Streaming review (after swarm or parallel implementation)
 
@@ -154,57 +181,47 @@ Collect both outputs before proceeding. If blocking issues are found:
 
 ### 6. Failure recovery (tiered)
 
-After swarm dispatch, inspect the JSON output for failed sessions. Each session includes `failure_reason` and `model` fields. Apply recovery based on the failure type:
+When a worker fails or reports incomplete work, apply recovery based on the failure type. **Before respawning anything, release the abandoned work in the tracking queue:** `TaskUpdate` the worker's tasks to reset `owner` and `status` back to unclaimed. A task left `in_progress` under a dead worker reads as already handled, and the replacement will skip it.
 
 #### a) `max_turns` — ran out of turns before completing
 
-Upgrade to a better model and retry:
+Upgrade the model and respawn:
 ```
-haiku  → retry with sonnet (30 turns)
-sonnet → retry with opus (40 turns)
+haiku  → respawn with sonnet
+sonnet → respawn with opus
 opus   → escalate to user (task may need scope reduction)
 ```
-Respawn as a new swarm batch with the upgraded model and the same step/issue context.
+Respawn as a new background worker with the upgraded model and the same pre-assigned step/issue context. The turn budget itself does not change — it is `coder.md`'s fixed 30 for every worker — so a `max_turns` failure is a signal to buy capability or shrink the batch, not turns.
 
-#### b) `tool_error` — unrecoverable tool failure (git conflict, build error, test loop)
+#### b) Stalled or incomplete worker — no progress, or finished with steps unmet
+
+Send a `SendMessage` continuation to the worker asking it to resume where it left off.
+
+**Precondition: the worker's worktree must still exist.** Continuation does not restore a torn-down worktree — a worker resumed after teardown runs in the shared checkout with isolation gone, and may start writing to the main working tree. Check the worktree is present first; if it is gone (clean completion triggers teardown), **respawn a fresh worker** with the remaining steps instead of continuing.
+
+#### c) `tool_error` — unrecoverable tool failure (git conflict, build error, test loop)
 
 Escalate to the user immediately via `AskUserQuestion`:
 - Report which batch failed, the error output, and the steps involved.
 - Ask the user to resolve the underlying issue or adjust the plan.
 - Do not retry automatically — tool errors indicate a problem the model cannot fix alone.
 
-#### c) `context_overflow` — session exhausted its context window
+#### d) `context_overflow` — worker exhausted its context window
 
-Retry with `opus` using the 1M token context model:
-```
-Any model → retry with opus (1M context, 40 turns)
-```
-If already running opus and still overflowing, escalate to the user — the task scope needs splitting into smaller steps.
+Respawn with `opus` using the 1M token context model. If already running opus and still overflowing, escalate to the user — the task scope needs splitting into smaller steps.
 
-#### d) `infrastructure` — network timeout, API rate limit, CLI crash
-
-Resume the existing session if possible:
-```
-claude --resume "{session_id}" -p "Continue where you left off"
-```
-If resume fails (no session ID or second failure), escalate to the user — the infrastructure issue needs manual resolution.
-
-#### e) `launch_failure` — worktree creation failed (git state issue)
-
-Retry worktree creation once (the stale worktree may have been cleaned up by now). If it fails again, escalate to the user — likely a git state issue (locked index, disk full, branch conflict) that needs manual resolution.
+`launch_failure` is no longer a category: the harness owns worktree creation, so there is no launch step of ours to fail.
 
 #### Recovery flow summary
 ```
-Session fails → check failure_reason:
-  max_turns        → upgrade model (haiku→sonnet→opus) → retry
-                     already opus? → escalate to user
-  tool_error       → escalate to user immediately
-  context_overflow → retry with opus 1M
-                     already opus? → escalate to user
-  infrastructure   → claude --resume (same model)
-                     fails again? → escalate to user
-  launch_failure   → retry worktree creation once
-                     fails again? → escalate to user
+Worker fails → reset owner/status on its tasks → check failure type:
+  max_turns          → upgrade model (haiku→sonnet→opus) → respawn
+                       already opus? → escalate to user
+  stalled/incomplete → SendMessage continuation (worktree must still exist)
+                       worktree torn down? → respawn fresh worker
+  tool_error         → escalate to user immediately
+  context_overflow   → respawn with opus 1M
+                       already opus? → escalate to user
 ```
 
 ### 7. Documentation (after gate steps pass)
@@ -273,9 +290,12 @@ derive-test-spec-from-requirements (skill)
 Dispatch decision:
   1 step  → single subagent (worktree)
   2 steps → parallel subagents (worktree isolation each)
-  3+ steps → swarm: scripts/swarm-dispatch.sh
+  3+ steps → native swarm: N background coder subagents (worktree each, model by batch complexity)
   ↓
-[tiered recovery: max_turns→upgrade model, tool_error→user, context_overflow→opus 1M, infra→resume]
+[tiered recovery: max_turns→upgrade model + respawn, stalled→SendMessage continuation,
+ tool_error→user, context_overflow→opus 1M]
+  ↓
+merge-back (skip failed/absent/no-commit; salvage dirty worktrees) → swarm report
   ↓
 reviewer + security-researcher (parallel) — streaming review
   ↓
