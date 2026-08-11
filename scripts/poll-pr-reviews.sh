@@ -88,8 +88,9 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
 
   ALL_UNRESOLVED_IDS=$(echo "$RESULT" | jq -r '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id] | sort | .[]')
   NEW_IDS=$(find_new_ids "$ALL_UNRESOLVED_IDS" "$KNOWN_IDS")
+  NEW_COUNT=$(count_ids "$NEW_IDS")
 
-  if [ "$_NEW_COUNT" -gt 0 ]; then
+  if [ "$NEW_COUNT" -gt 0 ]; then
     NEW_ID_LIST=$(echo "$NEW_IDS" | jq -R '[., inputs]')
     UNRESOLVED=$(echo "$RESULT" | jq --argjson ids "$NEW_ID_LIST" '[
       .data.repository.pullRequest.reviewThreads.nodes[]
@@ -104,7 +105,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
           created: .comments.nodes[0].createdAt
         }
     ]')
-    echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $_NEW_COUNT, \"threads\": $UNRESOLVED}"
+    echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $NEW_COUNT, \"threads\": $UNRESOLVED}"
     exit $EXIT_NEW_COMMENTS
   fi
 

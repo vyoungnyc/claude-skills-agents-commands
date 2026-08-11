@@ -86,8 +86,9 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
 
   ALL_UNRESOLVED_IDS=$(echo "$DISCUSSIONS" | jq -r '[.[] | select(.notes[0].resolvable == true and .notes[0].resolved == false) | (.id | tostring)] | sort | .[]')
   NEW_IDS=$(find_new_ids "$ALL_UNRESOLVED_IDS" "$KNOWN_IDS")
+  NEW_COUNT=$(count_ids "$NEW_IDS")
 
-  if [ "$_NEW_COUNT" -gt 0 ]; then
+  if [ "$NEW_COUNT" -gt 0 ]; then
     NEW_ID_LIST=$(echo "$NEW_IDS" | jq -R '[., inputs]')
     UNRESOLVED=$(echo "$DISCUSSIONS" | jq --argjson ids "$NEW_ID_LIST" '[
       .[]
@@ -102,7 +103,7 @@ while [ "$POLL" -lt "$MAX_POLLS" ]; do
           created: .notes[0].created_at
         }
     ]')
-    echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $_NEW_COUNT, \"discussions\": $UNRESOLVED}"
+    echo "{\"status\": \"NEW_COMMENTS\", \"poll\": $POLL, \"count\": $NEW_COUNT, \"discussions\": $UNRESOLVED}"
     exit $EXIT_NEW_COMMENTS
   fi
 
