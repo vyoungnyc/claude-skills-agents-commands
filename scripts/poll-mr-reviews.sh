@@ -26,7 +26,11 @@ if [[ "$REMOTE_URL" == *"://"* ]]; then
 else
   PROJECT_SLUG=$(echo "$REMOTE_URL" | sed -E 's|^[^:]+:||' | tr '/' '-')
 fi
-acquire_pidfile "${TMPDIR:-/tmp}/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
+# The pidfile lives under a per-uid, 0700 directory (created by
+# acquire_pidfile) rather than directly in the shared, world-writable
+# ${TMPDIR:-/tmp}: a fully predictable, world-writable path is what let a
+# local attacker forge or symlink-clobber a pidfile in the first place.
+acquire_pidfile "${TMPDIR:-/tmp}/poll-$(id -u)/poll-mr-reviews-${PROJECT_SLUG}-${MR_IID}.pid"
 
 BOT_PATTERNS="$BASE_BOT_PATTERNS|^gitlab-duo|^gitlab-code-review"
 
