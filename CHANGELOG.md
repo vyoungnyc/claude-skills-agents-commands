@@ -2,6 +2,17 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.10.1] - 2026-08-11
+
+### Pre-Merge Checklist Codified In CLAUDE.md + `/git`
+
+The rebase/version-bump habit adopted for PR #34's merge (check the branch isn't behind the target, and its README/CHANGELOG version bump is still correct against the target's current version, before every squash-merge) was only recorded as the agent's private memory. Since this repo is a template other projects deploy, that meant the habit wouldn't travel with it — codified here instead so it deploys with everything else.
+
+- **`CLAUDE.md` — new `## Git` bullet:** before every squash-merge, check `git merge-base --is-ancestor origin/<target> <branch>` and rebase if behind; if the repo tracks a version (README `**Version:**` line plus a matching top `CHANGELOG.md` entry), diff the branch's version against the target branch's current version and fix the bump if it's stale, colliding, or was cut before another PR landed.
+- **`commands/git.md`:** `sync-branch` guidance extended to state the same check, so it's visible to a human running `/git` directly, not just to an agent reading `CLAUDE.md`.
+- Phrased conditionally ("if the repo tracks a version...") so it's a genuine no-op in projects without this repo's README/CHANGELOG version convention, rather than a repo-specific assumption leaking into every deploy target.
+- This release is the rule's own first live exercise: branch was checked against `main` (2.10.0, not behind, no rebase needed) and the version bumped 2.10.0 → 2.10.1 before merging.
+
 ## [2.10.0] - 2026-08-11
 
 ### `pr-merge-sync-reminder.sh` — Nudge To Sync After A Squash Merge

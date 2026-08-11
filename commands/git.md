@@ -38,6 +38,7 @@ Conceptual subcommands via `$ARGUMENTS` (you may adapt names as needed):
    - On `sync-branch`:
      - Suggest a safe sequence (fetch, rebase/merge from default branch).
      - Warn about potential conflicts and how to resolve them.
+   - Before any squash-merge: check whether the branch is behind the target branch (rebase if so), and — if the repo tracks a version (README `**Version:**` line + matching `CHANGELOG.md` entry) — verify the branch's bump is still correct against the target branch's current version before merging.
 
 3. **Commits per step**
    - On `commit <step_id>`:
