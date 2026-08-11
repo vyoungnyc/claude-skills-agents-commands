@@ -209,6 +209,31 @@ expect_json_field '.status' "APPROVED" "APPROVED cursor-bugbot status"
 expect_json_field '.poll' "1" "APPROVED cursor-bugbot poll number"
 echo "$OUT" | jq -e '.approvers | length > 0' >/dev/null || fail "APPROVED cursor-bugbot: approvers should be non-empty"
 
+# renovate-bot login — BASE_BOT_PATTERNS' `-bot$` anchor (narrowed from the
+# unanchored `-bot-` during round-1 security remediation) must still match a
+# login that genuinely ends in "-bot".
+new_case; new_pr
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "renovate-bot" > "$CASE_DIR/2.json"
+run_pr "$CASE_DIR" "$OWNER_BASE/repoA" "$PR" 1 4
+expect_exit 0 "APPROVED via renovate-bot (-bot\$ anchor)"
+expect_json_field '.status' "APPROVED" "APPROVED renovate-bot status"
+echo "$OUT" | jq -e '.approvers | length > 0' >/dev/null || fail "APPROVED renovate-bot: approvers should be non-empty"
+
+# Negative control — the whole point of the `-bot-` -> `-bot$` narrowing.
+# "mallory-bot-reviewer" contains "-bot-" but does not END in "-bot", so it
+# must NOT satisfy the bot-approval gate: a THUMBS_UP from this login must
+# never produce exit 0. This is the regression test that guards the
+# auth-bypass vector the round-1 fix closed (an attacker-controlled login
+# containing "-bot-" anywhere used to be treated as a trusted bot reviewer).
+new_case; new_pr
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "mallory-bot-reviewer" > "$CASE_DIR/2.json"
+run_pr "$CASE_DIR" "$OWNER_BASE/repoBotNeg" "$PR" 1 4
+[ "$RC" -ne 0 ] || fail "bot pattern negative control: mallory-bot-reviewer must NOT satisfy the bot-approval gate, but got exit 0"
+expect_exit 2 "bot pattern negative control: run reaches IDLE_TIMEOUT instead of APPROVED"
+expect_json_field '.status' "IDLE_TIMEOUT" "bot pattern negative control status"
+
 # =============================================================================
 # Exit 1 (NEW_COMMENTS)
 # =============================================================================
@@ -360,8 +385,11 @@ sleep 0.3
 wait "$BGPID" 2>/dev/null || true
 [ ! -f "$PF" ] || fail "pidfile lifecycle: expected pidfile $PF to be removed after exit"
 
-# Stale-pidfile kill — asserted only against a process the suite itself
-# spawned (never a PID we did not create).
+# Stale-pidfile kill (back-compat, bare-PID format, no "pid:lstart"
+# separator) — asserted only against a process the suite itself spawned
+# (never a PID we did not create). Proves acquire_pidfile's back-compat
+# branch (raw pidfile content with no identity token) still unconditionally
+# kills a live process at that PID, same as pre-identity-check behavior.
 new_case; new_pr
 OWNER_STALE="staleowner$$"
 NAME_STALE="stalerepo"
@@ -376,6 +404,31 @@ expect_exit 0 "stale pidfile kill: run still completes normally"
 kill -0 "$SLEEP_PID" 2>/dev/null && fail "stale pidfile kill: self-spawned sleep should have been killed" || true
 echo "$ERR" | grep -q "Killed previous polling instance (PID $SLEEP_PID)" || fail "stale pidfile kill: expected kill message logged"
 rm -f "$PF_STALE"
+
+# Stale-pidfile identity mismatch ("pid:lstart" format, wrong start time) —
+# simulates PID reuse: the pidfile's recorded start time does not match the
+# live process currently holding that PID (as if the original process that
+# wrote the pidfile had already exited and the OS reassigned its PID to an
+# unrelated process — here, our self-spawned sleep). acquire_pidfile must
+# refuse to kill it: no kill line logged, process left alive. Proves the
+# identity check (poll-common.sh:91-106) actually gates the kill rather than
+# merely being present but unused.
+new_case; new_pr
+OWNER_MISMATCH="mismatchowner$$"
+NAME_MISMATCH="mismatchrepo"
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "dependabot[bot]" > "$CASE_DIR/2.json"
+PF_MISMATCH="$(pidfile_for "$OWNER_MISMATCH" "$NAME_MISMATCH" "$PR")"
+sleep 30 &
+SLEEP_PID_MISMATCH=$!
+echo "$SLEEP_PID_MISMATCH:Thu Jan  1 00:00:00 1970" > "$PF_MISMATCH"
+run_pr "$CASE_DIR" "$OWNER_MISMATCH/$NAME_MISMATCH" "$PR" 1 4
+expect_exit 0 "stale pidfile identity mismatch: run still completes normally"
+kill -0 "$SLEEP_PID_MISMATCH" 2>/dev/null || fail "stale pidfile identity mismatch: self-spawned sleep should have been left ALIVE (mismatched start time must block the kill)"
+expect_stderr_no_match "Killed previous polling instance" "stale pidfile identity mismatch: no kill message should be logged"
+kill "$SLEEP_PID_MISMATCH" 2>/dev/null || true
+wait "$SLEEP_PID_MISMATCH" 2>/dev/null || true
+rm -f "$PF_MISMATCH"
 
 # =============================================================================
 # Exit 4 (PIPELINE_FAILED) — deliberately NOT asserted.
