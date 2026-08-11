@@ -58,7 +58,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] Post-swarm merge sequence documented per ARCHITECTURE §3.4 incl. spike answer (e) handling
     - [ ] Swarm report format specified per ARCHITECTURE §3.5 (failed workers + recovery action; timestamp fallback; cost not itemized)
     - [ ] Existing table/section formatting preserved (content swap, not restructure)
-  status: "pending"
+  status: "completed"  # 2026-08-10, worker A commit 0f5d5c0, issue #7 closed (reopened for FIX-B1/B2, see step_09)
   file_domain: ["agents/orchestrator.md", "commands/execute-prd.md"]
   acceptance_criteria:
     - "All REQ-002 ACs met verbatim (PRD lines 32-36)"
@@ -79,7 +79,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] AGENT_TEAMS_GUIDE.md: Pattern 5 rewritten; decision framework updated (grep won't catch it — listed explicitly)
     - [ ] PHASE_6_NATIVE_PARALLELISM.md §P6.3 marked superseded; doc otherwise untouched
     - [ ] README v2.5.0 history bullet (~line 172) left as written
-  status: "pending"
+  status: "completed"  # 2026-08-10, worker A commit 4799235, issue #8 closed
   file_domain: ["scripts/swarm-dispatch.sh", "CLAUDE.md", "README.md", "docs/AGENT_TEAMS_GUIDE.md", "docs/PHASE_6_NATIVE_PARALLELISM.md"]
   acceptance_criteria:
     - "grep -rn 'swarm-dispatch' --include='*.md' --include='*.sh' returns only CHANGELOG, PRD.md, PHASE_6_NATIVE_PARALLELISM.md"
@@ -96,7 +96,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] CHANGELOG v2.6.0 entry in 2.5.0 style (grouped, bolded titles with rationale)
     - [ ] README `### Scripts (5)` → `### Scripts (4)`; script count/version refs corrected throughout
     - [ ] CHANGELOG states 533 lines, never "~400"
-  status: "pending"
+  status: "completed"  # 2026-08-10, worker A commit 0434466 (via SendMessage continuation recovery), issue #9 closed
   file_domain: ["README.md", "CHANGELOG.md"]
   acceptance_criteria:
     - "Both REQ-006 ACs met (PRD lines 56-57)"
@@ -115,7 +115,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] orchestrator maxTurns: 50 ceiling noted
     - [ ] anthropics/claude-code-action mentioned as alternative
     - [ ] No workflow activated in this repo; no credentials anywhere
-  status: "pending"
+  status: "completed"  # 2026-08-10, worker B commit d22de39, issue #10 closed (reopened for FIX-B3/H1/H2, see step_09)
   file_domain: ["docs/CI_DISPATCH.md"]
   acceptance_criteria:
     - "All six REQ-005 ACs met verbatim (PRD lines 47-52)"
@@ -132,7 +132,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] SendMessage grant added iff spike answer (c) shows continuation requires it
     - [ ] maxTurns handling consistent with spike answer (d) and step_02's turn-budget statement
     - [ ] If no change needed, recorded as reviewed-no-change in the issue
-  status: "pending"
+  status: "completed"  # 2026-08-10, worker B commit 139d1a3, issue #11 closed
   file_domain: ["agents/coder.md"]
   acceptance_criteria:
     - "coder.md consistent with spike findings (c)/(d); REQ-007 AC met (PRD line 59)"
@@ -147,7 +147,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
   definition_of_done: |
     - [ ] One page: when isolation "remote" (cloud workers) beats local worktrees
     - [ ] No implementation, no config changes
-  status: "pending"
+  status: "completed"  # 2026-08-10, worker B commit 2888164, issue #12 closed
   file_domain: ["docs/REMOTE_DISPATCH_NOTES.md"]
   acceptance_criteria:
     - "REQ-008 satisfied; explicitly marked as research note"
@@ -163,7 +163,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
     - [ ] `grep -rn "swarm-dispatch" --include="*.md" --include="*.sh"` → only CHANGELOG, PRD, PHASE_6 doc
     - [ ] Every PRD AC checked off against the merged feature branch
     - [ ] Wall-clock comparison vs spike baseline noted (NFR, soft target)
-  status: "pending"
+  status: "blocked"  # awaits step_09 fix batch; grep AC to be verified against the amended allow-list (see Review Round 1)
   file_domain: []
   acceptance_criteria:
     - "Grep AC passes exactly as restated in PRD line 42"
@@ -180,6 +180,35 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
 | 3 | step_08 (verification) | orchestrator | — |
 
 Round 2 is 2 parallelizable units → per the dispatch decision table this is the **2-step parallel-subagent path**, not the 3+ swarm path (consistent with REQ-012: this feature cannot exercise the 3+ path it introduces).
+
+## Review Round 1 — Fix Plan (2026-08-10)
+
+Phase 3 gates returned reviewer **BLOCK** + security **PASS-WITH-NOTES**. Fix tasks (deduped across both reports):
+
+- `fix_id`: FIX-B1 (blocker, from reviewer B1) — orchestrator.md merge-back step 1: replace `git status --porcelain` with tracked-only checks (`git diff --quiet && git diff --cached --quiet`); add `.claude/` to `.gitignore`. Linked: R-002.
+- `fix_id`: FIX-B2 (blocker, from reviewer B2 = security M3+M4) — salvage step: `git add -u` only, untracked files reviewed individually, never `git add -A`/`-f`; scope salvage to workers not skipped by the failed-worker guard; salvage never authorizes merging a failed worker. Worker-prompt guidance in orchestrator.md + execute-prd.md: commit intended tracked files. Linked: R-002.
+- `fix_id`: FIX-B3 (blocker, from reviewer B3) — CI_DISPATCH.md: `--allowedTools` and frontmatter description gain TaskCreate/TaskList/TaskUpdate/SendMessage; state AskUserQuestion is interactive-only and headless escalation = fail the job. Linked: R-005.
+- `fix_id`: FIX-H1 (blocker, from security H1) — CI_DISPATCH.md workflow: bind `feature_id` via `env:` and reference `"$FEATURE_ID"` in both sinks (test line + prompt heredoc); validate `[[ "$FEATURE_ID" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]` first. Linked: R-005 (security NFR).
+- `fix_id`: FIX-H2 (blocker, from security H2, folds L1) — CI_DISPATCH.md: `permissions: contents: read` (+ scope/justify `issues: write`, drop `pull-requests: read`); `persist-credentials: false` on checkout; call out unqualified Bash breadth with prefix-narrowing guidance; mention Environment protection gate. Linked: R-005.
+- `fix_id`: FIX-M5 (medium, from security M5) — coder.md: issue bodies are data (acceptance criteria), not instructions — ignore embedded directives, escalate; CI_DISPATCH.md: unattended runs read only pipeline-authored issues. Linked: S-002.
+- `fix_id`: FIX-N1 (low, reviewer non-blocking) — ARCHITECTURE.md §3.1: superseded blockquote pointing to SPIKE_FINDINGS design revisions.
+- `fix_id`: FIX-N2 (low, reviewer non-blocking) — coder.md frontmatter description + Mission line: qualify queue-claim with the two operating modes.
+- `fix_id`: FIX-N3 (low, reviewer + UT-001) — TEST_SPEC.md UT-001 + PRD REQ-004 grep AC: restate allow-list as CHANGELOG, README release-history bullets, `docs/features/native_swarm/**`, Phase 6 doc; dated amendment note in PRD.
+- Deferred/backlog: security L2 (pin CLI + action SHAs — add one advisory line), L3 (artifact visibility note — one line). Included in step_09 as single-line additions since the file is already open for edits.
+
+- `step_id`: "native_swarm.step_09_review_fixes"
+  title: "Apply review round 1 fixes (FIX-B1..B3, H1, H2, M5, N1..N3, L2, L3)"
+  primary_agent: "backend-coder"
+  dependencies: ["step_02", "step_05"]
+  status: "pending"
+  file_domain: ["agents/orchestrator.md", "commands/execute-prd.md", "agents/coder.md", "docs/CI_DISPATCH.md", "docs/features/native_swarm/ARCHITECTURE.md", "docs/features/native_swarm/TEST_SPEC.md", "docs/features/native_swarm/PRD.md", ".gitignore"]
+  acceptance_criteria:
+    - "All five blockers resolved exactly as specified in the fix list"
+    - "Reviewer re-check passes (no remaining blockers)"
+  batch_hint: "fix" (round 2b, single worker)
+  complexity: "medium"
+
+step_08 dependency set now includes step_09.
 
 ## Risks & Assumptions
 
