@@ -219,14 +219,18 @@ jobs:
             --max-turns 50 \
             --permission-mode acceptEdits \
             --allowedTools "Read,Write,Edit,Grep,Glob,Bash,Agent,TaskCreate,TaskList,TaskUpdate,SendMessage" \
-            --output-format json > run-result.json
+            --output-format json > "$RUNNER_TEMP/run-result.json"
+          # Written to $RUNNER_TEMP, not the checkout: the snapshot-commit
+          # step below stages everything in the working tree, and a
+          # generated CI transcript inside the checkout would be committed
+          # into the bundled branch history on every run.
 
       - name: Upload run result
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ci-dispatch-result-${{ env.FEATURE_ID }}
-          path: run-result.json
+          path: ${{ runner.temp }}/run-result.json
           retention-days: 14
 
       # The prompt prohibits pushing and checkout ran with

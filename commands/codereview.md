@@ -45,23 +45,23 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 `$ARGUMENTS` may contain a scope, intent description, or both.
 
-**First, detect the base branch** `BASE`: `git symbolic-ref --quiet refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`. If that fails, use `main` when `git rev-parse --verify origin/main` succeeds, else `master`. Reviews always diff against `origin/$BASE`.
+**First, detect the base ref** `BASEREF`. Use the remote already discovered in Step 0 as `REMOTE` (the branch's tracking remote, falling back to `origin`) — do not hard-code `origin`, which breaks repos whose remote has another name. Detect the base branch `BASE`: `git symbolic-ref --quiet refs/remotes/$REMOTE/HEAD | sed "s@^refs/remotes/$REMOTE/@@"`; if that fails, use `main` when `git rev-parse --verify "$REMOTE/main"` succeeds, else `master`. Then `BASEREF="$REMOTE/$BASE"`. **Local-only repos** (no remotes configured): skip the remote prefix entirely — `BASEREF` is the local `main` (or `master`) branch when it exists and differs from `HEAD`; if the repo has no such base branch, fall back to reviewing the working tree (`git diff`) and note the limitation. Reviews always diff against `$BASEREF`.
 
 **Scope** (determines which diff to review). The default is **always the current branch diff against the base branch** — never just unstaged/staged files:
-- **No args** (default) → `git diff origin/$BASE...HEAD` (current branch vs base). If `HEAD` is on `BASE` itself, fall back to `git diff origin/$BASE` (uncommitted work) and note it.
-- **A branch name** (the arg names a ref that is a branch) → `git diff origin/$BASE...<branch>`. For Codex to review the same target (it reviews the *checked-out* branch), checkout `<branch>` first **only if the working tree is clean** (`git status --porcelain` empty); if dirty, proceed with the Claude agents on `git diff origin/$BASE...<branch>` and note that Codex reviewed the current branch instead. If you do checkout, first record the original ref (`ORIG_REF=$(git rev-parse --abbrev-ref HEAD)`; if that prints `HEAD`, use `git rev-parse HEAD` for the detached SHA) and **restore it with `git checkout "$ORIG_REF"` after both Codex jobs finish — including when a job errors out**. Never leave the user's repository on a branch they didn't check out.
+- **No args** (default) → `git diff $BASEREF...HEAD` (current branch vs base). If `HEAD` is on `BASE` itself, fall back to `git diff $BASEREF` (uncommitted work) and note it.
+- **A branch name** (the arg names a ref that is a branch) → `git diff $BASEREF...<branch>`. For Codex to review the same target (it reviews the *checked-out* branch), checkout `<branch>` first **only if the working tree is clean** (`git status --porcelain` empty); if dirty, proceed with the Claude agents on `git diff $BASEREF...<branch>` and note that Codex reviewed the current branch instead. If you do checkout, first record the original ref (`ORIG_REF=$(git rev-parse --abbrev-ref HEAD)`; if that prints `HEAD`, use `git rev-parse HEAD` for the detached SHA) and **restore it with `git checkout "$ORIG_REF"` after both Codex jobs finish — including when a job errors out**. Never leave the user's repository on a branch they didn't check out.
 - **Commit ref** (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`.
 - **`PR #N`, `MR #N`, or just a number:**
   - `repo_host=github` and `has_gh` → `gh pr diff N`
   - `repo_host=gitlab` and `has_glab` → `glab mr diff N`
-  - otherwise → `git diff origin/$BASE...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
-- **File path** → `git diff origin/$BASE...HEAD -- <file>` + `git log -5 --follow <file>`.
+  - otherwise → `git diff $BASEREF...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
+- **File path** → `git diff $BASEREF...HEAD -- <file>` + `git log -5 --follow <file>`.
 
 `staged` / `unstaged` are **not** default behaviors — only review the index/working tree if the user explicitly types `staged` (`git diff --cached`) or `unstaged` (`git diff`).
 
 **Intent** (everything that isn't a scope token): treat as authoritative context for correctness checking. If the code diverges from the stated intent, that's a blocking finding.
 
-Show a one-line summary: `Reviewing <scope> vs origin/$BASE — N files, M lines changed` before proceeding.
+Show a one-line summary: `Reviewing <scope> vs $BASEREF — N files, M lines changed` before proceeding.
 
 ## Step 2: Gather context and clarify intent
 
