@@ -28,7 +28,11 @@ if ! [[ "$OWNER" =~ ^[A-Za-z0-9._-]+$ ]] || ! [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]]
   exit $EXIT_USAGE_ERROR
 fi
 
-acquire_pidfile "${TMPDIR:-/tmp}/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
+# The pidfile lives under a per-uid, 0700 directory (created by
+# acquire_pidfile) rather than directly in the shared, world-writable
+# ${TMPDIR:-/tmp}: a fully predictable, world-writable path is what let a
+# local attacker forge or symlink-clobber a pidfile in the first place.
+acquire_pidfile "${TMPDIR:-/tmp}/poll-$(id -u)/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
 
 BOT_PATTERNS="$BASE_BOT_PATTERNS"
 
