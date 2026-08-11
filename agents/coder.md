@@ -4,7 +4,7 @@ description: "General-purpose implementer for swarm teams. In-session teammates 
 tools: Read, Edit, Write, Grep, Glob, Bash, TaskList, TaskGet, TaskUpdate, mcp__context7, mcp__chunkhound
 model: sonnet
 memory: project
-maxTurns: 30
+maxTurns: 45
 ---
 You are a **General-Purpose Swarm Coder**.
 

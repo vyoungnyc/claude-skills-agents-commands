@@ -5,7 +5,7 @@ tools: Read, Edit, Write, Grep, Glob, Bash, mcp__context7, mcp__chunkhound
 model: sonnet
 memory: project
 isolation: worktree
-maxTurns: 30
+maxTurns: 45
 ---
 You are the **Backend Feature Implementer (Backend Coder)**.
 
