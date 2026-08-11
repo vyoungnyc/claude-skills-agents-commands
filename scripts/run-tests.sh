@@ -27,6 +27,27 @@ command -v jq >/dev/null 2>&1 || {
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Same-tree recursion refusal. A suite that (directly or through a hook it
+# exercises) re-invokes THIS tree's run-tests.sh would re-discover and
+# re-execute that same suite — an unbounded mutual recursion that idles in
+# nested sleeps and looks exactly like a stall (observed 2026-08-11: a
+# hook test invoked the real hook instead of its sandbox copy; the hook's
+# REPO_ROOT resolved back to this tree and the run nested indefinitely).
+# The sentinel carries the tree path, not a boolean, so a test that copies
+# run-tests.sh into a sandbox and runs the COPY under this runner is
+# unaffected — only re-entry into the SAME tree refuses.
+if [ "${RUN_TESTS_ACTIVE_ROOT:-}" = "$REPO_ROOT" ]; then
+  echo "run-tests.sh: nested invocation for the same tree ($REPO_ROOT) — refusing to recurse. A suite (or a hook it runs) is re-invoking its own test runner; fix the suite to target a sandbox copy." >&2
+  exit 1
+fi
+export RUN_TESTS_ACTIVE_ROOT="$REPO_ROOT"
+
+# Per-suite watchdog: a hung suite must become a loud, attributable FAIL
+# in bounded time, never a silent indefinite stall of the whole run.
+# Overridable for genuinely slow suites; 120s is ~4x the slowest suite
+# today. macOS ships no `timeout`, so this is a hand-rolled poll loop.
+SUITE_TIMEOUT="${RUN_TESTS_SUITE_TIMEOUT:-120}"
+
 PASS_COUNT=0
 FAIL_COUNT=0
 FAILED_SUITES=""
@@ -40,8 +61,11 @@ FAILED_SUITES=""
 # (e.g. inside an untracked scratch dir, a malicious or accidental copy, or a
 # stale worktree artifact) would otherwise be picked up and executed with no
 # review — `bash "$suite"` runs arbitrary code. Falling back to `find` (with
-# `.git`, `.claude/worktrees`, and `node_modules` pruned) only when this repo
-# has no git history to query, which in practice never happens here.
+# `.git`, `.claude/worktrees`, and `node_modules` pruned at any depth, plus
+# the Claude Code runtime dirs `projects/`, `file-history/`, and
+# `paste-cache/` pruned at the repo root — see the inline comment below)
+# only when this repo has no git history to query, which in practice only
+# happens for the deployed copy under ~/.claude.
 if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   discover_suites() {
     git -C "$REPO_ROOT" ls-files -z '*.test.sh' | while IFS= read -r -d '' rel; do
@@ -70,18 +94,46 @@ else
   }
 fi
 
+SUITE_OUT=$(mktemp "${TMPDIR:-/tmp}/run-tests-suite-out.XXXXXX")
+trap 'rm -f "$SUITE_OUT"' EXIT
+
 while IFS= read -r -d '' suite; do
   suite_rel="${suite#"$REPO_ROOT"/}"
 
-  # `bash "$suite"` runs each suite as its own fresh process — no shared
-  # shell state (cwd, variables, traps) leaks between suites, and a suite
-  # that itself does `cd` cannot affect this loop or any other suite.
-  if suite_output=$(bash "$suite" 2>&1); then
+  # `bash "$suite"` runs each suite as its own fresh process (in its own
+  # process group via set -m, so the watchdog kill below reaches the
+  # suite's children too) — no shared shell state (cwd, variables, traps)
+  # leaks between suites, and a suite that itself does `cd` cannot affect
+  # this loop or any other suite.
+  set -m 2>/dev/null || true
+  bash "$suite" >"$SUITE_OUT" 2>&1 &
+  suite_pid=$!
+  set +m 2>/dev/null || true
+
+  waited=0
+  while kill -0 "$suite_pid" 2>/dev/null && [ "$waited" -lt "$SUITE_TIMEOUT" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if kill -0 "$suite_pid" 2>/dev/null; then
+    kill -- -"$suite_pid" 2>/dev/null || kill "$suite_pid" 2>/dev/null
+    sleep 1
+    kill -0 "$suite_pid" 2>/dev/null && { kill -9 -- -"$suite_pid" 2>/dev/null || kill -9 "$suite_pid" 2>/dev/null; }
+    wait "$suite_pid" 2>/dev/null
+    echo "FAIL: $suite_rel (TIMEOUT after ${SUITE_TIMEOUT}s — suite killed; hung suites usually mean a wait on a process that never exits or an accidental recursion)"
+    tail -20 "$SUITE_OUT" | sed 's/^/  /'
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILED_SUITES="$FAILED_SUITES $suite_rel"
+    continue
+  fi
+
+  if wait "$suite_pid"; then
     echo "PASS: $suite_rel"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
     echo "FAIL: $suite_rel"
-    echo "$suite_output" | sed 's/^/  /'
+    sed 's/^/  /' "$SUITE_OUT"
     FAIL_COUNT=$((FAIL_COUNT + 1))
     FAILED_SUITES="$FAILED_SUITES $suite_rel"
   fi

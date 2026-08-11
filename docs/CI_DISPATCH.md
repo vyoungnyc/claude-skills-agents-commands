@@ -138,7 +138,13 @@ in `PLAN_steps.md`) rather than assumed to complete in one invocation.
 - **Uploaded artifacts are readable by anyone with repo read access.** `run-result.json` (uploaded
   below) is visible to any principal with read access to the repository, not just the person who
   triggered the run — set the artifact's retention period deliberately and treat its contents as
-  no more sensitive than repo contents, never as a place to capture secrets or tokens.
+  no more sensitive than repo contents, never as a place to capture secrets or tokens. The same
+  exposure applies — with higher stakes — to `implementation.bundle`: it is a full `git bundle
+  --all` of the branch, built after a snapshot-commit step that runs `git add -A` over the entire
+  working tree, so it contains complete source, commit history, and any un-ignored file a worker
+  left behind. Anything a run writes into the checkout that must not be published needs to be
+  gitignored (or cleaned) before the bundle step, and the bundle's `retention-days` deserves the
+  same deliberate choice as the run result's.
 
 ## Example workflow (copy into a target project's `.github/workflows/`)
 

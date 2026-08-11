@@ -10,18 +10,39 @@ shopt -s nullglob
 CANDIDATES=( docs/features/*/PLAN_steps.md plans/*/PLAN_steps.md PLAN_steps.md )
 shopt -u nullglob
 
-# A plan is active iff it still has unfinished work. Two plan dialects exist:
+# Extract a plan's unfinished work, capped at 20 lines. Two dialects:
+#
 #   1. step-based plans with per-step `status: "pending|in_progress|blocked|
 #      completed"` lines — the authoritative signal. Acceptance-criteria
 #      checkboxes (`- [ ]`) inside a completed step stay unchecked forever,
-#      so a bare `[ ]` grep would label every finished plan active.
+#      so a bare `[ ]` grep would label every finished plan active. step_id
+#      lines are paired with their step's status before the cap: an
+#      unconditional step_id match would emit every completed step's ID too,
+#      and 20+ completed steps would push the unfinished step past the
+#      limit. A held step_id is flushed when an unfinished status follows,
+#      cleared when a finished status follows, and — critically — flushed at
+#      the next step_id or EOF when NO status line followed at all: a step
+#      without a status: field (freshly authored, hand-edited) is treated as
+#      unfinished and surfaced, never silently dropped (fail open).
 #   2. checkbox-only plans (no status: lines) — there the task-tracking
 #      markers `[ ]`/`[⚠️]`/`[⏳]` are the only signal we have.
-plan_is_active() {
+#
+# A plan is active iff this output is non-empty — detection and display use
+# the same extraction, so a plan whose only unfinished step is status-less
+# is still injected rather than skipped.
+active_lines() {
   if grep -qE '^[[:space:]]*status:' "$1" 2>/dev/null; then
-    grep -qE '^[[:space:]]*status:[[:space:]]*"?(pending|in_progress|blocked)' "$1" 2>/dev/null
+    awk '
+      /step_id/ { if (held != "") print held; held = $0; next }
+      /^[[:space:]]*status:[[:space:]]*"?(pending|in_progress|blocked)/ {
+        if (held != "") { print held; held = "" }
+        print; next
+      }
+      /^[[:space:]]*status:/ { held = "" }
+      END { if (held != "") print held }
+    ' "$1" 2>/dev/null | head -20
   else
-    grep -qE '\[ \]|\[⚠️\]|\[⏳\]' "$1" 2>/dev/null
+    grep -E '\[ \]|\[⚠️\]|\[⏳\]' "$1" 2>/dev/null | head -20
   fi
 }
 
@@ -31,32 +52,15 @@ for f in "${CANDIDATES[@]}"; do
   # Skip fully-completed plans: a finished feature's PLAN_steps.md stays in
   # the repo forever, and re-injecting it after every compaction wastes
   # context and can misdirect dispatch toward already-shipped work.
-  plan_is_active "$f" || continue
+  ACTIVE=$(active_lines "$f")
+  [ -n "$ACTIVE" ] || continue
   if [ $FOUND -eq 0 ]; then
     echo "## Post-compaction: active plan state"
     FOUND=1
   fi
   echo ""
   echo "### $f"
-  # Surface only unfinished work, capped — a flat head over all status lines
-  # truncates in file order, so early completed steps could crowd out the
-  # one in_progress step compaction most needs to restore. In the status
-  # dialect, step_id lines must be paired with their step's status before
-  # the cap: an unconditional step_id match would emit every completed
-  # step's ID too, and 20+ completed steps would push the unfinished step
-  # past the limit all over again.
-  if grep -qE '^[[:space:]]*status:' "$f" 2>/dev/null; then
-    awk '
-      /step_id/ { held = $0; next }
-      /^[[:space:]]*status:[[:space:]]*"?(pending|in_progress|blocked)/ {
-        if (held != "") { print held; held = "" }
-        print; next
-      }
-      /^[[:space:]]*status:/ { held = "" }
-    ' "$f" 2>/dev/null | head -20
-  else
-    grep -E '\[ \]|\[⚠️\]|\[⏳\]' "$f" 2>/dev/null | head -20
-  fi
+  echo "$ACTIVE"
   DONE_COUNT=$(grep -cE 'status:[[:space:]]*"?completed|\[✅\]|\[❌\]' "$f" 2>/dev/null)
   [ "${DONE_COUNT:-0}" -gt 0 ] && echo "(${DONE_COUNT} completed/closed entries omitted)"
 done
