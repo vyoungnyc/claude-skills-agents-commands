@@ -91,29 +91,56 @@ claim_marker() {
 # Residual exposure: a reclaimer crashing between token and lock leaves a
 # dead token, whose own removal has the same race one level down — that
 # requires a second crash inside a microsecond window, accepted.
+# PID-reuse-safe identity, same technique as scripts/lib/poll-common.sh:
+# a bare PID in the lock is not enough to know the holder is still the
+# same process instance — the OS recycles PIDs, and a recycled PID held by
+# any unrelated long-lived process would make a crashed runner's lock look
+# live forever, wedging testing. The lock's symlink target is therefore
+# "pid:start-time", and liveness requires both the PID to be alive and its
+# start time to match what was recorded.
+_pid_start_time() {
+  ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+_my_lock_token() {
+  printf '%s:%s' "$$" "$(_pid_start_time "$$")"
+}
+
+# True if $1 (a "pid:start-time" lock target) names a live process
+# instance. Colon-less or empty targets have no verifiable identity and
+# are treated as not live (reclaimable).
+_holder_is_live() {
+  local pid="${1%%:*}" start="${1#*:}"
+  [ -n "$pid" ] && [ "$1" != "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [ "$(_pid_start_time "$pid")" = "$start" ]
+}
+
 acquire_lock() {
-  ln -s "$$" "$1" 2>/dev/null && return 0
+  local mytoken
+  mytoken=$(_my_lock_token)
+  ln -s "$mytoken" "$1" 2>/dev/null && return 0
   local holder
   holder=$(readlink "$1" 2>/dev/null || true)
-  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+  if _holder_is_live "$holder"; then
     return 1
   fi
   local token="$1.reclaim"
-  if ! ln -s "$$" "$token" 2>/dev/null; then
+  if ! ln -s "$mytoken" "$token" 2>/dev/null; then
     local tholder
     tholder=$(readlink "$token" 2>/dev/null || true)
-    if [ -n "$tholder" ] && kill -0 "$tholder" 2>/dev/null; then
+    if _holder_is_live "$tholder"; then
       return 1
     fi
     rm -f "$token"
-    ln -s "$$" "$token" 2>/dev/null || return 1
+    ln -s "$mytoken" "$token" 2>/dev/null || return 1
   fi
   # Token held: re-verify, then replace. A changed target means a new
   # owner installed between our read and the token grab — leave it alone.
   local rc=1
   if [ "$(readlink "$1" 2>/dev/null || true)" = "$holder" ]; then
     rm -f "$1"
-    ln -s "$$" "$1" 2>/dev/null
+    ln -s "$mytoken" "$1" 2>/dev/null
     rc=$?
   fi
   rm -f "$token"
@@ -123,7 +150,7 @@ acquire_lock() {
 # Release only what we own: by the time an exit path runs, a newer runner
 # may hold this lock — unlinking it would reopen dual ownership.
 release_lock() {
-  [ "$(readlink "$1" 2>/dev/null)" = "$$" ] && rm -f "$1"
+  [ "$(readlink "$1" 2>/dev/null)" = "$(_my_lock_token)" ] && rm -f "$1"
   return 0
 }
 
