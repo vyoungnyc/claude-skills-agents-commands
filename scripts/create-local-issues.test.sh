@@ -225,12 +225,10 @@ this is not json
 EOF
 expect_exit 10 "$INVALID_DIR" "invalidfeat" "bad.json"
 expect_stderr_match "not valid JSON"
-# DEF-5 (scripts/create-local-issues.sh:83 vs :87): mkdir -p "$PLANS_DIR"
-# runs before JSON validation, so the invalid-JSON exit-10 path leaves an
-# empty plans/<feature_id>/ directory behind. Documented as observed
-# behavior, not fixed (out of scope per PRD REQ-013/REQ-006).
-[ -d "$INVALID_DIR/plans/invalidfeat" ] || fail "DEF-5: expected empty plans/invalidfeat/ dir to be left behind on invalid-JSON exit 10"
-[ -z "$(ls -A "$INVALID_DIR/plans/invalidfeat")" ] || fail "DEF-5: expected plans/invalidfeat/ to be empty, found files"
+# DEF-5 (fixed, scripts/create-local-issues.sh): mkdir -p "$PLANS_DIR" now
+# runs only after the plan-steps JSON has been parsed and validated, so the
+# invalid-JSON exit-10 path leaves no plans/<feature_id>/ directory behind.
+[ ! -d "$INVALID_DIR/plans/invalidfeat" ] || fail "DEF-5: expected no plans/invalidfeat/ dir to be left behind on invalid-JSON exit 10"
 
 EMPTY_DIR=$(sandbox_new)
 write_json "$EMPTY_DIR/empty.json" <<'EOF'
@@ -298,15 +296,11 @@ write_json "$RM_ABSENT_DIR/steps.json" <<< "$RM_STEPS"
 expect_exit 0 "$RM_ABSENT_DIR" "rmfeat" "steps.json"
 expect_file_not_contains "$RM_ABSENT_DIR/plans/rmfeat/issue-0000.md" "## Roadmap"
 
-# Malformed roadmap JSON -> script still exits 0 (jq failure is caught by
-# `|| true`), but observed behavior is NOT full section omission as the
-# PRD AC states: because the "## Roadmap" heading and table header are
-# built unconditionally once the file exists (create-local-issues.sh:163-168),
-# only the DATA ROWS are silently dropped when jq fails to parse. This is
-# a newly observed defect (not among DEF-1..DEF-5 in the PRD) — reported
-# for FINDINGS.md rather than fixed here, per REQ-013. This test asserts
-# the OBSERVED behavior (header present, no data rows), not the PRD's
-# stated aspirational behavior (section fully omitted).
+# DEF-6 (fixed, scripts/create-local-issues.sh) -> malformed roadmap JSON
+# still exits 0 (jq failure is caught by `|| true`), and the roadmap rows
+# are now parsed before the "## Roadmap" heading/table header is built, so
+# a parse failure omits the whole section rather than leaving a
+# header-only, zero-row table. Matches the PRD AC (section fully omitted).
 RM_MALFORMED_DIR=$(sandbox_new)
 write_json "$RM_MALFORMED_DIR/steps.json" <<< "$RM_STEPS"
 write_json "$RM_MALFORMED_DIR/roadmap.json" <<'EOF'
@@ -314,10 +308,7 @@ this is not valid json
 EOF
 expect_exit 0 "$RM_MALFORMED_DIR" "rmfeat" "steps.json" "roadmap.json"
 RM_MALFORMED_EPIC="$RM_MALFORMED_DIR/plans/rmfeat/issue-0000.md"
-expect_file_contains "$RM_MALFORMED_EPIC" "## Roadmap"
-if grep -Eq '^\| .+ \| (In Progress|Planned) \| .+ \|$' "$RM_MALFORMED_EPIC"; then
-  fail "NEW DEFECT: malformed roadmap JSON produced data rows; expected none (see comment above)"
-fi
+expect_file_not_contains "$RM_MALFORMED_EPIC" "## Roadmap"
 
 # =======================================================================
 # Isolation self-check (after) — the real repo's .gitignore must be
