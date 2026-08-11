@@ -210,6 +210,22 @@ Phase 3 gates returned reviewer **BLOCK** + security **PASS-WITH-NOTES**. Fix ta
 
 step_08 dependency set now includes step_09.
 
+## Amendment — Decision Cards (2026-08-10, user-requested, REQ-013)
+
+User decisions at intake: amend PR #15 (not a new feature run); cards apply to ALL blocking gates (plan approvals, decisions required, escalations); mechanism = native question cards (AskUserQuestion protocol skill), no artifact board.
+
+- `step_id`: "native_swarm.step_10_decision_cards"
+  title: "Decision-cards skill + wiring into all user-blocking gates"
+  primary_agent: "backend-coder"
+  dependencies: ["step_09"]
+  status: "pending"
+  file_domain: ["skills/decision-cards/SKILL.md", "commands/execute-prd.md", "commands/discover.md", "agents/orchestrator.md", "agents/architect.md", "agents/ui-ux.md", "README.md", "CHANGELOG.md"]
+  acceptance_criteria:
+    - "All four REQ-013 ACs met verbatim (PRD amendment)"
+    - "Reviewer + security delta pass clean"
+  batch_hint: "amendment" (single worker, sequenced)
+  complexity: "medium"
+
 ## Risks & Assumptions
 
 - **Spike NO-GO on (a)** halts rounds 2–3; escalate with findings and options (per REQ-001 AC).

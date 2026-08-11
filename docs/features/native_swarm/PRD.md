@@ -51,6 +51,12 @@
   - AC: Example workflow YAML is complete enough to copy into `.github/workflows/` in a target project (stored in docs, not activated in this repo).
   - AC: Mentions the official `anthropics/claude-code-action` as the alternative entry point.
 
+- REQ-013 *(amendment 2026-08-10, user-requested scope addition to this PR)*: **Decision cards for user-blocking questions.** Whenever the pipeline blocks on user input — PRD review gaps (Phase 0.2), plan approval and change requests (Phase 1.6), `/discover` phases, architect/ui-ux clarifications, escalate-to-user recovery rows, and the push/PR gate (5.1) — questions are presented as a summary followed by decision cards instead of ad-hoc inline questions.
+  - AC: New skill `skills/decision-cards/SKILL.md` defines the protocol: (1) summary of all open decisions first (card ID, title, why it blocks, one-line recommendation); (2) cards presented via AskUserQuestion in batches of ≤4 — each card carries context, a recommended first option marked "(Recommended)", concrete alternatives, and a standing "Discuss this card" option; (3) choosing "Discuss" loops into Q&A about that card only, then the card is re-presented; (4) cards are tracked answered/unanswered and re-presented until all are resolved; (5) work starts/resumes only after every card is answered, and answers are recorded as dated decisions in the owning artifact (PRD Agreement / UX_NOTES / PLAN decisions).
+  - AC: Wired into `commands/execute-prd.md` (0.2, 1.6, escalation rows, 5.1), `commands/discover.md` (all phases collecting user input), `agents/orchestrator.md` (user interaction policy), `agents/architect.md` and `agents/ui-ux.md` (the only agents permitted to ask the user).
+  - AC: README skills table/count (10 → 11) and directory structure updated; CHANGELOG v2.6.0 gains a Decision Cards group.
+  - AC: Single-urgent-question escalations may present one card without the summary preamble (the summary is for batches), so recovery is not slowed by ceremony.
+
 ### Should Have
 - REQ-006: README and CHANGELOG updated as v2.6.0 with the modernization summary; script count and version references corrected throughout.
   - AC: Includes the `### Scripts (5)` section heading in `README.md`, which becomes `### Scripts (4)` once the script is deleted.
