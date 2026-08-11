@@ -369,16 +369,12 @@ grep -qx "repo view" "$STUB_LOG" && fail "GH_REPO honored: gh repo view was call
 unset GH_REPO
 
 # ---------------------------------------------------------------------------
-# DEF-4 (docs/features/script_tests/PRD.md) — jq is invoked at line 74,
-# twenty-three lines before the `command -v jq` guard at line 97. With jq
-# absent the script exits 10 ("Plan steps file is not valid JSON"), not the
-# documented 1 ("jq not found") — the guard at line 97 is dead code. This
-# asserts the OBSERVED behavior, not the aspirational documented contract.
+# jq absent from PATH — DEF-4 fixed: jq guard now runs before first jq use.
 # ---------------------------------------------------------------------------
 
 run_script "$MINIMAL_NO_JQ" "$FEATURE_ID" "$PLAN_OK"
-expect_exit "DEF-4: jq absent exits 10, not documented 1" 10
-expect_error_match "$ERR_FILE" "not valid JSON" "DEF-4: jq absent"
+expect_exit "jq absent from PATH" 1
+expect_error_match "$ERR_FILE" "jq not found" "jq absent from PATH"
 
 # ---------------------------------------------------------------------------
 # REQ-009 — state exercised exit codes rather than assuming them.

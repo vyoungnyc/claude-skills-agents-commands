@@ -70,6 +70,12 @@ if [ ! -f "$PLAN_STEPS_FILE" ]; then
   exit $EXIT_USAGE
 fi
 
+# Validate jq is available
+if ! command -v jq >/dev/null 2>&1; then
+  echo '{"error": "jq not found — install jq"}' >&2
+  exit $EXIT_FATAL
+fi
+
 PLAN_STEPS=$(cat "$PLAN_STEPS_FILE")
 if ! jq -e '.' <<< "$PLAN_STEPS" >/dev/null 2>&1; then
   echo '{"error": "Plan steps file is not valid JSON"}' >&2
@@ -90,12 +96,6 @@ fi
 
 if ! gh auth status >/dev/null 2>&1; then
   echo '{"error": "gh CLI not authenticated — run gh auth login"}' >&2
-  exit $EXIT_FATAL
-fi
-
-# Validate jq is available
-if ! command -v jq >/dev/null 2>&1; then
-  echo '{"error": "jq not found — install jq"}' >&2
   exit $EXIT_FATAL
 fi
 
