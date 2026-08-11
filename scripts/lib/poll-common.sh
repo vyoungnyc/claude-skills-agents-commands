@@ -15,12 +15,18 @@ STALE_POLLS=0
 BLOCKED_THRESHOLD=3
 
 # Base bot patterns shared across platforms. Scripts append platform-specific entries.
-BASE_BOT_PATTERNS="\\[bot\\]$|-bot-|^chatgpt-codex|^cursor-bugbot"
+# Bracket literals are written as character classes ([[] and []]) rather than
+# backslash escapes: this string is interpolated into a jq program inside a JSON
+# string literal, where \[ is not a valid escape and fails to compile.
+BASE_BOT_PATTERNS="[[]bot[]]$|-bot-|^chatgpt-codex|^cursor-bugbot"
 
 _CLEANUP_PATHS=()
 
 _cleanup() {
-  for p in "${_CLEANUP_PATHS[@]}"; do
+  # ${arr[@]+"${arr[@]}"} — expands to nothing when the array is empty. A bare
+  # "${arr[@]}" on an empty array is an unbound-variable error under bash 3.2 +
+  # set -u, which fires from the EXIT trap on every pre-register_cleanup exit.
+  for p in ${_CLEANUP_PATHS[@]+"${_CLEANUP_PATHS[@]}"}; do
     rm -rf "$p"
   done
 }
@@ -60,22 +66,25 @@ acquire_pidfile() {
 }
 
 # Set difference: IDs in $1 not in $2 (both pre-sorted, one per line).
-# Sets $_NEW_COUNT. Outputs new IDs to stdout.
+# Pure: outputs the new IDs to stdout and sets nothing. Callers capture the
+# output and derive the count with count_ids — an assignment made here would be
+# lost, since every call site is a command substitution (its own subshell).
 find_new_ids() {
   local all_ids="$1" known_ids="$2"
   if [ -z "$all_ids" ]; then
-    _NEW_COUNT=0
     return
   fi
   if [ -z "$known_ids" ]; then
-    _NEW_COUNT=$(echo "$all_ids" | grep -c . 2>/dev/null || echo 0)
     echo "$all_ids"
     return
   fi
-  local result
-  result=$(comm -23 <(echo "$all_ids") <(echo "$known_ids") 2>/dev/null | grep .)
-  _NEW_COUNT=$(echo "$result" | grep -c . 2>/dev/null || echo 0)
-  echo "$result"
+  comm -23 <(echo "$all_ids") <(echo "$known_ids") 2>/dev/null | grep . || true
+}
+
+# Count non-empty lines in $1. Echoes 0 for empty input.
+# grep -c exits 1 when nothing matches, hence the || true.
+count_ids() {
+  printf '%s' "$1" | grep -c . 2>/dev/null || true
 }
 
 # Returns 0 if any ID in $1 also exists in $2 (both pre-sorted).
