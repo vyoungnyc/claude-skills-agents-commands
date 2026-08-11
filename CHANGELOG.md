@@ -2,6 +2,25 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.8.0] - 2026-08-11
+
+### Response Style Rules + Drift-Resistant Reinjection
+
+Added a user-scope response-style contract (BLUF, no preamble, epistemic-status labeling) and a hook that keeps it from fading over long sessions.
+
+- **CLAUDE.md — new `## Response Style` section:**
+  - BLUF for anything non-trivial: conclusion first, then reasoning. Summary capped at 5 bullets, rest of the content in decreasing order of importance. BLUF is not "be brief" — the reasoning stays, only the ceremony goes.
+  - No preamble — skip framing like "excellent question," go straight to the answer.
+  - Don't repeat a follow-up suggestion the user didn't take.
+  - Label epistemic status when it matters (known / inferred / guessed); prefer "I don't know" over confident fabrication; search when currency matters.
+- **`hooks/response-style.sh` (new, UserPromptSubmit):** echoes a short pointer back at the CLAUDE.md rule on every prompt submission instead of restating it. Addresses a documented failure mode — instructions loaded once at session start lose weight against recent conversation history and the tone drifts back toward preamble and buried conclusions somewhere past the first hour. Firing on every turn puts the reminder exactly where recency pressure is highest. Wired into both `settings.json` (global, `$HOME` paths — the deploy target that makes it apply to every project) and `hooks/settings.json` (project-scope mirror, kept for parity with the repo's existing per-hook convention). Hook count 5 → 6.
+- **No test suite added for `response-style.sh`** — consistent with the repo's existing pattern (`plan-context.sh`, `auto-format.sh`, `auto-test-runner.sh`, `auto-approve-safe-ops.sh` are also untested): it's a static, branchless echo, unlike `enforce-git-conventions.sh`'s parsing/validation logic, which does have a `.test.sh` sibling.
+
+**Design references (best-practice sources this design follows):**
+- [Opus 5 Made Claude Code Chatty. Three Changes Reined It In.](https://joecotellese.com/posts/steering-claude-code-bluf/) — source of the exact pattern used here: a CLAUDE.md tone rule plus a one-line `UserPromptSubmit` hook that re-points attention at the rule instead of restating it. Also the source of "BLUF is not 'be brief'" and the "past the first hour, tone slips back" drift observation.
+- [BLUF (communication) — Wikipedia](https://en.wikipedia.org/wiki/BLUF_(communication)) — origin of the BLUF convention (US Army Regulation 25-50): lead with the conclusion, detail underneath, reader can stop once they have what they need.
+- [Claude Code Hooks reference](https://code.claude.com/docs/en/hooks) — `UserPromptSubmit` event semantics: fires before Claude processes the prompt, stdout is injected as additional context.
+
 ## [2.7.0] - 2026-08-10
 
 ### Poll-Scripts Repair — Both Poll Scripts Aborted On Their First Poll, In Every Configuration

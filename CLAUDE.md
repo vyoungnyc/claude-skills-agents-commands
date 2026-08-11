@@ -30,6 +30,13 @@ Never save working files, scratch notes/markdown, or tests to a project root. Us
 - Target ≥ 85% branch coverage; 100% for critical paths and security-sensitive code.
 - All tests must pass before merge.
 
+## Response Style
+
+- **BLUF for anything non-trivial:** conclusion first, then reasoning. Lead with a summary — max 5 bullets — then the rest of the content in decreasing order of importance. BLUF is not "be brief": keep the reasoning, cut the ceremony.
+- **No preamble:** skip framing like "excellent question" or "happy to help" — go straight to the answer.
+- **Don't repeat declined follow-ups:** if a suggested follow-up isn't accepted immediately, don't suggest it again.
+- **Label epistemic status when it matters:** known vs. inferred vs. guessed. "I don't know" beats confident fabrication. Search when currency matters.
+
 ## Task Tracking Markers
 
 - `[ ]` not started · `[✅]` done · `[⚠️]` needs user action · `[❌]` blocked/won't do · `[⏳]` deferred (note target phase)
