@@ -2,6 +2,17 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.10.0] - 2026-08-11
+
+### `pr-merge-sync-reminder.sh` — Nudge To Sync After A Squash Merge
+
+`scripts/sync-claude-config.sh` (2.9.0) only closes the CLAUDE.md/hooks/settings.json drift when someone remembers to run it with `--apply`, and the natural trigger — a PR just landed — is easy to let slip. This adds the reminder as a hook instead of relying on memory.
+
+- **New `hooks/pr-merge-sync-reminder.sh` (PostToolUse):** matches a `Bash` tool call running `gh pr merge` with `--squash` or `-s` and returns a `systemMessage` telling the agent to ask the user whether to run `scripts/sync-claude-config.sh --apply`. Silent on non-squash merges (`--merge`, `--rebase`, plain `gh pr merge`) and on unrelated `gh`/`git` commands.
+- **Project-scope only** — wired into `hooks/settings.json` (matcher `Bash`, `if: "Bash(gh *)"`) but deliberately **not** added to the global `settings.json`: this reminder is specific to repos that ship `sync-claude-config.sh`, and firing it in every other repo the user works in would be a false positive every time.
+- **New `hooks/pr-merge-sync-reminder.test.sh`:** asserts the reminder fires on `--squash`/`-s` in either argument position and stays silent on non-squash merges and unrelated `gh pr`/`git` commands, following `hooks/enforce-git-conventions.test.sh`'s stdin-JSON-in, jq-output-out pattern.
+- `scripts/run-tests.sh` picks the new suite up automatically. Hook count 6 → 7.
+
 ## [2.9.0] - 2026-08-11
 
 ### `sync-claude-config.sh` — Deploy This Repo To The Live Global Config
