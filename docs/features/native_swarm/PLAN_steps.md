@@ -82,7 +82,7 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
   status: "completed"  # 2026-08-10, worker A commit 4799235, issue #8 closed
   file_domain: ["scripts/swarm-dispatch.sh", "CLAUDE.md", "README.md", "docs/AGENT_TEAMS_GUIDE.md", "docs/PHASE_6_NATIVE_PARALLELISM.md"]
   acceptance_criteria:
-    - "grep -rn 'swarm-dispatch' --include='*.md' --include='*.sh' returns only CHANGELOG, PRD.md, PHASE_6_NATIVE_PARALLELISM.md"
+    - "grep -rn 'swarm-dispatch' --include='*.md' --include='*.sh' returns only history-class hits (allow-list amended 2026-08-10 in PRD REQ-004: CHANGELOG, README release history, docs/features/native_swarm/**, PHASE_6 doc)"
     - "P6.3 carries an explicit superseded marker"
   batch_hint: "core-docs" (round 2, worker A — after step_02)
   complexity: "medium"
@@ -157,10 +157,10 @@ Implementation → grep-based verification (this repo's md "test suite") → sec
 - `step_id`: "native_swarm.step_08_grep_verification"
   title: "Final verification: grep AC + PRD acceptance checklist"
   primary_agent: "orchestrator" (binary check; substantive review happens in Phase 3 gates)
-  dependencies: ["step_02", "step_03", "step_04", "step_05", "step_06", "step_07"]
+  dependencies: ["step_02", "step_03", "step_04", "step_05", "step_06", "step_07", "step_09"]
   related_requirements: ["R-004", "all"]
   definition_of_done: |
-    - [ ] `grep -rn "swarm-dispatch" --include="*.md" --include="*.sh"` → only CHANGELOG, PRD, PHASE_6 doc
+    - [ ] `grep -rn "swarm-dispatch" --include="*.md" --include="*.sh"` → only the amended allow-list (PRD REQ-004, 2026-08-10 amendment): CHANGELOG.md, README release-history bullets, `docs/features/native_swarm/**`, PHASE_6 doc
     - [ ] Every PRD AC checked off against the merged feature branch
     - [ ] Wall-clock comparison vs spike baseline noted (NFR, soft target)
   status: "blocked"  # awaits step_09 fix batch; grep AC to be verified against the amended allow-list (see Review Round 1)
@@ -200,7 +200,7 @@ Phase 3 gates returned reviewer **BLOCK** + security **PASS-WITH-NOTES**. Fix ta
   title: "Apply review round 1 fixes (FIX-B1..B3, H1, H2, M5, N1..N3, L2, L3)"
   primary_agent: "backend-coder"
   dependencies: ["step_02", "step_05"]
-  status: "pending"
+  status: "completed"  # 2026-08-10, fix commits 3e5f426 + 769f735 (merge fc73767); reviewer re-check APPROVE-WITH-NITS, security PASS-WITH-NOTES
   file_domain: ["agents/orchestrator.md", "commands/execute-prd.md", "agents/coder.md", "docs/CI_DISPATCH.md", "docs/features/native_swarm/ARCHITECTURE.md", "docs/features/native_swarm/TEST_SPEC.md", "docs/features/native_swarm/PRD.md", ".gitignore"]
   acceptance_criteria:
     - "All five blockers resolved exactly as specified in the fix list"
