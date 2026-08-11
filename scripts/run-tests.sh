@@ -78,6 +78,16 @@ done < <(discover_suites)
 echo ""
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"
 
+# Zero suites executed means discovery itself broke (e.g. a failure inside
+# the discover_suites process substitution never reaches this shell), not
+# that the repo has no tests — this repo always has *.test.sh suites.
+# Without this guard the script would print "0 passed, 0 failed" and exit 0,
+# silently running nothing on a supported platform.
+if [ "$PASS_COUNT" -eq 0 ] && [ "$FAIL_COUNT" -eq 0 ]; then
+  echo "run-tests.sh: no test suites were discovered — suite discovery failed" >&2
+  exit 1
+fi
+
 if [ "$FAIL_COUNT" -gt 0 ]; then
   echo "Failed suites:$FAILED_SUITES" >&2
   exit 1

@@ -51,6 +51,15 @@ case "$FILE_PATH" in
     # actually be interrupted mid-run since it's blocked synchronously
     # capturing output.
     SH_PIDFILE="${TMPDIR:-/tmp}/auto-test-runner-shell.pid"
+    # Rerun marker: this hook runs async, so a second invocation can arrive
+    # while a run is already in flight testing *older* file contents. Bare
+    # skip-if-in-flight would drop that newer edit untested — the only
+    # reported result would cover the stale contents. Instead the skipping
+    # invocation leaves a marker, and the in-flight invocation re-runs the
+    # suite once after its current run finishes. Multiple mid-run edits
+    # coalesce into a single rerun (touch is idempotent), which is correct:
+    # the rerun tests whatever is on disk at that point.
+    SH_RERUN_MARKER="${TMPDIR:-/tmp}/auto-test-runner-shell.rerun"
     if [ -f "$SH_PIDFILE" ]; then
       OLD_SH_PID=$(cat "$SH_PIDFILE" 2>/dev/null || true)
       if [ -n "$OLD_SH_PID" ] && kill -0 "$OLD_SH_PID" 2>/dev/null; then
@@ -61,6 +70,7 @@ case "$FILE_PATH" in
         OLD_SH_COMM=$(ps -o comm= -p "$OLD_SH_PID" 2>/dev/null || true)
         case "$OLD_SH_COMM" in
           *bash*|*run-tests*)
+            touch "$SH_RERUN_MARKER"
             exit 0
             ;;
         esac
@@ -69,6 +79,10 @@ case "$FILE_PATH" in
 
     SH_OUT_FILE=$(mktemp "${TMPDIR:-/tmp}/auto-test-runner-shell-out.XXXXXX")
     trap 'rm -f "$SH_PIDFILE" "$SH_OUT_FILE"' EXIT INT TERM
+
+    # Consume any marker left before this run started: the run below tests
+    # current disk contents, which already include whatever edit set it.
+    rm -f "$SH_RERUN_MARKER"
 
     # `set -m` gives the backgrounded run its own process group (where the
     # shell supports job control in a script), so a future kill of the
@@ -81,6 +95,21 @@ case "$FILE_PATH" in
 
     wait "$SH_PID"
     SH_EXIT=$?
+
+    # An edit landed mid-run: its invocation skipped and left the marker, so
+    # the result above may describe stale contents. Re-run once against
+    # what's on disk now and report that instead. Loop bounded at one extra
+    # pass per marker cycle — a marker set during the rerun triggers another.
+    while [ -f "$SH_RERUN_MARKER" ]; do
+      rm -f "$SH_RERUN_MARKER"
+      set -m 2>/dev/null || true
+      bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
+      SH_PID=$!
+      set +m 2>/dev/null || true
+      echo "$SH_PID" > "$SH_PIDFILE"
+      wait "$SH_PID"
+      SH_EXIT=$?
+    done
     SH_OUTPUT=$(tail -30 "$SH_OUT_FILE" 2>/dev/null || true)
 
     if [ "$SH_EXIT" -eq 0 ]; then
@@ -119,6 +148,9 @@ fi
 # can't interrupt a process this same synchronous hook invocation is blocked
 # waiting on anyway.
 PIDFILE="${TMPDIR:-/tmp}/auto-test-runner.pid"
+# Same rerun-marker pattern as the shell-suite branch: an edit arriving while
+# a run is in flight must trigger one coalesced rerun, not be silently dropped.
+RERUN_MARKER="${TMPDIR:-/tmp}/auto-test-runner.rerun"
 if [ -f "$PIDFILE" ]; then
   OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
   if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
@@ -128,6 +160,7 @@ if [ -f "$PIDFILE" ]; then
     OLD_COMM=$(ps -o comm= -p "$OLD_PID" 2>/dev/null || true)
     case "$OLD_COMM" in
       *node*|*npx*|*vitest*|*jest*)
+        touch "$RERUN_MARKER"
         exit 0
         ;;
     esac
@@ -137,6 +170,8 @@ fi
 OUT_FILE=$(mktemp "${TMPDIR:-/tmp}/auto-test-runner-out.XXXXXX")
 trap 'rm -f "$PIDFILE" "$OUT_FILE"' EXIT INT TERM
 
+rm -f "$RERUN_MARKER"
+
 set -m 2>/dev/null || true
 "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
 TEST_PID=$!
@@ -145,6 +180,17 @@ echo "$TEST_PID" > "$PIDFILE"
 
 wait "$TEST_PID"
 TEST_EXIT=$?
+
+while [ -f "$RERUN_MARKER" ]; do
+  rm -f "$RERUN_MARKER"
+  set -m 2>/dev/null || true
+  "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
+  TEST_PID=$!
+  set +m 2>/dev/null || true
+  echo "$TEST_PID" > "$PIDFILE"
+  wait "$TEST_PID"
+  TEST_EXIT=$?
+done
 TEST_OUTPUT=$(tail -30 "$OUT_FILE" 2>/dev/null || true)
 
 # Build result message
