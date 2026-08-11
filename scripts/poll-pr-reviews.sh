@@ -16,13 +16,23 @@ if [ -z "$REPO" ] || [ -z "$PR_NUMBER" ]; then
   echo '{"error": "Usage: poll-pr-reviews.sh <owner/repo> <pr_number> [poll_interval_sec] [max_polls]"}' >&2
   exit $EXIT_USAGE_ERROR
 fi
+require_positive_int "$PR_NUMBER" "pr_number"
 require_positive_int "$POLL_INTERVAL" "poll_interval_sec"
 require_positive_int "$MAX_POLLS" "max_polls"
 
 OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
 
-acquire_pidfile "/tmp/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
+if ! [[ "$OWNER" =~ ^[A-Za-z0-9._-]+$ ]] || ! [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo '{"error": "owner and name must match ^[A-Za-z0-9._-]+$"}' >&2
+  exit $EXIT_USAGE_ERROR
+fi
+
+# The pidfile lives under a per-uid, 0700 directory (created by
+# acquire_pidfile) rather than directly in the shared, world-writable
+# ${TMPDIR:-/tmp}: a fully predictable, world-writable path is what let a
+# local attacker forge or symlink-clobber a pidfile in the first place.
+acquire_pidfile "${TMPDIR:-/tmp}/poll-$(id -u)/poll-pr-reviews-${OWNER}-${NAME}-${PR_NUMBER}.pid"
 
 BOT_PATTERNS="$BASE_BOT_PATTERNS"
 
