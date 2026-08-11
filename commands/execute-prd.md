@@ -190,7 +190,7 @@ Model per batch = highest complexity in the batch:
 **Spawn one background `coder` subagent per batch** via the Agent tool: `isolation: "worktree"`, `run_in_background: true`, `model` per the mapping above. Each spawn prompt must:
 1. **Pre-assign the batch's steps inline** — step IDs in execution order, file domain, issue numbers, and acceptance criteria in the prompt text itself.
 2. Start with `git merge feature/{feature_id} --no-edit` and verify it. Native worktrees are cut from `origin/main`, **not** from the dispatching branch, so workers otherwise cannot see feature-branch state at all.
-3. Instruct the worker to commit every change — uncommitted work does not merge — and to close each issue once its criteria are met.
+3. Instruct the worker to commit every intended, tracked change for its assigned steps — uncommitted work does not merge, and the worker must never `git add -A`/`-f` a blanket stage — and to close each issue once its criteria are met.
 
 Monitor via `TaskList` / `TaskUpdate` as workers report; the harness notifies on completion, so do not poll.
 

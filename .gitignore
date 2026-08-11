@@ -99,3 +99,6 @@ plans/
 .chunkhound.json
 .chunkhound/
 apps/web/.next/
+
+# Claude Code local state (worktrees, session state) — never committed
+.claude/
