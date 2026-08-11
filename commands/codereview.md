@@ -45,19 +45,23 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 `$ARGUMENTS` may contain a scope, intent description, or both.
 
-**Scope** (determines which diff to review):
-- No args or `staged` → `git diff --cached`, fall back to `git diff`
-- Commit ref (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`
-- `PR #N`, `MR #N`, or just a number:
+**First, detect the base branch** `BASE`: `git symbolic-ref --quiet refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@'`. If that fails, use `main` when `git rev-parse --verify origin/main` succeeds, else `master`. Reviews always diff against `origin/$BASE`.
+
+**Scope** (determines which diff to review). The default is **always the current branch diff against the base branch** — never just unstaged/staged files:
+- **No args** (default) → `git diff origin/$BASE...HEAD` (current branch vs base). If `HEAD` is on `BASE` itself, fall back to `git diff origin/$BASE` (uncommitted work) and note it.
+- **A branch name** (the arg names a ref that is a branch) → `git diff origin/$BASE...<branch>`. For Codex to review the same target (it reviews the *checked-out* branch), checkout `<branch>` first **only if the working tree is clean** (`git status --porcelain` empty); if dirty, proceed with the Claude agents on `git diff origin/$BASE...<branch>` and note that Codex reviewed the current branch instead.
+- **Commit ref** (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`.
+- **`PR #N`, `MR #N`, or just a number:**
   - `repo_host=github` and `has_gh` → `gh pr diff N`
   - `repo_host=gitlab` and `has_glab` → `glab mr diff N`
-  - otherwise → `git diff main...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
-- File path → read the file + `git log -5 --follow <file>`
-- Default: staged/unstaged diff
+  - otherwise → `git diff origin/$BASE...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
+- **File path** → `git diff origin/$BASE...HEAD -- <file>` + `git log -5 --follow <file>`.
+
+`staged` / `unstaged` are **not** default behaviors — only review the index/working tree if the user explicitly types `staged` (`git diff --cached`) or `unstaged` (`git diff`).
 
 **Intent** (everything that isn't a scope token): treat as authoritative context for correctness checking. If the code diverges from the stated intent, that's a blocking finding.
 
-Show a one-line summary: `Reviewing N files, M lines changed` before proceeding.
+Show a one-line summary: `Reviewing <scope> vs origin/$BASE — N files, M lines changed` before proceeding.
 
 ## Step 2: Gather context and clarify intent
 
@@ -88,7 +92,8 @@ Each sub-agent must return findings as a JSON array. Use this schema:
     "severity": "critical|high|medium|low",
     "title": "Short title",
     "body": "What is wrong and why it matters.",
-    "recommendation": "Concrete fix."
+    "recommendation": "Concrete fix.",
+    "mr_comment": "Paste-ready comment for the MR/PR thread on this line: what is wrong, the supporting evidence, and the fix direction. 1-4 sentences, addressed to the author. Plain prose, no code fences."
   }
 ]
 ```
@@ -121,10 +126,10 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
 
-**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1 and does not accept explicit scope flags. If the user specified a non-default scope (e.g., a single file, a specific commit range, or `PR #N`), Codex will review a different target than the Claude agents. Handle this as follows:
-- **User scope matches branch-vs-default** (no args, `staged`, or full branch diff): Codex findings are in-scope — include them in the primary verdict.
-- **User scope is narrower than branch-vs-default** (single file, commit range): Tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict — present them in a separate "Branch-wide Codex findings" section.
-- **User scope is a different target entirely** (`PR #N`, `MR #N`, specific commit ref): Treat Codex as **skipped** for this review — it cannot review the same target. Note in the summary: "Codex reviewers skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide.
+**Scope note:** Codex reviews the **checked-out branch diffed against the base branch** — exactly the new default scope from Step 1. It does not accept explicit scope flags. Since the default and the branch-arg path (after checkout) both put Codex on the same target as the Claude agents, Codex is normally in-scope. Handle the cases:
+- **Default (no args), or a branch arg that was checked out** (working tree clean): Codex reviews the same current-branch-vs-base target — findings are in-scope, include them in the primary verdict.
+- **Branch arg that could NOT be checked out** (dirty tree) **or explicit `staged`/`unstaged`/single file/commit range**: Codex reviewed a different/wider target than the Claude agents. Tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict — present in the separate "Branch-wide Codex findings" section.
+- **`PR #N`, `MR #N`, specific commit ref:** Treat Codex as **skipped** — it cannot scope to that target. Note in the summary: "Codex reviewers skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide.
 
 **Codex #6 — Standard review:**
 ```bash
@@ -209,7 +214,7 @@ Before dedup, normalize Codex findings (#6 and #7) so they have the same `score`
 Spawn a **single haiku agent** with all normalized **scoped** findings (agents #1–#5, plus Codex findings that are NOT tagged `scope: "branch-wide"`).
 
 Instructions for the haiku agent:
-> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial).
+> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, mr_comment, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial). For mr_comment, merge the source comments into one clear paste-ready review comment (Codex findings have no mr_comment — synthesize one from the body/recommendation).
 
 **Branch-wide Codex findings** (tagged `scope: "branch-wide"` in Step 3) are excluded from dedup and the primary verdict. Present them in a separate section after the main findings (see Step 6).
 
@@ -218,6 +223,12 @@ Instructions for the haiku agent:
 Sort findings by `score` descending. **Show everything — do not filter.** The user decides which items to fix.
 
 Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have. Codex findings will be added incrementally once background tasks complete (see Incremental Codex results below).
+
+**Per-finding output — every presented finding must include two paste-ready artifacts:**
+1. **MR comment** — the finding's `mr_comment` field, ready to drop on the MR/PR thread at the cited line.
+2. **Proposed fix (diff)** — a unified diff that resolves the finding. Generate this at presentation time, NOT from the agents: `Read` the cited file at `line_start..line_end` and craft a real `diff` block with **accurate surrounding context lines** (correct `@@` hunk header, the actual unchanged lines, `-` for removed, `+` for added). Do not invent context — read the file first. Verify the change is lint-clean for the repo (e.g. run the formatter/linter mentally per any CLAUDE.md rule).
+   - If the finding is resolved by a **non-code change** (a test/YAML addition, a doc/description rewrite), provide that snippet as the diff instead.
+   - If the finding needs a **design decision before any fix** (e.g. NULL-vs-FALSE policy, grain change), write `_No diff — decision required:_` and state the options succinctly instead of a diff.
 
 ```
 ## Review: <short description of what changed>
@@ -230,11 +241,21 @@ Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do 
 
 [95] [critical] src/foo.ts:42–45 — Null dereference on empty response
 Sources: claude-bugs
-Description and recommendation.
+<What is wrong and why it matters.>
+**MR comment:** <paste-ready mr_comment>
+**Proposed fix:**
+​```diff
+@@ -41,7 +41,7 @@
+   const rows = await db.query(sql)
+-  return rows[0].id
++  return rows[0]?.id ?? null
+​```
 
 [67] [medium] src/bar.ts:12 — Deviates from error-handling pattern in CLAUDE.md
 Sources: claude-compliance · claude-history
-Description and recommendation.
+<What is wrong and why it matters.>
+**MR comment:** <paste-ready mr_comment>
+**Proposed fix:** _No diff — decision required:_ <options>.
 
 ### Branch-wide Codex findings (informational — excluded from verdict)
 <Only shown when user scope is narrower than branch-vs-default. Omit section if all Codex findings are in scope.>
