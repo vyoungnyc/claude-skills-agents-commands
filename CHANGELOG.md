@@ -22,7 +22,7 @@ Only `hooks/enforce-git-conventions.sh` had a test sibling before this release; 
 - **`scripts/poll-pr-reviews.test.sh`** — full documented exit-code contract (0, 1, 2, 3, 10, 11) against a stubbed `gh` returning per-poll GraphQL fixtures, including the `BLOCKED_THRESHOLD` boundary, pidfile kill-and-cleanup (only ever signaling a process the suite itself spawned), and transient-failure survival.
 - **`scripts/poll-mr-reviews.test.sh`** — full documented exit-code contract (0, 1, 2, 3, 4, 10, 11) against a stubbed `glab`, including both remote-URL slug forms, native-approval vs. award-emoji gates, and approval-before-discussions ordering — sandboxed inside a throwaway `git init` directory with a fake `origin` remote.
 - **`scripts/run-tests.sh` added** — the repo's test entry point. Discovers every `*.test.sh` under the repo with no hardcoded list, runs each via `bash <file>` (not as an executable, since `hooks/enforce-git-conventions.test.sh` is mode 644), isolates one suite's failure from the others, and prints per-suite PASS/FAIL lines plus a final `N passed, M failed` summary. Script count 4 → 5.
-- **`hooks/auto-test-runner.sh` extended** — editing any `*.sh` file now also triggers `scripts/run-tests.sh` in the background, alongside the existing vitest/jest detection.
+- **`hooks/auto-test-runner.sh` extended** — editing any `*.sh` file now triggers `scripts/run-tests.sh` synchronously, in place of the existing vitest/jest detection (this repo's shell scripts have no vitest/jest coverage of their own, only `*.test.sh` suites) rather than running alongside it.
 
 ### Findings
 

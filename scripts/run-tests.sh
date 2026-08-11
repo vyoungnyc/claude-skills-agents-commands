@@ -1,10 +1,11 @@
 #!/bin/bash
 # scripts/run-tests.sh — repo test entry point (REQ-005, docs/features/script_tests/PRD.md).
 #
-# Discovers every *.test.sh file under the repo (no hardcoded list — a new
-# suite is picked up automatically) and runs each with `bash <file>`, not as
-# an executable: hooks/enforce-git-conventions.test.sh is mode 644 and would
-# otherwise be skipped or fail outright.
+# Discovers every git-tracked *.test.sh file under the repo (no hardcoded
+# list — a new suite is picked up automatically once committed) and runs
+# each with `bash <file>`, not as an executable:
+# hooks/enforce-git-conventions.test.sh is mode 644 and would otherwise be
+# skipped or fail outright.
 #
 # One suite's failure does not stop the others. Prints one PASS/FAIL line per
 # suite plus a final "N passed, M failed" summary, and exits 0 only when every
@@ -33,6 +34,30 @@ FAILED_SUITES=""
 # -print0 / read -d '' avoids word-splitting and glob expansion on suite
 # paths; `sort -z` gives a deterministic run order. Both are bash-3.2 safe on
 # macOS's BSD find/sort.
+#
+# Discovery is scoped to tracked files via `git ls-files` rather than a
+# filesystem `find`: an untracked *.test.sh dropped anywhere under the repo
+# (e.g. inside an untracked scratch dir, a malicious or accidental copy, or a
+# stale worktree artifact) would otherwise be picked up and executed with no
+# review — `bash "$suite"` runs arbitrary code. Falling back to `find` (with
+# `.git`, `.claude/worktrees`, and `node_modules` pruned) only when this repo
+# has no git history to query, which in practice never happens here.
+if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  discover_suites() {
+    git -C "$REPO_ROOT" ls-files -z '*.test.sh' | while IFS= read -r -d '' rel; do
+      printf '%s\0' "$REPO_ROOT/$rel"
+    done | sort -z
+  }
+else
+  discover_suites() {
+    find "$REPO_ROOT" -type f -name "*.test.sh" \
+      -not -path "*/.git/*" \
+      -not -path "*/.claude/worktrees/*" \
+      -not -path "*/node_modules/*" \
+      -print0 | sort -z
+  }
+fi
+
 while IFS= read -r -d '' suite; do
   suite_rel="${suite#"$REPO_ROOT"/}"
 
@@ -48,7 +73,7 @@ while IFS= read -r -d '' suite; do
     FAIL_COUNT=$((FAIL_COUNT + 1))
     FAILED_SUITES="$FAILED_SUITES $suite_rel"
   fi
-done < <(find "$REPO_ROOT" -type f -name "*.test.sh" -not -path "*/.git/*" -print0 | sort -z)
+done < <(discover_suites)
 
 echo ""
 echo "$PASS_COUNT passed, $FAIL_COUNT failed"

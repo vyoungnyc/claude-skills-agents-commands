@@ -18,7 +18,14 @@ BLOCKED_THRESHOLD=3
 # Bracket literals are written as character classes ([[] and []]) rather than
 # backslash escapes: this string is interpolated into a jq program inside a JSON
 # string literal, where \[ is not a valid escape and fails to compile.
-BASE_BOT_PATTERNS="[[]bot[]]$|-bot-|^chatgpt-codex|^cursor-bugbot"
+#
+# `-bot$` (end-anchored) rather than the previous unanchored `-bot-`: the
+# unanchored form matched any login containing "-bot-" anywhere, so a
+# malicious or spoofed login like "mallory-bot-reviewer" would satisfy the
+# bot-approval gate. End-anchoring restricts it to logins that actually end
+# in "-bot" (e.g. "dependabot-bot"-style names), matching the intent of the
+# other anchored patterns in this list.
+BASE_BOT_PATTERNS="[[]bot[]]$|-bot$|^chatgpt-codex|^cursor-bugbot"
 
 _CLEANUP_PATHS=()
 
@@ -44,25 +51,61 @@ require_positive_int() {
   fi
 }
 
+# Process start time as reported by `ps`, used as a cheap identity token
+# alongside a PID: the OS recycles PIDs, so a bare PID read back from a
+# pidfile is not enough to know it still names the same process instance.
+# Pairing it with the start time it had when we recorded it is the standard
+# PID-reuse-safe identity check (same technique used by pidfile-based
+# supervisors); no /proc parsing needed since `ps -o lstart=` works
+# identically on this repo's macOS/bash-3.2 target and on Linux.
+_pid_start_time() {
+  ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 acquire_pidfile() {
   local pidfile="$1"
   register_cleanup "$pidfile"
 
   if [ -f "$pidfile" ]; then
-    local old_pid
-    old_pid=$(cat "$pidfile" 2>/dev/null || true)
+    local raw old_pid old_start
+    raw=$(cat "$pidfile" 2>/dev/null || true)
+    old_pid="${raw%%:*}"
+    if [ "$raw" = "$old_pid" ]; then
+      # No "pid:start_time" separator — a pidfile from before this identity
+      # check existed, or one written by something other than this
+      # function. No start time to verify against, so identity can't be
+      # confirmed either way; fall back to the prior kill-if-alive behavior
+      # rather than refusing to ever reap a pidfile in this shape.
+      old_start=""
+    else
+      old_start="${raw#*:}"
+    fi
+
+    # Before signaling a PID read from a pidfile, confirm it's still the
+    # same process instance rather than blindly killing whatever now holds
+    # that PID — PIDs are recycled by the OS, so a stale pidfile can point
+    # at an unrelated process by the time we get around to reading it. When
+    # a start time was recorded, an unrelated process that happens to have
+    # been assigned the same PID will almost certainly have a different
+    # start time and is left alone.
     if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-      kill "$old_pid" 2>/dev/null || true
-      local i
-      for i in 1 2 3; do
-        kill -0 "$old_pid" 2>/dev/null || break
-        sleep 1
-      done
-      kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
-      echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $old_pid)" >&2
+      local identity_ok=1
+      if [ -n "$old_start" ]; then
+        [ "$(_pid_start_time "$old_pid")" = "$old_start" ] || identity_ok=0
+      fi
+      if [ "$identity_ok" = "1" ]; then
+        kill "$old_pid" 2>/dev/null || true
+        local i
+        for i in 1 2 3; do
+          kill -0 "$old_pid" 2>/dev/null || break
+          sleep 1
+        done
+        kill -0 "$old_pid" 2>/dev/null && kill -9 "$old_pid" 2>/dev/null || true
+        echo "[$(date +"%H:%M:%S")] Killed previous polling instance (PID $old_pid)" >&2
+      fi
     fi
   fi
-  echo $$ > "$pidfile"
+  echo "$$:$(_pid_start_time "$$")" > "$pidfile"
 }
 
 # Set difference: IDs in $1 not in $2 (both pre-sorted, one per line).
