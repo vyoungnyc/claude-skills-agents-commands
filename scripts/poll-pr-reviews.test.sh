@@ -55,8 +55,8 @@ fi
 STUBEOF
 chmod +x "$STUB_BIN/gh"
 
-# Cleanup: pidfiles live in /tmp (hardcoded by the script under test, see
-# DEF/FINDINGS note below), never inside SUITE_TMP; remove SUITE_TMP itself.
+# Cleanup: pidfiles live in ${TMPDIR:-/tmp} (per the script under test),
+# never inside SUITE_TMP; remove SUITE_TMP itself.
 cleanup_suite() {
   rm -rf "$SUITE_TMP"
 }
@@ -125,7 +125,7 @@ new_pr() {
 
 pidfile_for() {
   local owner="$1" name="$2" pr="$3"
-  echo "/tmp/poll-pr-reviews-${owner}-${name}-${pr}.pid"
+  echo "${TMPDIR:-/tmp}/poll-pr-reviews-${owner}-${name}-${pr}.pid"
 }
 
 EXERCISED_CODES=""
@@ -331,6 +331,26 @@ for bad_max in 0 -1 abc; do
 done
 mark_exercised 10
 
+# GraphQL-injection guard: a crafted pr_number must be rejected as a usage
+# error (exit 10) rather than reaching the GraphQL query interpolation, per
+# the FINDINGS.md "poll-pr-reviews.sh does not validate PR_NUMBER/OWNER/NAME"
+# security-relevant gap.
+new_case
+run_pr "$CASE_DIR" "$OWNER_BASE/repoInj" "1) {id} } } #" 1 4
+expect_exit 10 "GraphQL-injection pr_number"
+expect_stderr_match "pr_number must be a positive integer" "GraphQL-injection pr_number message"
+expect_stderr_no_match "unbound variable" "GraphQL-injection pr_number: clean stderr"
+
+# owner/name charset guard: values outside ^[A-Za-z0-9._-]+$ must be rejected
+# before GraphQL interpolation, not passed through.
+for bad_repo in "bad owner/repo" "owner/bad name" "owner/repo;drop"; do
+  new_case; new_pr
+  run_pr "$CASE_DIR" "$bad_repo" "$PR" 1 4
+  expect_exit 10 "invalid owner/name repo='$bad_repo'"
+  expect_stderr_match 'owner and name must match' "invalid owner/name repo='$bad_repo' message"
+  expect_stderr_no_match "unbound variable" "invalid owner/name repo='$bad_repo': clean stderr"
+done
+
 # =============================================================================
 # Exit 11 (SNAPSHOT_FAILURE)
 # =============================================================================
@@ -385,11 +405,17 @@ sleep 0.3
 wait "$BGPID" 2>/dev/null || true
 [ ! -f "$PF" ] || fail "pidfile lifecycle: expected pidfile $PF to be removed after exit"
 
-# Stale-pidfile kill (back-compat, bare-PID format, no "pid:lstart"
-# separator) — asserted only against a process the suite itself spawned
-# (never a PID we did not create). Proves acquire_pidfile's back-compat
-# branch (raw pidfile content with no identity token) still unconditionally
-# kills a live process at that PID, same as pre-identity-check behavior.
+# Stale-pidfile, bare-PID format (no "pid:lstart" separator) — asserted only
+# against a process the suite itself spawned (never a PID we did not
+# create). A colon-less pidfile carries no identity token to verify against,
+# and its path is fully predictable from owner/name/pr — on a shared host an
+# attacker could pre-create it naming an arbitrary live process, then wait
+# for a legitimate run to kill it on their behalf (a same-user DoS). Per the
+# FINDINGS.md remediation, acquire_pidfile's back-compat branch no longer
+# falls back to unconditional kill-if-alive in this shape: the self-spawned
+# process must be left ALIVE and a "no identity token" warning logged
+# instead. This flips the prior assertion (kill-if-alive) intentionally —
+# it is a DoS closure, not a regression.
 new_case; new_pr
 OWNER_STALE="staleowner$$"
 NAME_STALE="stalerepo"
@@ -400,9 +426,12 @@ sleep 30 &
 SLEEP_PID=$!
 echo "$SLEEP_PID" > "$PF_STALE"
 run_pr "$CASE_DIR" "$OWNER_STALE/$NAME_STALE" "$PR" 1 4
-expect_exit 0 "stale pidfile kill: run still completes normally"
-kill -0 "$SLEEP_PID" 2>/dev/null && fail "stale pidfile kill: self-spawned sleep should have been killed" || true
-echo "$ERR" | grep -q "Killed previous polling instance (PID $SLEEP_PID)" || fail "stale pidfile kill: expected kill message logged"
+expect_exit 0 "stale pidfile, bare-PID format: run still completes normally"
+kill -0 "$SLEEP_PID" 2>/dev/null || fail "stale pidfile, bare-PID format: self-spawned sleep should have been left ALIVE (no identity token must block the kill)"
+expect_stderr_no_match "Killed previous polling instance" "stale pidfile, bare-PID format: no kill message should be logged"
+echo "$ERR" | grep -q "Pidfile has no identity token, not killing (PID $SLEEP_PID)" || fail "stale pidfile, bare-PID format: expected no-identity-token warning logged"
+kill "$SLEEP_PID" 2>/dev/null || true
+wait "$SLEEP_PID" 2>/dev/null || true
 rm -f "$PF_STALE"
 
 # Stale-pidfile identity mismatch ("pid:lstart" format, wrong start time) —

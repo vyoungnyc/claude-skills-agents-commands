@@ -180,7 +180,7 @@ assert_slug_and_pidfile_lifecycle() {
   seed_neutral_defaults
   fixture approvals 1 '{"approved": true, "approvals_left": 5, "approved_by": [{"user": {"username": "alice"}}]}'
 
-  pidfile="/tmp/poll-mr-reviews-${expected_slug}-${mr}.pid"
+  pidfile="${TMPDIR:-/tmp}/poll-mr-reviews-${expected_slug}-${mr}.pid"
   rm -f "$pidfile"
 
   "$POLL_MR" "$mr" 1 1 >"$SCRATCH/out.json" 2>"$ERR_FILE" &
@@ -214,17 +214,24 @@ assert_slug_and_pidfile_lifecycle \
 git remote set-url origin "https://gitlab.example.com/default/repo.git"
 
 # ---------------------------------------------------------------------------
-# Pidfile kill-previous-instance path (same semantics as REQ-003): the suite
-# spawns its OWN sleep process, records it in the expected pidfile, and
-# asserts the script kills exactly that process and logs the message. The
-# suite must never signal a PID it did not create.
+# Pidfile, bare-PID format (no "pid:lstart" separator) — asserted only
+# against a process the suite itself spawned (never a PID we did not
+# create). A colon-less pidfile carries no identity token to verify against,
+# and its path is fully predictable from slug/mr_iid — on a shared host an
+# attacker could pre-create it naming an arbitrary live process, then wait
+# for a legitimate run to kill it on their behalf (a same-user DoS). Per the
+# FINDINGS.md remediation, acquire_pidfile's back-compat branch no longer
+# falls back to unconditional kill-if-alive in this shape: the self-spawned
+# process must be left ALIVE and a "no identity token" warning logged
+# instead. This flips the prior assertion (kill-if-alive) intentionally —
+# it is a DoS closure, not a regression.
 # ---------------------------------------------------------------------------
 
-test_kill_previous_instance() {
+test_bare_pid_not_killed() {
   local mr slug pidfile old_pid
   mr=$(next_mr_iid)
   slug="default-repo"
-  pidfile="/tmp/poll-mr-reviews-${slug}-${mr}.pid"
+  pidfile="${TMPDIR:-/tmp}/poll-mr-reviews-${slug}-${mr}.pid"
 
   sleep 30 &
   old_pid=$!
@@ -237,22 +244,27 @@ test_kill_previous_instance() {
   fixture approvals 1 '{"approved": true, "approvals_left": 5, "approved_by": [{"user": {"username": "carol"}}]}'
 
   run_and_capture "$mr" 1 1
-  expect_exit "kill-previous-instance" 0 "$CODE"
+  expect_exit "bare-pid-not-killed" 0 "$CODE"
   mark_exercised 0
 
-  expect_stderr_match "kill-previous-instance log line" \
-    "Killed previous polling instance \\(PID $old_pid\\)"
+  grep -q "Killed previous polling instance" "$ERR_FILE" && \
+    fail "bare-pid-not-killed: no kill message should be logged (got: $(cat "$ERR_FILE"))"
 
-  if kill -0 "$old_pid" >/dev/null 2>&1; then
-    fail "kill-previous-instance: old pid $old_pid still alive after run"
+  grep -q "Pidfile has no identity token, not killing (PID $old_pid)" "$ERR_FILE" || \
+    fail "bare-pid-not-killed: expected no-identity-token warning logged"
+
+  if ! kill -0 "$old_pid" >/dev/null 2>&1; then
+    fail "bare-pid-not-killed: self-spawned sleep should have been left ALIVE (no identity token must block the kill)"
   fi
+  kill "$old_pid" 2>/dev/null || true
+  wait "$old_pid" 2>/dev/null || true
   SPAWNED_PID=""
 
   if [ -f "$pidfile" ]; then
-    fail "kill-previous-instance: pidfile not cleaned up"
+    fail "bare-pid-not-killed: pidfile not cleaned up"
   fi
 }
-test_kill_previous_instance
+test_bare_pid_not_killed
 
 # ---------------------------------------------------------------------------
 # Exit 0 — native approval (approved:true, and separately approvals_left:0)
