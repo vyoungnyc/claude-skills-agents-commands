@@ -75,6 +75,18 @@ acquire_pidfile() {
   # a directory only this user can write to at all.
   mkdir -m 700 -p "$piddir" 2>/dev/null || true
 
+  # `mkdir -m` only applies the mode to directories mkdir actually creates —
+  # if $piddir already existed (e.g. an attacker on a shared host pre-created
+  # it at this predictable per-uid path, world-writable or as a symlink,
+  # before this user's first run), `-p` suppresses the "exists" error and the
+  # mode request is silently a no-op. Explicitly verify the directory is not
+  # a symlink, does exist, and is owned by this user before trusting anything
+  # inside it.
+  if [ -L "$piddir" ] || [ ! -d "$piddir" ] || [ ! -O "$piddir" ]; then
+    echo "[$(date +"%H:%M:%S")] Pidfile directory is untrusted, refusing (path: $piddir)" >&2
+    return 0
+  fi
+
   register_cleanup "$pidfile"
 
   # Never follow a symlink at the pidfile path — `echo ... > "$pidfile"`
@@ -133,7 +145,17 @@ acquire_pidfile() {
       fi
     fi
   fi
-  echo "$$:$(_pid_start_time "$$")" > "$pidfile"
+  # Write via a temp file in the same (now-verified-trusted) directory and
+  # rename over the target rather than writing to $pidfile directly: a
+  # symlink planted at $pidfile between the [ -L "$pidfile" ] check above and
+  # this write (e.g. during the multi-second kill-retry loop) would otherwise
+  # be silently followed by `>`, letting an attacker clobber an arbitrary
+  # file this user can write to. `mv` replaces the symlink itself instead of
+  # following it, closing that window.
+  local tmpf
+  tmpf=$(mktemp "$piddir/.pid.XXXXXX") || return 0
+  echo "$$:$(_pid_start_time "$$")" > "$tmpf"
+  mv -f "$tmpf" "$pidfile"
 }
 
 # Set difference: IDs in $1 not in $2 (both pre-sorted, one per line).

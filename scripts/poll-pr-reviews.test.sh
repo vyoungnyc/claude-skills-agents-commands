@@ -520,6 +520,77 @@ echo "$ERR" | grep -q "Pidfile is a symlink, refusing to follow" || fail "symlin
 rm -f "$SENTINEL"
 
 # =============================================================================
+# Pidfile directory verification — refused when untrusted (residual gap:
+# `mkdir -m 700 -p` is a no-op on a pre-existing directory)
+# =============================================================================
+
+# The pidfile's parent directory lives at a predictable per-uid path
+# (${TMPDIR:-/tmp}/poll-$(id -u)), shared by every pidfile this suite writes.
+# If an attacker plants a symlink there before acquire_pidfile ever runs
+# (simulating a pre-created, untrusted directory — the "mkdir -m is a no-op
+# on an existing dir" gap), acquire_pidfile must detect it via the
+# post-mkdir verification and refuse outright: log a warning, write nothing
+# anywhere, and leave the symlink exactly as found (refuse, don't repair —
+# repairing would mean deleting something inside a directory we don't trust).
+new_case; new_pr
+OWNER_BADDIR="baddirowner$$"
+NAME_BADDIR="baddirrepo"
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "dependabot[bot]" > "$CASE_DIR/2.json"
+PF_BADDIR="$(pidfile_for "$OWNER_BADDIR" "$NAME_BADDIR" "$PR")"
+PIDDIR_BADDIR="$(dirname "$PF_BADDIR")"
+ELSEWHERE="$SUITE_TMP/elsewhere_$PR"
+mkdir -p "$ELSEWHERE"
+# Replace the piddir (already created 0700 by earlier cases in this suite)
+# with a symlink to an unrelated directory, standing in for an attacker
+# having pre-planted it before this user's first run.
+rm -rf "$PIDDIR_BADDIR"
+ln -s "$ELSEWHERE" "$PIDDIR_BADDIR"
+run_pr "$CASE_DIR" "$OWNER_BADDIR/$NAME_BADDIR" "$PR" 1 4
+expect_exit 0 "untrusted pidfile directory: run still completes normally (degrades, does not crash)"
+echo "$ERR" | grep -q "Pidfile directory is untrusted, refusing" || fail "untrusted pidfile directory: expected refusal message logged"
+[ -z "$(ls -A "$ELSEWHERE" 2>/dev/null)" ] || fail "untrusted pidfile directory: nothing should have been written into the attacker-controlled target directory"
+[ -L "$PIDDIR_BADDIR" ] || fail "untrusted pidfile directory: symlink should be left exactly as found (refuse, not repair)"
+# Restore a legitimate 0700 directory: later suite runs (and the trailing
+# cleanup trap) expect the shared piddir to be a real, owned directory.
+rm -f "$PIDDIR_BADDIR"
+mkdir -m 700 -p "$PIDDIR_BADDIR"
+
+# TOCTOU closure: a symlink planted at the pidfile *path* (not its parent
+# directory) mid-run — specifically during the multi-second kill-retry loop
+# inside acquire_pidfile, after the initial `[ -L "$pidfile" ]` check has
+# already passed — must not be followed by the final write. The identity
+# process below ignores SIGTERM (via a trap) so the kill-retry loop is
+# forced through its full ~3-second window (1s poll x 3 before SIGKILL),
+# giving a background job time to swap the pidfile path for a symlink
+# pointing at a sentinel file partway through.
+new_case; new_pr
+OWNER_TOCTOU="toctouowner$$"
+NAME_TOCTOU="toctourepo"
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "dependabot[bot]" > "$CASE_DIR/2.json"
+PF_TOCTOU="$(pidfile_for "$OWNER_TOCTOU" "$NAME_TOCTOU" "$PR")"
+mkdir -p "$(dirname "$PF_TOCTOU")"
+bash -c 'trap "" TERM; exec sleep 30' &
+TOCTOU_PID=$!
+echo "$TOCTOU_PID:$(ps -o lstart= -p "$TOCTOU_PID" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')" > "$PF_TOCTOU"
+TOCTOU_SENTINEL="$SUITE_TMP/toctou_sentinel_$PR"
+printf 'do not touch me either' > "$TOCTOU_SENTINEL"
+(
+  sleep 1.5
+  rm -f "$PF_TOCTOU"
+  ln -sf "$TOCTOU_SENTINEL" "$PF_TOCTOU"
+) &
+PLANTER_PID=$!
+run_pr "$CASE_DIR" "$OWNER_TOCTOU/$NAME_TOCTOU" "$PR" 1 4
+wait "$PLANTER_PID" 2>/dev/null || true
+expect_exit 0 "pidfile TOCTOU: run still completes normally"
+[ "$(cat "$TOCTOU_SENTINEL")" = "do not touch me either" ] || fail "pidfile TOCTOU: sentinel content was modified (mid-run symlink was followed / clobbered)"
+kill -0 "$TOCTOU_PID" 2>/dev/null && kill -9 "$TOCTOU_PID" 2>/dev/null || true
+wait "$TOCTOU_PID" 2>/dev/null || true
+rm -f "$TOCTOU_SENTINEL" "$PF_TOCTOU"
+
+# =============================================================================
 # Exit 4 (PIPELINE_FAILED) — deliberately NOT asserted.
 # PIPELINE_FAILED is GitLab-only (poll-mr-reviews.sh); poll-pr-reviews.sh has
 # no code path that emits it, so it is not exercised by this suite. This is

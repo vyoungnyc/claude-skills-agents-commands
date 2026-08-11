@@ -133,7 +133,7 @@ Parallelizable coder steps:
 8. Merge worker branches back per **Post-swarm merge-back** below.
 9. Emit the **swarm report**, then proceed to streaming review (step 5 below).
 
-**Turn budget.** There is no per-spawn turn budget — the Agent tool accepts `subagent_type`, `model`, `isolation`, `name`, `prompt`, and `run_in_background`, and nothing for turns. `agents/coder.md`'s frontmatter `maxTurns: 30` applies to **every** worker regardless of batch complexity; complexity drives **model selection only**. High-complexity batches therefore run on 30 turns rather than the 40 they once received, which makes the `max_turns` recovery row *more* likely to fire — size batches accordingly.
+**Turn budget.** There is no per-spawn turn budget — the Agent tool accepts `subagent_type`, `model`, `isolation`, `name`, `prompt`, and `run_in_background`, and nothing for turns. `agents/coder.md`'s frontmatter `maxTurns: 45` applies to **every** worker regardless of batch complexity; complexity drives **model selection only**. Even 45 is not a substitute for tight scoping: dispatch prompts should stay single-concern where possible — a batch bundling several distinct fixes into one worker is more likely to hit the ceiling mid-commit than several smaller, sequential or parallel dispatches would. Size batches accordingly, and treat `max_turns` recovery firing as a signal the prior batch was scoped too broadly, not just bad luck.
 
 **Agent team rules (for subagent pattern B):**
 - ALWAYS assign non-overlapping file domains (no worktree isolation in teams).
