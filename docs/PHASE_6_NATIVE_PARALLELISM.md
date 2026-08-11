@@ -46,6 +46,9 @@ Run one real 3-batch feature both ways and compare:
 - Simplify tiered failure recovery: `max_turns` → respawn with upgraded model (unchanged); `infrastructure` → `SendMessage` continue instead of `claude --resume`; `launch_failure` largely disappears (harness owns worktree creation).
 
 ### P6.3 — Demote swarm-dispatch.sh to fallback
+
+> **Superseded** (v2.6.0, feature `native_swarm`) — this section is retained as a historical record only. The script was **fully retired and deleted**, not demoted to a fallback, which is what the Decisions section above already called for. Cross-machine/CI dispatch is covered by `docs/CI_DISPATCH.md`; per-session cost JSON was explicitly dropped; and the spike (`docs/features/native_swarm/SPIKE_FINDINGS.md`) found native worktree merge semantics sufficient. The exit criterion below remains open and lands on the next feature run through the pipeline.
+
 - Keep the script for: cross-machine/CI dispatch, runs needing per-session cost JSON, or if native worktree merge semantics prove insufficient.
 - Update: `orchestrator.md` dispatch decision, `execute-prd.md`, `AGENT_TEAMS_GUIDE.md` Pattern 5, README tables.
 

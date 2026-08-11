@@ -120,7 +120,7 @@ Is work sequential with strict gating?
   → YES → Use standard subagent dispatch (default)
 
 Are there 3+ independent steps across separate file domains?
-  → YES → Use swarm dispatch (Pattern 5 — parallel worktrees)
+  → YES → Use native swarm dispatch (Pattern 5 — background subagents, worktree isolation)
 
 Are there 2 independent modules that can be built in parallel?
   → YES → Are the file domains clearly separable?
@@ -166,24 +166,30 @@ Agent teams are an **additional pattern**, not a replacement for the orchestrato
 
 Teams integrate at step 3-4. All other workflow stages (planning, gating, documentation) continue unchanged.
 
-### Pattern 5: Swarm Implementation (Parallel Worktree Sessions)
+### Pattern 5: Native Swarm Implementation (Background Subagents in Worktrees)
 
-**When to use:** 3+ parallelizable implementation steps, want maximum throughput with automatic load balancing.
+**When to use:** 3+ parallelizable implementation steps, want maximum throughput across separable file domains.
 
-**How it works:** The orchestrator groups plan steps into domain batches (backend, frontend, infra, tests). `swarm-dispatch.sh` launches N parallel claude sessions, each in its own git worktree. Each session can use agent teams for work-stealing within its batch. Sessions run as background processes (`&` + `wait`) with `--output-format json` for structured results.
+**How it works:** The orchestrator groups plan steps into domain batches (backend, frontend, infra, tests) and spawns **one background `coder` subagent per batch** via the Agent tool with `isolation: "worktree"` and `run_in_background: true`. The harness creates and manages each worktree; there is no external process management.
+
+Each worker's steps are **pre-assigned inline in its spawn prompt** — step IDs in order, file domain, issue numbers, acceptance criteria. Spawned subagents cannot see the Task tools, so the orchestrator's `TaskCreate` queue (entries carrying `file_domain`, `issue_ref`, `complexity`) is a progress ledger on the orchestrator side, not the workers' work list. There is no work-stealing between workers: batches own disjoint file domains by construction.
+
+Worker worktrees are cut from `origin/main`, **not** from the dispatching branch, so every spawn prompt must begin by merging the feature branch (`git merge feature/<id> --no-edit`) before any work starts.
 
 **Model selection:** Complexity-based per batch:
-- `high` (novel architecture, security-critical, complex integrations) → opus, 40 turns
-- `medium` (standard features, known patterns, moderate integration) → sonnet, 30 turns
-- `low` (boilerplate, config, simple CRUD, well-understood patterns) → haiku, 20 turns
+- `high` (novel architecture, security-critical, complex integrations) → opus
+- `medium` (standard features, known patterns, moderate integration) → sonnet
+- `low` (boilerplate, config, simple CRUD, well-understood patterns) → haiku
 
-Model per session = max complexity in the batch (highest wins).
+Model per worker = max complexity in the batch (highest wins).
 
-**GitHub integration:** Each session receives its GitHub issue numbers. Coders read acceptance criteria via `gh issue view`, validate each criterion before completing, and close issues with a commit reference: `gh issue close N -c "Fixed in abc123. All criteria met."` The orchestrator tracks progress via `gh issue list --label "feature:{id}"`.
+**Turn budget:** fixed. The Agent tool has no per-spawn turn parameter, so `agents/coder.md`'s frontmatter `maxTurns: 30` applies to every worker regardless of complexity — complexity selects the model and nothing else. High-complexity batches get 30 turns rather than the 40 they once did, so keep batches small.
 
-**Merge:** `git merge --no-ff` each worktree branch back into the feature branch after all sessions complete. If conflicts occur, the orchestrator spawns a conflict-resolution session.
+**GitHub integration:** Each spawn prompt carries its GitHub issue numbers. Coders read acceptance criteria via `gh issue view`, validate each criterion before completing, and close issues with a commit reference: `gh issue close N -c "Fixed in abc123. All criteria met."` The orchestrator tracks progress via `gh issue list --label "feature:{id}"`.
 
-**Recovery:** If a session exhausts `maxTurns`, the orchestrator reads the `session_id` from JSON output and resumes via `claude --resume "session-id" -p "Continue where you left off"`. In-progress work is preserved in the worktree's commits.
+**Merge:** orchestrator-owned, per the sequence in `agents/orchestrator.md`. Worker commits land on `worktree-agent-<id>` branches; merge with `git merge --no-ff` after skipping failed/incomplete workers, absent branches, and branches with no new commits. Salvage any dirty worktree (`git -C <worktree> status --porcelain`) before removing it — `--force` discards uncommitted work permanently. On conflict, the orchestrator spawns a conflict-resolution session.
+
+**Recovery:** `max_turns` → respawn with an upgraded model (haiku→sonnet→opus, then escalate). A stalled or incomplete worker → `SendMessage` continuation, but **only while its worktree still exists**; after a clean completion tore the worktree down, respawn a fresh worker instead. Reset the abandoned tasks' `owner`/`status` in the tracking queue before any respawn.
 
 **When NOT to use:**
 - Fewer than 3 steps — subagents are cheaper and simpler
