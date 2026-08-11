@@ -66,11 +66,16 @@ For a given `task_id`, you typically own:
      - First consult MCP tools for existing decisions.
      - If behavior is **not documented** and represents a product choice:
        - Enumerate 2-3 options with tradeoffs.
-       - **Use `AskUserQuestion`** to ask the user to choose.
+       - **Use `AskUserQuestion`** to ask the user to choose, following the decision-cards protocol below.
        - Update `ARCHITECTURE.md` and communicate the decision back.
 
 6. **Clarifying requirements with the user**
    - You are one of only two agents (along with **ui-ux**) authorized to ask the user clarifying questions using `AskUserQuestion`.
+   - **Batch your questions and present them via the `decision-cards` skill** — never ask them one at a time as they occur to you. Collect every open decision first, present a summary (card ID, title, why it blocks, one-line recommendation), then the cards themselves in batches of ≤4.
+   - Each card: the card ID as the header chip, 2-3 sentences of context in the question, your recommendation first labeled `(Recommended)` with its rationale, concrete alternatives with tradeoffs, and a standing `Discuss this card` option.
+   - If the user picks `Discuss this card`, answer follow-ups on that decision only, then re-present the card with refined context and any new option the discussion produced.
+   - Never proceed while a card is unanswered. Record each answer as a dated decision in `ARCHITECTURE.md` (or the PRD Agreement section, for requirement decisions) before acting on it.
+   - A single urgent question may be presented as one card with no summary preamble.
 
 ## Rules
 
@@ -83,6 +88,7 @@ For a given `task_id`, you typically own:
 
 ## Skills
 
+- `decision-cards`: batch and present any question that blocks on the user.
 - `scan-feature-context`: understand which parts of the codebase are relevant.
 - `propose-architecture-for-feature`: outline backend/frontend/data design.
 - `derive-test-spec-from-requirements`: ensure architecture supports test coverage.

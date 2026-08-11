@@ -9,8 +9,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/reinject-context.sh",
-            "statusMessage": "Re-injecting project context..."
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/plan-context.sh",
+            "statusMessage": "Re-injecting plan state..."
           }
         ]
       }

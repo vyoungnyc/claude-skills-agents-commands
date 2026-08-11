@@ -1,116 +1,51 @@
-# CLAUDE.md — Development & Engineering Standards
+# CLAUDE.md — Global Engineering Standards
 
-## Project Overview
-**Tech Stack:** Node.js 22 + TypeScript (Fastify/Express), React 18 + Next.js (App Router), Terraform + AWS SDK v3, Jest + Playwright, PostgreSQL + Prisma ORM
+<!-- This file deploys to ~/.claude/CLAUDE.md (user scope — loaded in EVERY project).
+     Keep it universal. Stack-specific rules live in rules/ (path-scoped, load only
+     when matching files are touched). Per-project architecture, commands, and
+     conventions belong in each repo's own CLAUDE.md — run /init there. -->
+
+These are cross-project personal standards. Project-specific details (tech stack, build commands, architecture) belong in each project's own `CLAUDE.md`, not here.
 
 ## Core Principles
-- **Plan First:** Major changes require a written, reviewed plan and explicit approval before execution.
-- **Think Independently:** Critically evaluate decisions; propose better alternatives when appropriate.
-- **Confirm Before Action:** Seek approval before structural or production-impacting work.
-- **UI-First & Test-Driven:** Validate UI early; all code must pass Jest + Playwright tests before merge.
-- **Security Always:** Never commit secrets or credentials; follow least-privilege.
-- **No Automated Co-Authors:** Do not include "Claude" or any AI as a commit co-author.
 
-## Context Hierarchy
-```
-CLAUDE.md                 # Project-level standards
-/src/CLAUDE.md            # Module/component rules & conventions
-/features/<name>/CLAUDE.md# Feature-specific rules, risks, and contracts
-/plans/*                  # Phase plans with context intelligence
-/docs/*                   # Living docs (API, ADRs, runbooks)
-```
+- **Plan first:** Major or structural changes require a written plan and my explicit approval before implementation. Use plan mode for this.
+- **Think independently:** Critically evaluate decisions; propose better alternatives when appropriate.
+- **Security always:** Never commit secrets or credentials. Least privilege for services and developers.
+- **No AI co-authors:** Never add "Claude" or any AI as a commit co-author. No "Generated with" footers in commits or PR bodies.
 
 ## File Management
-Never save working files, text/mds, or tests to the project root. Use:
-- `/src` — Source code
-- `/tests` — Test files
-- `/docs` — Documentation & markdown
-- `/config` — Configuration
-- `/scripts` — Utility scripts
-- `/examples` — Example code
 
-## Agent Spawning Patterns
+Never save working files, scratch notes/markdown, or tests to a project root. Use the project's structure: `/src`, `/tests`, `/docs`, `/config`, `/scripts`, `/examples`. Phased work goes under `/plans/PHASE_*` with scope, risks, dependencies, and exit criteria.
 
-**Pattern A: Subagents (default — hub-and-spoke)**
-```
-Orchestrator dispatches to named agents in .claude/agents/:
-  architect              → design (read-only + MCP tools, opus, memory: project)
-  backend-coder         → backend impl + tests (sonnet, isolation: worktree, memory: project)
-  frontend-coder        → frontend impl + tests (sonnet, isolation: worktree, memory: project)
-  ui-ux                 → UX flows, design system guidance (sonnet, memory: project, AskUserQuestion)
-  reviewer              → code review (opus, permissionMode: plan, memory: project, Agent — read-only sub-agents only)
-  security-researcher   → security audit (opus, permissionMode: plan, memory: project)
-```
+## Git
 
-**Pattern B: Parallel review team (reviewer + security-researcher)**
-```
-After coders finish implementation, reviewer and security-researcher run in parallel:
-  - Reviewer checks functionality, style, test coverage, and API contracts
-  - Security-researcher audits for vulnerabilities, data flows, and compliance
-
-Both agents run concurrently with no dependencies, then results are merged.
-```
-
-**Pattern C: Swarm (parallel claude sessions in worktrees, 3+ steps)**
-```
-Orchestrator groups steps into domain batches with complexity ratings.
-swarm-dispatch.sh launches N claude sessions, each in its own worktree.
-Model per session: opus (high complexity), sonnet (medium), haiku (low).
-Each session can spawn an agent team for work-stealing within its batch.
-Coders validate against GitHub issue acceptance criteria, close issues when done.
-Results merged via git merge after all sessions complete.
-```
-
-## Task Tracking
-- [ ] Incomplete or not started
-- [✅] Completed
-- [⚠️] Partially complete, requires user action
-- [❌] Cannot be completed or do not do
-- [⏳] Deferred (specify the phase)
+- Conventional commits: `type(scope): subject` (feat/fix/refactor/test/docs/chore).
+- Feature branches (`feature/<id>`); never commit directly to main; never force-push shared branches.
+- Commit and push only when asked, or when an approved workflow step requires it.
 
 ## Testing
-- ≥ 85% branch coverage project-wide; 100% for critical paths and security-sensitive code.
-- Auto-generate unit tests for new/changed functions.
-- Generate edge-case and mutation tests for critical paths.
 
-## Security
-- No secrets in code; store in vault, rotate quarterly.
-- Lockfiles required; `npm audit --audit-level=moderate` in CI.
-- Principle of least privilege for services and developers.
-- Encryption in-transit and at-rest; RLS on all applicable tables.
-- SAST/DAST and dependency scanning on every PR.
+- New or changed behavior ships with tests in the same change.
+- Target ≥ 85% branch coverage; 100% for critical paths and security-sensitive code.
+- All tests must pass before merge.
 
-## UI Standards
-- Use shadcn/ui; prefer composition over forking.
-- Keep state minimal and localized; heavy state in hooks/stores.
-- Prototype screens as static components under `UI_prototype/`.
-- Validate key flows with Playwright.
+## Task Tracking Markers
 
-## Backend, Database & Infra
+- `[ ]` not started · `[✅]` done · `[⚠️]` needs user action · `[❌]` blocked/won't do · `[⏳]` deferred (note target phase)
 
-**Prisma:** Keep schema in `prisma/schema.prisma`, commit all migrations. Use isolated test DB. Never hardcode connection strings — use `DATABASE_URL` via env.
+## Multi-Agent Orchestration
 
-**Terraform:** Plan → review → apply. Least privilege IAM. Runbooks in `/docs/runbooks/*`.
+Agents are defined in `~/.claude/agents/` (orchestrator, architect, backend-coder, frontend-coder, coder, ui-ux, reviewer, security-researcher). Dispatch rules:
 
-## Coding Standards
-- TypeScript strict mode; two-space indentation.
-- camelCase (variables/functions), PascalCase (components/classes), SCREAMING_SNAKE_CASE (consts).
-- Prefer named exports, colocate tests and styles when logical.
+- 1–2 parallelizable steps → subagents with `isolation: worktree`.
+- 3+ parallelizable steps → native swarm: one background `coder` subagent per domain batch, `isolation: worktree`, model by batch complexity; steps pre-assigned inline in the spawn prompt.
+- After implementation, run **reviewer** and **security-researcher** in parallel — never sequentially.
+- Only **architect** and **ui-ux** may ask the user clarifying questions; other agents escalate through them.
+- Agent teams (peer-to-peer) only when teammates must debate or share findings; assign non-overlapping file domains. Full guidance: `docs/AGENT_TEAMS_GUIDE.md`.
 
-## Commands
-- Dev: `npm run dev`, Build: `npm run build`, Lint: `npm run lint:fix`
-- Tests: `npm test` or `npx jest tests/<file>`, E2E: `npm run test:e2e`
-- Database: `npm run db:migrate`, `npm run db:seed`
-- Setup: `scripts/start.sh` (start), `scripts/stop.sh` (stop)
+## Feature-Work Artifacts
 
-## Workflow
-1. Plan: gather context, define risks and ADRs.
-2. Prototype: build and validate UI.
-3. Implement: backend + frontend with incremental, tested commits.
-4. Verify: green tests + security scans.
-5. Review & Merge: structured PR; tag phase completion.
-
-Divide work into phases under `/plans/PHASE_*` with scope, risks, dependencies, exit criteria.
-
-## Important
-- Never save working files, text/mds, or tests to the root folder.
+- `docs/features/<task_id>/ARCHITECTURE.md` — design source of truth (owned by architect)
+- `docs/features/<task_id>/PLAN_steps.md` — step tracking, single source of progress
+- `docs/features/<task_id>/UX_NOTES.md` — UX decisions (owned by ui-ux)

@@ -1,4 +1,5 @@
 {
+  "_comment": "Global settings — deployed as ~/.claude/settings.json. Hook commands use $HOME because $CLAUDE_PROJECT_DIR resolves to the current project, not ~/.claude. For per-project deployment instead, merge hooks/settings.json into the project's .claude/settings.json.",
   "enabledPlugins": {
     "codex@openai-codex": true,
     "code-review@claude-plugins-official": true
@@ -11,5 +12,68 @@
       }
     }
   },
-  "effortLevel": "high"
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "model": "claude-fable-5[1m]",
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "hooks": {
+    "PostCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/plan-context.sh",
+            "statusMessage": "Re-injecting plan state..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/enforce-git-conventions.sh",
+            "statusMessage": "Checking git conventions..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/auto-format.sh",
+            "timeout": 30,
+            "statusMessage": "Auto-formatting..."
+          },
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/auto-test-runner.sh",
+            "async": true,
+            "timeout": 300,
+            "statusMessage": "Running tests in background..."
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/hooks/auto-approve-safe-ops.sh"
+          }
+        ]
+      }
+    ]
+  }
 }

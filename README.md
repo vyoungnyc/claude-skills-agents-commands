@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.4.0
+**Version:** 2.6.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -19,36 +19,22 @@ A set of agent definitions, skills, commands, and hooks that turn Claude Code in
 1. Copy the contents to your project's `.claude/` directory:
 
 ```bash
-mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/scripts/lib
+mkdir -p .claude/agents .claude/skills .claude/commands .claude/hooks .claude/rules .claude/scripts/lib
 cp -r agents/. .claude/agents/
 cp -r skills/. .claude/skills/
 cp -r commands/. .claude/commands/
+cp -r rules/. .claude/rules/
 cp hooks/*.sh .claude/hooks/
 cp scripts/lib/*.sh .claude/scripts/lib/
 cp scripts/*.sh .claude/scripts/
 chmod +x .claude/hooks/*.sh .claude/scripts/*.sh .claude/scripts/lib/*.sh
 ```
 
-2. Merge the hook configuration into your `.claude/settings.json`:
+For **global** (all-projects) use, copy to `~/.claude/` instead (`~/.claude/agents/`, `~/.claude/rules/`, etc.). If you deploy the hooks globally, merge the hook config into `~/.claude/settings.json` and change each hook command path from `"$CLAUDE_PROJECT_DIR"/.claude/hooks/` to `~/.claude/hooks/` — `$CLAUDE_PROJECT_DIR` points at the current project, not your home directory.
 
-```json
-{
-  "hooks": {
-    "PostCompact": [
-      {
-        "matcher": "",
-        "hooks": [{
-          "type": "command",
-          "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/reinject-context.sh",
-          "statusMessage": "Re-injecting project context..."
-        }]
-      }
-    ]
-  }
-}
-```
+2. Merge the hook configuration from `hooks/settings.json` into your project's `.claude/settings.json`. For **global** deployment, copy the root `settings.json` to `~/.claude/settings.json` instead — its hook commands already use `$HOME` paths.
 
-3. Customize `hooks/reinject-context.sh` with your project's specific standards.
+3. If your plans live somewhere other than `docs/features/*/PLAN_steps.md` or `plans/*/PLAN_steps.md`, adjust the glob in `hooks/plan-context.sh`.
 
 4. Start building:
 
@@ -76,13 +62,14 @@ Or if you already have a PRD:
 | **frontend-coder** | sonnet | isolation: worktree, memory: project | Frontend implementation + tests |
 | **coder** | sonnet | memory: project | General-purpose swarm implementer |
 | **ui-ux** | sonnet | memory: project, AskUserQuestion | UX flows, design system, user research |
-| **reviewer** | opus | permissionMode: plan, memory: project, Agent (read-only sub-agents only) | Code review with built-in 5-angle parallel PR Review Mode (CLAUDE.md compliance, bug scan, git history, PR comments, code comments). Scores with haiku, deduplicates. Runs in parallel with security-researcher |
+| **reviewer** | opus | permissionMode: plan, memory: project | Step-level review of implemented work against DoD and acceptance criteria. PR-scale multi-angle review is delegated to `/codereview` (Codex cross-check) or native `/code-review`. Runs in parallel with security-researcher |
 | **security-researcher** | opus | permissionMode: plan, memory: project | Read-only security audit, runs in parallel with reviewer |
 
 ### Skills (11 — orchestrator invokes directly)
 
 | Skill | Purpose |
 |---|---|
+| decision-cards | Present user-blocking questions as summary + recommendation-first cards with a per-card discuss loop |
 | scan-feature-context | Gather relevant code/docs at feature kickoff |
 | propose-architecture-for-feature | Design aligned with existing patterns |
 | extract-requirements-from-ticket | Structure requirements from tickets |
@@ -92,7 +79,6 @@ Or if you already have a PRD:
 | review-changes-structured | Blocking/non-blocking review feedback |
 | update-plan-from-review-feedback | Convert review findings to fix tasks and incorporate into plan |
 | run-quality-gates-and-triage | Interpret test/lint logs, group failures |
-| fix-lint-and-typescript-errors | Resolve lint/TS issues safely |
 | sync-docs-with-implementation | Identify and update impacted docs |
 
 ### Commands (8)
@@ -112,19 +98,18 @@ Or if you already have a PRD:
 
 | Hook | Event | Purpose |
 |---|---|---|
-| reinject-context.sh | PostCompact | Re-inject project standards after context compaction |
+| plan-context.sh | PostCompact | Re-inject active PLAN_steps.md state after compaction (CLAUDE.md survives compaction natively) |
 | auto-format.sh | PostToolUse (sync) | Auto-run Prettier + ESLint fix on edited source files |
 | auto-test-runner.sh | PostToolUse (async) | Run test suite in background after file edits |
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (5)
+### Scripts (4)
 
 | Script | Platform | Purpose |
 |---|---|---|
 | poll-pr-reviews.sh | GitHub | Poll a PR for new review threads, approval emoji (👍/✅), or idle timeout. Used by `/pr-fix-loop`. |
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
-| swarm-dispatch.sh | Any | Launch N parallel claude sessions in git worktrees with complexity-based model selection, failure classification (`max_turns`/`tool_error`/`context_overflow`/`infrastructure`/`launch_failure`), safe merge with auto-commit and dirty-tree guards. Used by orchestrator for 3+ step swarms. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
 
@@ -154,7 +139,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 | **/pr-fix-loop** | ✅ | ❌ | GitHub only — uses GitHub GraphQL API |
 | **/mr-fix-loop** | ❌ | ✅ | GitLab only — uses GitLab discussions API and `glab` CLI |
 | **Issue tracking** | ✅ GitHub Issues | ✅ Local files | Auto-detected: `gh` + GitHub remote → GitHub Issues; otherwise → `plans/` files (gitignored) |
-| **Swarm dispatch** | ✅ | ✅ | Platform-agnostic — uses git worktrees and `claude` CLI |
+| **Swarm dispatch** | ✅ | ✅ | Platform-agnostic — native background subagents with built-in worktree isolation |
 
 `/pr-fix-loop` is built on GitHub's review thread model. `/mr-fix-loop` is its GitLab counterpart. Issue tracking auto-detects: GitHub repos get epic + child issues via `gh` CLI; non-GitHub repos get file-based tracking in `plans/` (gitignored).
 
@@ -168,7 +153,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 **AskUserQuestion routing** — Only architect and ui-ux can ask the user clarifying questions. Other agents escalate through them.
 
-**Three parallel patterns** — Subagents (hub-and-spoke, worktree isolation) for 1-2 steps. Agent teams (peer-to-peer, SendMessage, work-stealing) for peer collaboration. Swarm (parallel claude sessions in worktrees, complexity-based model selection) for 3+ steps. The orchestrator auto-selects based on step count and domain separability.
+**Three parallel patterns** — Subagents (hub-and-spoke, worktree isolation) for 1-2 steps. Agent teams (peer-to-peer, SendMessage, work-stealing) for peer collaboration. Native swarm (one background `coder` subagent per domain batch, `isolation: worktree`, complexity-based model selection) for 3+ steps. The orchestrator auto-selects based on step count and domain separability.
 
 **Persistent memory** — Agents accumulate knowledge across sessions, getting better at reviewing your specific codebase over time.
 
@@ -177,6 +162,23 @@ scripts/poll-mr-reviews.sh 42 60 15
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.6.0** — Native swarm dispatch (`swarm-dispatch.sh` retired):
+- `scripts/swarm-dispatch.sh` deleted — 533 lines of bash replaced by native background subagents; script count 5 → 4
+- 3+ parallelizable steps → one background `coder` subagent per domain batch, `isolation: worktree`, model by batch complexity
+- Steps pre-assigned inline in spawn prompts; the `TaskCreate` queue is orchestrator-side progress tracking (workers can't see the Task tools)
+- Merge-back is an orchestrator-owned sequence that keeps the script's guards: skip failed/incomplete workers and absent branches, salvage dirty worktrees before removal
+- Recovery: `max_turns` → model-upgrade respawn, stalled worker → `SendMessage` continuation while its worktree lives; `launch_failure` and `claude --resume` retired
+- Turn budget fixed at `coder.md`'s `maxTurns: 30` for every worker — complexity now selects the model only
+- Orchestrator gains `TaskCreate`/`TaskList`/`TaskUpdate`/`SendMessage`; `docs/PHASE_6_NATIVE_PARALLELISM.md` §P6.3 marked superseded
+
+**v2.5.0** — Native-feature modernization (Aug 2026 audit):
+- CLAUDE.md rewritten for user scope; stack standards moved to path-scoped `rules/`
+- Global hook deployment via root `settings.json` (`$HOME` paths — `$CLAUDE_PROJECT_DIR` doesn't work at user scope)
+- `reinject-context.sh` → `plan-context.sh` (CLAUDE.md survives compaction natively; only plan state needs re-injection)
+- Reviewer agent slimmed to Step Review Mode; PR-scale review delegated to `/codereview` or native `/code-review`
+- Removed `fix-lint-and-typescript-errors` skill (native capability)
+- Added `docs/PHASE_6_NATIVE_PARALLELISM.md` — plan to evaluate native background subagents + worktrees vs `swarm-dispatch.sh`
 
 **v2.4.0** — Multi-angle parallel review system:
 - Reviewer agent PR Review Mode — 5-angle parallel review with haiku scoring and dedup
@@ -247,11 +249,14 @@ commands/
   pr-fix-loop.md
 docs/
   AGENT_TEAMS_GUIDE.md
+  CI_DISPATCH.md             # Headless implementation-phase dispatch from GitHub Actions
+  REMOTE_DISPATCH_NOTES.md   # Research note: remote (cloud) workers vs local worktrees
+  PHASE_6_NATIVE_PARALLELISM.md  # Decision record (historical; §P6.3 superseded)
 skills/
+  decision-cards/            # User-blocking questions: summary + cards + discuss loop
   derive-plan-from-spec/
   derive-test-spec-from-requirements/
   extract-requirements-from-ticket/
-  fix-lint-and-typescript-errors/
   propose-architecture-for-feature/
   review-changes-structured/
   run-quality-gates-and-triage/
@@ -263,17 +268,20 @@ scripts/
   lib/poll-common.sh         # Shared functions: PID file, validation, set-diff
   poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
-  swarm-dispatch.sh          # Parallel claude sessions in worktrees for /execute-prd swarm
   create-github-issues.sh    # GitHub epic + child issues from plan steps
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
+rules/
+  typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
+  infra.md                   # Path-scoped: Prisma/Terraform standards (loads only for matching files)
 hooks/
-  reinject-context.sh        # PostCompact: re-inject standards
+  plan-context.sh            # PostCompact: re-inject active plan state
   auto-format.sh             # PostToolUse: Prettier + ESLint
   auto-test-runner.sh        # PostToolUse: background tests
   enforce-git-conventions.sh # PreToolUse: commit/branch/push rules
   auto-approve-safe-ops.sh   # PermissionRequest: skip dialog for safe ops
-  settings.json              # Hook configuration (merge into .claude/settings.json)
-CLAUDE.md
+  settings.json              # Project-scope hook config (merge into .claude/settings.json)
+settings.json                # Global settings incl. hooks ($HOME paths) — deploy to ~/.claude/settings.json
+CLAUDE.md                    # Global (user-scope) standards — stack specifics live in rules/
 CHANGELOG.md
 README.md
 ```

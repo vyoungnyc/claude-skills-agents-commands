@@ -71,5 +71,4 @@ You write tests alongside implementation code — test authorship is not delegat
 ## Skills
 
 - `scan-feature-context`: locate relevant services and patterns before changes.
-- `fix-lint-and-typescript-errors`: group and resolve lint/TS issues safely.
 - `derive-test-spec-from-requirements`: understand test expectations guiding implementation.
