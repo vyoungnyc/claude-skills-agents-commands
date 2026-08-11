@@ -109,7 +109,6 @@ Or if you already have a PRD:
 |---|---|---|
 | poll-pr-reviews.sh | GitHub | Poll a PR for new review threads, approval emoji (👍/✅), or idle timeout. Used by `/pr-fix-loop`. |
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
-| swarm-dispatch.sh | Any | Launch N parallel claude sessions in git worktrees with complexity-based model selection, failure classification (`max_turns`/`tool_error`/`context_overflow`/`infrastructure`/`launch_failure`), safe merge with auto-commit and dirty-tree guards. Used by orchestrator for 3+ step swarms. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
 
@@ -139,7 +138,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 | **/pr-fix-loop** | ✅ | ❌ | GitHub only — uses GitHub GraphQL API |
 | **/mr-fix-loop** | ❌ | ✅ | GitLab only — uses GitLab discussions API and `glab` CLI |
 | **Issue tracking** | ✅ GitHub Issues | ✅ Local files | Auto-detected: `gh` + GitHub remote → GitHub Issues; otherwise → `plans/` files (gitignored) |
-| **Swarm dispatch** | ✅ | ✅ | Platform-agnostic — uses git worktrees and `claude` CLI |
+| **Swarm dispatch** | ✅ | ✅ | Platform-agnostic — native background subagents with built-in worktree isolation |
 
 `/pr-fix-loop` is built on GitHub's review thread model. `/mr-fix-loop` is its GitLab counterpart. Issue tracking auto-detects: GitHub repos get epic + child issues via `gh` CLI; non-GitHub repos get file-based tracking in `plans/` (gitignored).
 
@@ -153,7 +152,7 @@ scripts/poll-mr-reviews.sh 42 60 15
 
 **AskUserQuestion routing** — Only architect and ui-ux can ask the user clarifying questions. Other agents escalate through them.
 
-**Three parallel patterns** — Subagents (hub-and-spoke, worktree isolation) for 1-2 steps. Agent teams (peer-to-peer, SendMessage, work-stealing) for peer collaboration. Swarm (parallel claude sessions in worktrees, complexity-based model selection) for 3+ steps. The orchestrator auto-selects based on step count and domain separability.
+**Three parallel patterns** — Subagents (hub-and-spoke, worktree isolation) for 1-2 steps. Agent teams (peer-to-peer, SendMessage, work-stealing) for peer collaboration. Native swarm (one background `coder` subagent per domain batch, `isolation: worktree`, complexity-based model selection) for 3+ steps. The orchestrator auto-selects based on step count and domain separability.
 
 **Persistent memory** — Agents accumulate knowledge across sessions, getting better at reviewing your specific codebase over time.
 
@@ -255,7 +254,6 @@ scripts/
   lib/poll-common.sh         # Shared functions: PID file, validation, set-diff
   poll-pr-reviews.sh         # GitHub PR polling for /pr-fix-loop
   poll-mr-reviews.sh         # GitLab MR polling for /mr-fix-loop
-  swarm-dispatch.sh          # Parallel claude sessions in worktrees for /execute-prd swarm
   create-github-issues.sh    # GitHub epic + child issues from plan steps
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
 rules/

@@ -39,7 +39,7 @@ Never save working files, scratch notes/markdown, or tests to a project root. Us
 Agents are defined in `~/.claude/agents/` (orchestrator, architect, backend-coder, frontend-coder, coder, ui-ux, reviewer, security-researcher). Dispatch rules:
 
 - 1–2 parallelizable steps → subagents with `isolation: worktree`.
-- 3+ parallelizable steps → swarm via `scripts/swarm-dispatch.sh` (domain batches, complexity-based model per batch).
+- 3+ parallelizable steps → native swarm: one background `coder` subagent per domain batch, `isolation: worktree`, model by batch complexity; steps pre-assigned inline in the spawn prompt.
 - After implementation, run **reviewer** and **security-researcher** in parallel — never sequentially.
 - Only **architect** and **ui-ux** may ask the user clarifying questions; other agents escalate through them.
 - Agent teams (peer-to-peer) only when teammates must debate or share findings; assign non-overlapping file domains. Full guidance: `docs/AGENT_TEAMS_GUIDE.md`.
