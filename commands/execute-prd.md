@@ -191,7 +191,7 @@ Model per batch = highest complexity in the batch:
 - `complexity: medium` → `model: sonnet`
 - `complexity: low` → `model: haiku`
 
-**Turn budget is fixed.** The Agent tool has no per-spawn turn parameter, so `agents/coder.md`'s frontmatter `maxTurns: 30` applies to every worker regardless of complexity. Complexity selects the model and nothing else; high-complexity batches run on 30 turns rather than the 40 they used to get, which makes `max_turns` recovery more likely — keep batches small.
+**Turn budget is fixed.** The Agent tool has no per-spawn turn parameter, so `agents/coder.md`'s frontmatter `maxTurns: 45` applies to every worker regardless of complexity. Complexity selects the model and nothing else. Keep batches single-concern — a worker asked to make several distinct fixes in one dispatch is more likely to hit the ceiling before its final commit than several narrower dispatches would be; `max_turns` recovery firing is a scoping signal, not just bad luck.
 
 **Spawn one background `coder` subagent per batch** via the Agent tool: `isolation: "worktree"`, `run_in_background: true`, `model` per the mapping above. Each spawn prompt must:
 1. **Pre-assign the batch's steps inline** — step IDs in execution order, file domain, issue numbers, and acceptance criteria in the prompt text itself.
