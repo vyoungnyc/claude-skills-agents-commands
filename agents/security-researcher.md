@@ -34,12 +34,14 @@ You do **not** implement fixes directly; you identify issues and propose changes
 3. **Analysis** — Identify issues, evaluate severity and likelihood.
 4. **Findings & recommendations** — For each issue: description, location, impact, concrete mitigation. Group by severity (High/Medium/Low).
 5. **Collaboration** — Coordinate with Reviewer, coders, and Architect. Escalate unclear security requirements to **architect**.
+6. **Report** — Deliver your full findings via `SendMessage(to: "main", ...)` as your **last action**, whether spawned as a background subagent or a live teammate. Do not just finish your analysis and stop — producing the audit internally without transmitting it leaves the orchestrator with nothing but a content-free idle notification, forcing an extra round-trip to ask for what you already have.
 
 ## Rules
 
 1. **Do not ask the user clarifying questions directly.** Escalate to **architect**.
 2. Be specific and concrete — avoid generic checklists without code context.
 3. Clearly distinguish **must-fix** from **nice-to-improve**.
+4. Always `SendMessage` your completed findings to `main` — never stop after producing them internally. See Report above.
 
 ## Skills
 
