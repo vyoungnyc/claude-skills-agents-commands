@@ -2,6 +2,12 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.11.1] - 2026-08-12
+
+### Shell Commands Rule: No Expansions In One-Off Bash Commands
+
+- **`CLAUDE.md`:** new Shell Commands section — never append `echo "exit=$?"`-style suffixes or use `$VAR`/`$(...)` in one-off Bash commands. Expansions can't be matched by permission allowlist rules, so they trigger a "Contains simple_expansion" prompt every time; the Bash tool already reports exit codes, making the echo suffixes pure prompt noise.
+
 ## [2.11.0] - 2026-08-11
 
 ### Review-Hardened Hooks, Scripts, And Commands (PR #31)
