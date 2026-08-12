@@ -121,39 +121,57 @@ fi
 # --- Validate conventional commit messages ---
 # Use NORMALIZED so global options (git -C repo commit ...) don't bypass the check
 if echo "$NORMALIZED" | grep -qE 'git\s+commit'; then
-  # Extract the FIRST -m/--message value from the original COMMAND, then
-  # validate only its first line (the subject). The previous sed-based
-  # extraction had three real failure modes, all hit in practice:
-  #   * greedy `.*-m` matched the LAST -m, so `-m "subject" -m "body"`
-  #     validated the body text and rejected valid commits;
-  #   * `[^"']*` stopped at the first quote of EITHER kind, so an
-  #     apostrophe inside a double-quoted subject truncated the message;
-  #   * sed is line-based, so a multiline -m "..." never matched at all
-  #     and fell through to "no inline message".
-  # Bash parameter expansion is byte-wise (newlines included) and
-  # `${var#*pattern}` strips the SHORTEST prefix — i.e. finds the FIRST
-  # occurrence. Known accepted limitation: an escaped quote of the same
-  # kind inside the message still truncates the extraction early; the
-  # subject line is virtually always before any such escape.
-  COMMIT_MSG=""
-  _REST=""
-  if [[ "$COMMAND" == *" --message"* ]]; then
-    _REST="${COMMAND#* --message}"
-    _REST="${_REST#=}"
-  elif [[ "$COMMAND" == *" -m"* ]]; then
-    _REST="${COMMAND#* -m}"
-  fi
-  if [ -n "$_REST" ]; then
-    # Trim leading whitespace before the (possibly quoted) value
-    while [ "${_REST# }" != "$_REST" ] || [ "${_REST#	}" != "$_REST" ]; do
-      _REST="${_REST# }"; _REST="${_REST#	}"
+  # Extract the FIRST -m/--message value by tokenizing the command as
+  # ordered, quote-aware shell words — git constructs the message in
+  # argument order, and -m / --message are aliases. A raw substring
+  # search (the previous approach) had two failure modes: a subject
+  # CONTAINING the literal text " --message" was mistaken for the option,
+  # and any --message occurrence was preferred over an earlier -m. The
+  # tokenizer only treats a spelling as an option when it is a whole
+  # unquoted token, and takes whichever message flag appears first.
+  # Known accepted limitation: backslash-escaped quotes are not
+  # interpreted (rare in commit commands; the subject line is virtually
+  # always before any such construct).
+  _first_commit_msg() {
+    # n is assigned in a separate statement: within a single `local`
+    # command, bash expands every word BEFORE performing any of the
+    # assignments, so `n=${#cmd}` on the same line would read the
+    # caller's (usually unset) cmd and set n=0, skipping the whole loop.
+    local cmd="$1" i c q="" tok="" want=0 n
+    n=${#cmd}
+    _emit_tok() {
+      # $tok is complete. Returns 0 (and prints) when it yields the message.
+      if [ "$want" -eq 1 ]; then printf '%s' "$tok"; return 0; fi
+      case "$tok" in
+        -m|--message) want=1 ;;
+        --message=*)  printf '%s' "${tok#--message=}"; return 0 ;;
+        --*)          : ;;
+        -m*)          printf '%s' "${tok#-m}"; return 0 ;;
+        -[a-zA-Z]*m)  want=1 ;;  # combined short flags ending in m (-am, -sm)
+      esac
+      return 1
+    }
+    for ((i = 0; i < n; i++)); do
+      c="${cmd:$i:1}"
+      if [ -n "$q" ]; then
+        if [ "$c" = "$q" ]; then q=""; else tok="$tok$c"; fi
+        continue
+      fi
+      case "$c" in
+        \") q='"' ;;
+        \') q="'" ;;
+        ' '|'	'|'
+') if [ -n "$tok" ]; then _emit_tok && return 0; tok=""; fi ;;
+        *) tok="$tok$c" ;;
+      esac
     done
-    case "$_REST" in
-      \"*) _REST="${_REST#\"}"; COMMIT_MSG="${_REST%%\"*}" ;;
-      \'*) _REST="${_REST#\'}"; COMMIT_MSG="${_REST%%\'*}" ;;
-      *)   COMMIT_MSG="${_REST%%[[:space:]]*}" ;;
-    esac
-  fi
+    [ -n "$tok" ] && { _emit_tok && return 0; }
+    return 1
+  }
+  COMMIT_MSG=$(_first_commit_msg "$COMMAND" || true)
+  # A message built by command substitution (-m "$(cat <<'EOF' ...)")
+  # is opaque to the tokenizer — fall through to the heredoc extractor.
+  case "$COMMIT_MSG" in '$('*) COMMIT_MSG="" ;; esac
   # Only the subject (first line) is format-validated — bodies are free text.
   COMMIT_MSG=$(printf '%s\n' "$COMMIT_MSG" | head -1)
 

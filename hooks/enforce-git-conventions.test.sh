@@ -77,4 +77,23 @@ expect_allowed 'git commit -m "fix(hooks,scripts,commands): multi-scope subject"
 # No inline message still denied.
 expect_denied 'git commit' "inline message"
 
+# --- Ordered, quote-aware token parsing (round-18 regressions) ---
+
+# Subject CONTAINING the literal text "--message" must not be mistaken
+# for the option — it is inside quotes, i.e. token content.
+expect_allowed 'git commit -m "fix(hooks): handle --message option"'
+
+# Argument order wins: an earlier -m is the subject even when a later
+# --message exists (git treats them as aliases, constructed in order).
+expect_allowed 'git commit -m "fix: subject first" --message "body prose, not format-checked"'
+expect_denied 'git commit -m "not conventional" --message "fix: valid-looking later flag"' "conventional commits format"
+
+# --message=value and attached -mvalue forms.
+expect_allowed 'git commit --message="feat: equals form subject"'
+expect_allowed "git commit -m'feat: attached single-quoted subject'"
+
+# Combined short flags ending in m consume the next token as the message.
+expect_allowed 'git commit -am "fix(scripts): combined -am flag"'
+expect_denied 'git commit -am "bad combined message"' "conventional commits format"
+
 echo "enforce-git-conventions.sh tests passed"
