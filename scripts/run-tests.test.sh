@@ -141,4 +141,31 @@ run_in "$MIXED_DIR"
 expect_exit 1 "failing suite propagates"
 expect_output_contains "1 passed, 1 failed" "failing suite propagates"
 
+# =============================================================================
+# (e) Timed-out suite's TERM-ignoring descendant is killed: the suite leader
+# dies on the group TERM but backgrounds a child that traps TERM away; the
+# watchdog's group SIGKILL must be unconditional (a leader-alive gate would
+# skip it and leak the child into subsequent suites).
+# =============================================================================
+LEAK_DIR=$(sandbox_new_nongit)
+LEAK_SENTINEL="leak-sentinel-$$"
+cat > "$LEAK_DIR/hang.test.sh" <<EOF
+#!/bin/bash
+( trap '' TERM; exec -a "$LEAK_SENTINEL" sleep 300 ) &
+wait
+EOF
+set +e
+RUN_TESTS_SUITE_TIMEOUT=2 bash "$LEAK_DIR/scripts/run-tests.sh" >"$SUITE_TMP/last_stdout" 2>"$SUITE_TMP/last_stderr"
+LAST_EXIT=$?
+set -e
+LAST_STDOUT=$(cat "$SUITE_TMP/last_stdout")
+LAST_STDERR=$(cat "$SUITE_TMP/last_stderr")
+expect_exit 1 "timeout kills TERM-ignoring descendant"
+expect_output_contains "TIMEOUT" "timeout kills TERM-ignoring descendant"
+sleep 1
+if pgrep -f "$LEAK_SENTINEL" >/dev/null 2>&1; then
+  pkill -9 -f "$LEAK_SENTINEL" 2>/dev/null
+  fail "timeout kills TERM-ignoring descendant: sentinel process survived the group SIGKILL"
+fi
+
 echo "run-tests.sh tests passed"

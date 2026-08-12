@@ -119,7 +119,10 @@ while IFS= read -r -d '' suite; do
   if kill -0 "$suite_pid" 2>/dev/null; then
     kill -- -"$suite_pid" 2>/dev/null || kill "$suite_pid" 2>/dev/null
     sleep 1
-    kill -0 "$suite_pid" 2>/dev/null && { kill -9 -- -"$suite_pid" 2>/dev/null || kill -9 "$suite_pid" 2>/dev/null; }
+    # Escalate to SIGKILL on the WHOLE GROUP unconditionally: gating it on
+    # the leader being alive lets a TERM-ignoring descendant survive when
+    # the leader died first, leaking processes into subsequent suites.
+    kill -9 -- -"$suite_pid" 2>/dev/null || kill -9 "$suite_pid" 2>/dev/null
     wait "$suite_pid" 2>/dev/null
     echo "FAIL: $suite_rel (TIMEOUT after ${SUITE_TIMEOUT}s — suite killed; hung suites usually mean a wait on a process that never exits or an accidental recursion)"
     tail -20 "$SUITE_OUT" | sed 's/^/  /'

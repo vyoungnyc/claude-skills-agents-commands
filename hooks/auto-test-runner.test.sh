@@ -267,4 +267,42 @@ invoke_hook "$F_DIR" "$F_TMPDIR" "$F_RUNLOG"
 F_LEFTOVER=$(ls -A "$F_STATE_DIR" 2>/dev/null || true)
 [ -z "$F_LEFTOVER" ] || fail "(f) expected state dir clean after dead reclaim-token GC, found: $F_LEFTOVER"
 
+# =======================================================================
+# (g) Signal during a run: SIGTERM to the hook wrapper mid-suite must
+# terminate the suite child BEFORE the lock is released — exiting the
+# wrapper does not kill the child on its own, and releasing while the
+# child runs would let the next edit start a concurrent suite alongside
+# the orphan. Assert: the stub process is gone shortly after the TERM,
+# and the state dir holds no lock.
+# =======================================================================
+G_DIR=$(setup_case)
+G_TMPDIR=$(mktemp -d "$SUITE_TMP/tmpdir.XXXXXX")
+G_RUNLOG="$G_TMPDIR/runlog.txt"
+G_STATE_DIR=$(state_dir "$G_TMPDIR")
+
+echo "$PAYLOAD" | TMPDIR="$G_TMPDIR" RUNLOG="$G_RUNLOG" STUB_SLEEP=30 \
+  bash "$G_DIR/hooks/auto-test-runner.sh" >"$G_TMPDIR/inv.out" 2>"$G_TMPDIR/inv.err" &
+G_HOOK_PID=$!
+
+# Let the hook win the lock and background its (sleeping) stub run.
+sleep 2
+[ "$(run_count "$G_RUNLOG")" -eq 1 ] || fail "(g) expected the stub run to have started before the TERM"
+
+kill -TERM "$G_HOOK_PID" 2>/dev/null
+# cleanup gives the child a TERM, up to ~3s of grace, then KILL — allow
+# for that plus scheduling slack.
+G_DEADLINE=8
+G_WAITED=0
+while pgrep -f "$G_DIR/scripts/run-tests.sh" >/dev/null 2>&1 && [ "$G_WAITED" -lt "$G_DEADLINE" ]; do
+  sleep 1
+  G_WAITED=$((G_WAITED + 1))
+done
+if pgrep -f "$G_DIR/scripts/run-tests.sh" >/dev/null 2>&1; then
+  pkill -9 -f "$G_DIR/scripts/run-tests.sh" 2>/dev/null
+  fail "(g) suite child survived the wrapper's TERM — cleanup released ownership without terminating it"
+fi
+wait "$G_HOOK_PID" 2>/dev/null || true
+[ ! -e "$G_STATE_DIR/$(project_key "$G_DIR").shell.lock" ] \
+  || fail "(g) lock left behind after signal cleanup"
+
 echo "auto-test-runner.sh tests passed"

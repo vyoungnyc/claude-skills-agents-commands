@@ -243,8 +243,26 @@ case "$FILE_PATH" in
     # Cleanup on EXIT only; signal handlers must exit explicitly — a
     # trapped INT/TERM otherwise runs the handler and RESUMES the script,
     # which would continue the rerun loop after releasing the lock and
-    # launch suites without ownership.
-    trap 'release_lock "$SH_LOCK"; rm -f "$SH_OUT_FILE"' EXIT
+    # launch suites without ownership. If a signal lands while the suite
+    # child is still running, the child must be terminated (bounded
+    # escalation) BEFORE the lock is released: exiting the wrapper does
+    # not kill the child, and releasing while it runs would let the next
+    # edit start a concurrent suite alongside the orphan.
+    cleanup_sh() {
+      if [ -n "${SH_CHILD:-}" ] && kill -0 "$SH_CHILD" 2>/dev/null; then
+        kill "$SH_CHILD" 2>/dev/null
+        local i
+        for i in 1 2 3; do
+          kill -0 "$SH_CHILD" 2>/dev/null || break
+          sleep 1
+        done
+        kill -0 "$SH_CHILD" 2>/dev/null && kill -9 "$SH_CHILD" 2>/dev/null
+        wait "$SH_CHILD" 2>/dev/null
+      fi
+      release_lock "$SH_LOCK"
+      rm -f "$SH_OUT_FILE"
+    }
+    trap cleanup_sh EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
@@ -317,9 +335,23 @@ touch "$MARKER"
 acquire_lock "$LOCK" || exit 0
 
 OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
-# EXIT-only cleanup + exiting signal handlers — same reasoning as the
-# shell branch.
-trap 'release_lock "$LOCK"; rm -f "$OUT_FILE"' EXIT
+# EXIT-only cleanup with child termination before release + exiting
+# signal handlers — same reasoning as the shell branch.
+cleanup_js() {
+  if [ -n "${TEST_CHILD:-}" ] && kill -0 "$TEST_CHILD" 2>/dev/null; then
+    kill "$TEST_CHILD" 2>/dev/null
+    local i
+    for i in 1 2 3; do
+      kill -0 "$TEST_CHILD" 2>/dev/null || break
+      sleep 1
+    done
+    kill -0 "$TEST_CHILD" 2>/dev/null && kill -9 "$TEST_CHILD" 2>/dev/null
+    wait "$TEST_CHILD" 2>/dev/null
+  fi
+  release_lock "$LOCK"
+  rm -f "$OUT_FILE"
+}
+trap cleanup_js EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
