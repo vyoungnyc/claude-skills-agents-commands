@@ -125,4 +125,12 @@ expect_denied 'GIT_AUTHOR_DATE=2026-01-01 git commit -m "not conventional"' "con
 expect_denied 'env FOO=1 git commit -m "still not conventional"' "conventional commits format"
 expect_allowed 'FOO=1 git commit -m "fix(hooks): env-prefixed valid subject"'
 
+# Shell wrappers do not bypass enforcement (round-25): subshells, brace
+# groups, and command-position keywords all still execute git.
+expect_denied '(git push origin main)' "main/master"
+expect_denied 'if true; then git push --force origin feature/foo; fi' "Force push"
+expect_denied 'command git commit -m "not conventional"' "conventional commits format"
+expect_denied '{ git push origin main; }' "main/master"
+expect_allowed '(git commit -m "fix: subshell valid subject")'
+
 echo "enforce-git-conventions.sh tests passed"

@@ -91,6 +91,10 @@ _seg_tokens() {
       \"|\') q="$c"; tok_started=1 ;;
       ' '|'	'|'
 ') _flush ;;
+      '('|')'|'{'|'}') _flush ;;  # shell grouping metacharacters are token
+                                  # boundaries: (git push origin main) must
+                                  # tokenize as git/push/origin/main, not
+                                  # leave "(git" and "main)" glued together
       *) tok="$tok$c"; tok_started=1 ;;
     esac
   done
@@ -107,6 +111,10 @@ _normalize_git() {
     prev="$s"
     s=$(echo "$s" | sed -E 's/^[[:space:]]*//; s/^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+//')
     s=$(echo "$s" | sed -E 's/^env[[:space:]]+(-[^[:space:]]+[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*//')
+    # Command-position shell wrappers: `if git ...`, `then git ...`,
+    # `command git ...`, `exec git ...` all execute git — leaving the
+    # keyword attached made the anchored ^git match skip every check.
+    s=$(echo "$s" | sed -E 's/^(if|then|else|elif|while|until|do|command|builtin|exec|nohup|time|!)[[:space:]]+//')
     s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)(-[Cc]|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+/\1/')
     s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)(-[pP]|--paginate|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--no-optional-locks|--no-lazy-fetch|--html-path|--man-path|--info-path)[[:space:]]+/\1/')
     s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)--[a-zA-Z][a-zA-Z0-9_-]*=[^[:space:]]+[[:space:]]+/\1/')
