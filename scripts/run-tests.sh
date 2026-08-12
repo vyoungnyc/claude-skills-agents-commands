@@ -47,6 +47,14 @@ export RUN_TESTS_ACTIVE_ROOT="$REPO_ROOT"
 # Overridable for genuinely slow suites; 120s is ~4x the slowest suite
 # today. macOS ships no `timeout`, so this is a hand-rolled poll loop.
 SUITE_TIMEOUT="${RUN_TESTS_SUITE_TIMEOUT:-120}"
+# Validate the override before any suite launches: a typo'd or negative
+# value would otherwise blow up the integer comparison (or expire the
+# watchdog instantly) and kill a healthy suite, manufacturing failures
+# out of a configuration error.
+if ! [[ "$SUITE_TIMEOUT" =~ ^[0-9]+$ ]] || [ "$SUITE_TIMEOUT" -lt 1 ]; then
+  echo "run-tests.sh: RUN_TESTS_SUITE_TIMEOUT must be a positive integer, got '$SUITE_TIMEOUT'" >&2
+  exit 1
+fi
 
 PASS_COUNT=0
 FAIL_COUNT=0

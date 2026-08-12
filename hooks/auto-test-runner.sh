@@ -250,13 +250,17 @@ case "$FILE_PATH" in
     # edit start a concurrent suite alongside the orphan.
     cleanup_sh() {
       if [ -n "${SH_CHILD:-}" ] && kill -0 "$SH_CHILD" 2>/dev/null; then
-        kill "$SH_CHILD" 2>/dev/null
+        # The suite was launched in its own process group (set -m), so
+        # signal the GROUP: a positive PID reaches only the leader, and a
+        # suite that spawned descendants would leave them orphaned past
+        # the lock release.
+        kill -- -"$SH_CHILD" 2>/dev/null || kill "$SH_CHILD" 2>/dev/null
         local i
         for i in 1 2 3; do
           kill -0 "$SH_CHILD" 2>/dev/null || break
           sleep 1
         done
-        kill -0 "$SH_CHILD" 2>/dev/null && kill -9 "$SH_CHILD" 2>/dev/null
+        kill -9 -- -"$SH_CHILD" 2>/dev/null || kill -9 "$SH_CHILD" 2>/dev/null
         wait "$SH_CHILD" 2>/dev/null
       fi
       release_lock "$SH_LOCK"
@@ -278,8 +282,12 @@ case "$FILE_PATH" in
     SH_RAN=0
     while :; do
       while claim_marker "$SH_MARKER"; do
+        # set -m puts the suite in its own process group so signal-path
+        # cleanup can terminate the whole group, descendants included.
+        set -m 2>/dev/null || true
         bash "$RUN_TESTS" >"$SH_OUT_FILE" 2>&1 &
         SH_CHILD=$!
+        set +m 2>/dev/null || true
         stamp_lock "$SH_LOCK" "$SH_CHILD:$(_pid_start_time "$SH_CHILD")"
         wait "$SH_CHILD"
         SH_EXIT=$?
@@ -339,13 +347,14 @@ OUT_FILE=$(mktemp "$HOOK_STATE_DIR/js-out.XXXXXX")
 # signal handlers — same reasoning as the shell branch.
 cleanup_js() {
   if [ -n "${TEST_CHILD:-}" ] && kill -0 "$TEST_CHILD" 2>/dev/null; then
-    kill "$TEST_CHILD" 2>/dev/null
+    # Group signal — same reasoning as the shell branch's cleanup.
+    kill -- -"$TEST_CHILD" 2>/dev/null || kill "$TEST_CHILD" 2>/dev/null
     local i
     for i in 1 2 3; do
       kill -0 "$TEST_CHILD" 2>/dev/null || break
       sleep 1
     done
-    kill -0 "$TEST_CHILD" 2>/dev/null && kill -9 "$TEST_CHILD" 2>/dev/null
+    kill -9 -- -"$TEST_CHILD" 2>/dev/null || kill -9 "$TEST_CHILD" 2>/dev/null
     wait "$TEST_CHILD" 2>/dev/null
   fi
   release_lock "$LOCK"
@@ -361,8 +370,11 @@ TEST_EXIT=0
 RAN=0
 while :; do
   while claim_marker "$MARKER"; do
+    # Own process group for group-wide signal cleanup — same as shell branch.
+    set -m 2>/dev/null || true
     "${TEST_CMD[@]}" >"$OUT_FILE" 2>&1 &
     TEST_CHILD=$!
+    set +m 2>/dev/null || true
     stamp_lock "$LOCK" "$TEST_CHILD:$(_pid_start_time "$TEST_CHILD")"
     wait "$TEST_CHILD"
     TEST_EXIT=$?
