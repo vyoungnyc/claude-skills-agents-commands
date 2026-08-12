@@ -103,7 +103,27 @@ else
 fi
 
 SUITE_OUT=$(mktemp "${TMPDIR:-/tmp}/run-tests-suite-out.XXXXXX")
-trap 'rm -f "$SUITE_OUT"' EXIT
+
+# On termination of the runner itself, terminate the ACTIVE suite's whole
+# process group before exiting: each suite runs in its own group (set -m
+# below), so a parent that group-kills the runner (e.g. auto-test-runner's
+# signal cleanup) cannot reach the suite — without this trap the runner
+# dies, the caller releases its lock, and the suite keeps running as an
+# orphan. Signal handlers exit explicitly so cleanup runs exactly once
+# via EXIT.
+ACTIVE_SUITE_PID=""
+cleanup_runner() {
+  if [ -n "$ACTIVE_SUITE_PID" ] && kill -0 "$ACTIVE_SUITE_PID" 2>/dev/null; then
+    kill -- -"$ACTIVE_SUITE_PID" 2>/dev/null || kill "$ACTIVE_SUITE_PID" 2>/dev/null
+    sleep 1
+    kill -9 -- -"$ACTIVE_SUITE_PID" 2>/dev/null
+    wait "$ACTIVE_SUITE_PID" 2>/dev/null
+  fi
+  rm -f "$SUITE_OUT"
+}
+trap cleanup_runner EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 while IFS= read -r -d '' suite; do
   suite_rel="${suite#"$REPO_ROOT"/}"
@@ -117,6 +137,7 @@ while IFS= read -r -d '' suite; do
   bash "$suite" >"$SUITE_OUT" 2>&1 &
   suite_pid=$!
   set +m 2>/dev/null || true
+  ACTIVE_SUITE_PID="$suite_pid"
 
   waited=0
   while kill -0 "$suite_pid" 2>/dev/null && [ "$waited" -lt "$SUITE_TIMEOUT" ]; do
@@ -155,6 +176,8 @@ while IFS= read -r -d '' suite; do
     kill -9 -- -"$suite_pid" 2>/dev/null
     echo "WARN: $suite_rel left background processes running after exit — killed (suites must reap their own children)"
   fi
+
+  ACTIVE_SUITE_PID=""
 
   if [ "$suite_status" -eq 0 ]; then
     echo "PASS: $suite_rel"

@@ -11,8 +11,12 @@
 
 INPUT=$(cat)
 
-# Fast path: skip jq parsing entirely for non-git commands
-[[ "$INPUT" == *'"git '* ]] || exit 0
+# Fast path: skip jq parsing entirely when "git" appears nowhere. The
+# previous pattern ('"git ') only matched commands STARTING with git, so
+# any chained invocation ("cd x && git push --force ...") bypassed every
+# check in this hook. A substring probe over-triggers on commands merely
+# mentioning git, but those fall through the real parsing below harmlessly.
+[[ "$INPUT" == *git* ]] || exit 0
 
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
@@ -41,20 +45,27 @@ while true; do
   [ "$NORMALIZED" = "$PREV" ] && break
 done
 
+# Quote-stripped view for the whole-string greps below: with the fast path
+# widened to any command containing "git", a command merely QUOTING e.g.
+# "git push --force" in an echo/commit message must not trip the push or
+# no-verify checks. Real arguments are never quoted away by this (refspecs
+# and flags are unquoted in practice).
+UNQUOTED=$(printf '%s' "$NORMALIZED" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g")
+
 # --- Push-specific checks (skip for non-push commands) ---
-if echo "$NORMALIZED" | grep -qE 'git\s+push(\s|$)'; then
+if echo "$UNQUOTED" | grep -qE 'git\s+push(\s|$)'; then
 
   # Block force push
   HAS_FORCE=false
   HAS_FORCE_FLAG=false
   HAS_PLUS_REFSPEC=false
   HAS_LEASE=false
-  echo "$NORMALIZED" | grep -qE '(^|[[:space:]])--force-with-lease([=[:space:]]|$)' && HAS_LEASE=true
-  _STRIPPED_LEASE=$(echo "$NORMALIZED" | sed -E 's/--force-with-lease(=[^[:space:]]+)?//g')
+  echo "$UNQUOTED" | grep -qE '(^|[[:space:]])--force-with-lease([=[:space:]]|$)' && HAS_LEASE=true
+  _STRIPPED_LEASE=$(echo "$UNQUOTED" | sed -E 's/--force-with-lease(=[^[:space:]]+)?//g')
   echo "$_STRIPPED_LEASE" | grep -qE 'git\s+push\s+(.*\s)?(--force(\s|=|$)|-[a-zA-Z]*f[a-zA-Z]*(\s|$))' && { HAS_FORCE=true; HAS_FORCE_FLAG=true; }
 
   # Detect + refspec prefix (per-ref force push)
-  _PUSH_ARGS=$(echo "$NORMALIZED" | sed -E 's/^git[[:space:]]+push[[:space:]]*//')
+  _PUSH_ARGS=$(echo "$UNQUOTED" | sed -E 's/^git[[:space:]]+push[[:space:]]*//')
   if echo "$_PUSH_ARGS" | grep -qE '(^|[[:space:]])\+[^[:space:]]+'; then
     HAS_FORCE=true
     HAS_PLUS_REFSPEC=true
@@ -83,10 +94,10 @@ if echo "$NORMALIZED" | grep -qE 'git\s+push(\s|$)'; then
   fi
 
   # Block push to main/master (including refspecs, --delete, --all, --mirror)
-  if echo "$NORMALIZED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)(\s|$)' || \
-     echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)(\s|$)' || \
-     echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)' || \
-     echo "$NORMALIZED" | grep -qE 'git\s+push\s+.*\s(--all|--mirror)(\s|$)'; then
+  if echo "$UNQUOTED" | grep -qE 'git\s+push\s+(-\S+\s+)*(\S+\s+)?(refs/heads/)?(main|master)(\s|$)' || \
+     echo "$UNQUOTED" | grep -qE 'git\s+push\s+.*:(refs/heads/)?(main|master)(\s|$)' || \
+     echo "$UNQUOTED" | grep -qE 'git\s+push\s+.*(-d|--delete)\s+(refs/heads/)?(main|master)(\s|$)' || \
+     echo "$UNQUOTED" | grep -qE 'git\s+push\s+.*\s(--all|--mirror)(\s|$)'; then
     jq -n '{
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
@@ -100,12 +111,12 @@ if echo "$NORMALIZED" | grep -qE 'git\s+push(\s|$)'; then
 fi
 
 # --- Block --no-verify / -n (commit/push) ---
-if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)(\s|$)'; then
+if echo "$UNQUOTED" | grep -qE 'git\s+(commit|push)(\s|$)'; then
   # --no-verify: check full command (long form can't appear unquoted inside -m "...")
   # -n shorthand: only check options before -m to avoid false positives in message text
   # Note: -n means --no-verify for commit, --dry-run for push — only check commit
-  OPTS_BEFORE_MSG=$(echo "$NORMALIZED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
-  if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
+  OPTS_BEFORE_MSG=$(echo "$UNQUOTED" | sed -E 's/(-m|--message)[[:space:]]+.*//')
+  if echo "$UNQUOTED" | grep -qE 'git\s+(commit|push)\s+.*--no-verify' || \
      echo "$OPTS_BEFORE_MSG" | grep -qE 'git\s+commit\s+.*\s-[a-zA-Z]*n[a-zA-Z]*(\s|$)'; then
     jq -n '{
       hookSpecificOutput: {
@@ -119,7 +130,48 @@ if echo "$NORMALIZED" | grep -qE 'git\s+(commit|push)(\s|$)'; then
 fi
 
 # --- Validate conventional commit messages ---
-# Use NORMALIZED so global options (git -C repo commit ...) don't bypass the check
+# The command string may chain several invocations (`git add . && git
+# commit -m A ; git commit -m B`) — validating only the first commit would
+# let every later one bypass the hook. Split into segments at unquoted
+# separators (&&, ||, ;, |, &, newline) and validate EVERY segment that is
+# a git commit. Quote-aware: separators inside quotes are content. Known
+# accepted limitation: an unquoted heredoc body containing a bare `git
+# commit` line would be seen as a segment — commit heredocs are
+# conventionally wrapped in "$(cat <<'EOF' ...)" where quotes protect them.
+_split_segments() {
+  local cmd="$1" i c q="" seg="" n
+  n=${#cmd}
+  for ((i = 0; i < n; i++)); do
+    c="${cmd:$i:1}"
+    if [ -n "$q" ]; then
+      seg="$seg$c"
+      [ "$c" = "$q" ] && q=""
+      continue
+    fi
+    case "$c" in
+      \"|\') q="$c"; seg="$seg$c" ;;
+      '&'|'|'|';'|'
+') printf '%s\x01' "$seg"; seg="" ;;
+      *) seg="$seg$c" ;;
+    esac
+  done
+  printf '%s\x01' "$seg"
+}
+
+# _normalize_git <segment> — strip git global options from a single
+# segment, same iterative stripping applied to the whole command above.
+_normalize_git() {
+  local s="$1" prev
+  while true; do
+    prev="$s"
+    s=$(echo "$s" | sed -E 's/^[[:space:]]*//; s/^(git[[:space:]]+)(-[Cc]|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+/\1/')
+    s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)(-[pP]|--paginate|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--no-optional-locks|--no-lazy-fetch|--html-path|--man-path|--info-path)[[:space:]]+/\1/')
+    s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)--[a-zA-Z][a-zA-Z0-9_-]*=[^[:space:]]+[[:space:]]+/\1/')
+    [ "$s" = "$prev" ] && break
+  done
+  printf '%s' "$s"
+}
+
 if echo "$NORMALIZED" | grep -qE 'git\s+commit'; then
   # Extract the FIRST -m/--message value by tokenizing the command as
   # ordered, quote-aware shell words — git constructs the message in
@@ -168,50 +220,63 @@ if echo "$NORMALIZED" | grep -qE 'git\s+commit'; then
     [ -n "$tok" ] && { _emit_tok && return 0; }
     return 1
   }
-  COMMIT_MSG=$(_first_commit_msg "$COMMAND" || true)
-  # A message built by command substitution (-m "$(cat <<'EOF' ...)")
-  # is opaque to the tokenizer — fall through to the heredoc extractor.
-  case "$COMMIT_MSG" in '$('*) COMMIT_MSG="" ;; esac
-  # Only the subject (first line) is format-validated — bodies are free text.
-  COMMIT_MSG=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+  # Validate EVERY git-commit segment independently — command boundaries
+  # matter: only checking the first would let `git commit -m "fix: ok" &&
+  # git commit -m "junk"` slip the second one through.
+  while IFS= read -r -d $'\x01' SEG; do
+    # Is this segment a git commit? Test with quoted spans removed so a
+    # segment merely MENTIONING "git commit" inside a string is not
+    # validated as one.
+    SEG_UNQUOTED=$(printf '%s' "$SEG" | sed -E "s/\"[^\"]*\"//g; s/'[^']*'//g")
+    printf '%s' "$SEG_UNQUOTED" | grep -qE '(^|[[:space:]])git[[:space:]]' || continue
+    SEG_NORM=$(_normalize_git "${SEG#"${SEG%%[![:space:]]*}"}")
+    printf '%s' "$SEG_NORM" | grep -qE '^git[[:space:]]+commit([[:space:]]|$)' || continue
 
-  # 2. Heredoc-style: $(cat <<'EOF' ... EOF) — extract first non-blank line after EOF marker
-  if [ -z "$COMMIT_MSG" ]; then
-    COMMIT_MSG=$(echo "$COMMAND" | sed -n "/<<[[:space:]]*['\"]\\{0,1\\}EOF['\"]\\{0,1\\}/,/^[[:space:]]*EOF/{/EOF/d;/^[[:space:]]*$/d;p;}" | head -1 | sed 's/^[[:space:]]*//')
-  fi
+    COMMIT_MSG=$(_first_commit_msg "$SEG" || true)
+    # A message built by command substitution (-m "$(cat <<'EOF' ...)")
+    # is opaque to the tokenizer — fall through to the heredoc extractor.
+    case "$COMMIT_MSG" in '$('*) COMMIT_MSG="" ;; esac
+    # Only the subject (first line) is format-validated — bodies are free text.
+    COMMIT_MSG=$(printf '%s\n' "$COMMIT_MSG" | head -1)
 
-  if [ -z "$COMMIT_MSG" ]; then
-    # No message extractable — editor-based commit or --amend without -m.
-    # Deny so the user provides an inline message we can validate.
-    jq -n '{
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: "Commit must include an inline message (-m or heredoc) so conventional format can be validated. Use: git commit -m \"type(scope): subject\""
-      }
-    }'
-    exit 0
-  fi
+    # 2. Heredoc-style: $(cat <<'EOF' ... EOF) — first non-blank line after the marker
+    if [ -z "$COMMIT_MSG" ]; then
+      COMMIT_MSG=$(printf '%s\n' "$SEG" | sed -n "/<<[[:space:]]*['\"]\\{0,1\\}EOF['\"]\\{0,1\\}/,/^[[:space:]]*EOF/{/EOF/d;/^[[:space:]]*$/d;p;}" | head -1 | sed 's/^[[:space:]]*//')
+    fi
 
-  # Check conventional commit format: type(scope): subject. Scope may be a
-  # comma-separated list (fix(hooks,scripts): ...) — common practice for
-  # changes spanning a few areas, and previously rejected.
-  if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|test|docs|chore|ci|perf|build|style|revert)(\([a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*\))?(!)?:\s+.+'; then
-    jq -n --arg msg "$COMMIT_MSG" '{
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: ("Commit message does not follow conventional commits format.\nGot: \"" + $msg + "\"\nExpected: type(scope): subject\nValid types: feat, fix, refactor, test, docs, chore, ci, perf, build, style, revert")
-      }
-    }'
-    exit 0
-  fi
+    if [ -z "$COMMIT_MSG" ]; then
+      # No message extractable — editor-based commit or --amend without -m.
+      # Deny so the user provides an inline message we can validate.
+      jq -n '{
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: "Commit must include an inline message (-m or heredoc) so conventional format can be validated. Use: git commit -m \"type(scope): subject\""
+        }
+      }'
+      exit 0
+    fi
+
+    # Check conventional commit format: type(scope): subject. Scope may be a
+    # comma-separated list (fix(hooks,scripts): ...) — common practice for
+    # changes spanning a few areas, and previously rejected.
+    if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|test|docs|chore|ci|perf|build|style|revert)(\([a-zA-Z0-9_-]+(,[a-zA-Z0-9_-]+)*\))?(!)?:\s+.+'; then
+      jq -n --arg msg "$COMMIT_MSG" '{
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: ("Commit message does not follow conventional commits format.\nGot: \"" + $msg + "\"\nExpected: type(scope): subject\nValid types: feat, fix, refactor, test, docs, chore, ci, perf, build, style, revert")
+        }
+      }'
+      exit 0
+    fi
+  done < <(_split_segments "$COMMAND")
 fi
 
 # --- Validate branch naming on checkout -b / switch -c ---
 # Use NORMALIZED so global options (git -C repo checkout -b ...) don't bypass the check
-if echo "$NORMALIZED" | grep -qE 'git\s+(checkout\s+-b|switch\s+-c)\s+'; then
-  BRANCH_NAME=$(echo "$NORMALIZED" | sed -En 's/.*(checkout[[:space:]]*-b|switch[[:space:]]*-c)[[:space:]]+([^[:space:]]*).*/\2/p')
+if echo "$UNQUOTED" | grep -qE 'git\s+(checkout\s+-b|switch\s+-c)\s+'; then
+  BRANCH_NAME=$(echo "$UNQUOTED" | sed -En 's/.*(checkout[[:space:]]*-b|switch[[:space:]]*-c)[[:space:]]+([^[:space:]]*).*/\2/p')
   if [ -n "$BRANCH_NAME" ]; then
     if ! echo "$BRANCH_NAME" | grep -qE '^(feature|fix|refactor|hotfix|release)/[a-zA-Z0-9_.-]+$'; then
       jq -n --arg branch "$BRANCH_NAME" '{

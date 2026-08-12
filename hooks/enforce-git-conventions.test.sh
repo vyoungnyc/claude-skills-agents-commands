@@ -96,4 +96,20 @@ expect_allowed "git commit -m'feat: attached single-quoted subject'"
 expect_allowed 'git commit -am "fix(scripts): combined -am flag"'
 expect_denied 'git commit -am "bad combined message"' "conventional commits format"
 
+# --- Per-invocation validation (round-22 regressions): every git commit
+# in a chained command is checked, and quoted mentions are not commits. ---
+expect_denied 'git add . && git commit -m "fix: valid first" && git commit -m "not conventional"' "conventional commits format"
+expect_allowed 'git commit -m "fix: first" ; git commit -m "feat: second"'
+expect_denied 'echo done ; git commit -m "fix: ok" ; git commit' "inline message"
+expect_allowed 'echo "run git commit -m something later" && git push origin feature/foo'
+
+# Chained commands no longer bypass ANY check (old fast path required the
+# command to START with git).
+expect_denied 'cd /tmp && git push --force origin feature/foo' "Force push"
+expect_denied 'true && git push origin main' "main/master"
+expect_denied 'echo hi ; git commit --no-verify -m "fix: x"' "no-verify"
+# Quoted mentions of dangerous commands are content, not commands.
+expect_allowed 'echo "git push --force origin main is forbidden"'
+expect_allowed 'git commit -m "docs: explain why git push --force is blocked"'
+
 echo "enforce-git-conventions.sh tests passed"

@@ -168,4 +168,31 @@ if pgrep -f "$LEAK_SENTINEL" >/dev/null 2>&1; then
   fail "timeout kills TERM-ignoring descendant: sentinel process survived the group SIGKILL"
 fi
 
+# =============================================================================
+# (f) Runner termination kills the active suite's group: TERM the RUNNER
+# while a suite is mid-run — the runner's cleanup trap must group-kill the
+# suite (which runs in its own process group, unreachable by whoever kills
+# the runner's group) before exiting.
+# =============================================================================
+SIG_DIR=$(sandbox_new_nongit)
+SIG_SENTINEL="runner-sig-sentinel-$$"
+cat > "$SIG_DIR/slow.test.sh" <<EOF
+#!/bin/bash
+exec -a "$SIG_SENTINEL" sleep 300
+EOF
+bash "$SIG_DIR/scripts/run-tests.sh" >"$SUITE_TMP/sig.out" 2>&1 &
+RUNNER_PID=$!
+sleep 2
+kill -TERM "$RUNNER_PID" 2>/dev/null
+SIG_WAITED=0
+while pgrep -f "$SIG_SENTINEL" >/dev/null 2>&1 && [ "$SIG_WAITED" -lt 6 ]; do
+  sleep 1
+  SIG_WAITED=$((SIG_WAITED + 1))
+done
+wait "$RUNNER_PID" 2>/dev/null || true
+if pgrep -f "$SIG_SENTINEL" >/dev/null 2>&1; then
+  pkill -9 -f "$SIG_SENTINEL" 2>/dev/null
+  fail "runner termination: active suite survived the runner's cleanup trap"
+fi
+
 echo "run-tests.sh tests passed"
