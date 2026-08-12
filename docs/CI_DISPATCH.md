@@ -256,11 +256,17 @@ jobs:
       - name: Snapshot uncommitted changes, then bundle branch
         if: always()
         run: |
+          # The snapshot commit is best-effort and must never prevent the
+          # bundle: a dirty state `git add -A` cannot stage (e.g. modified
+          # submodule content) makes the commit exit nonzero, and under
+          # fail-fast that would discard even the run's already-committed
+          # work. Warn and continue — the bundle below always runs.
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name "ci-dispatch"
             git config user.email "ci-dispatch@users.noreply.github.com"
             git add -A
-            git commit -m "chore(ci): snapshot uncommitted working-tree changes before bundling"
+            git commit -m "chore(ci): snapshot uncommitted working-tree changes before bundling" \
+              || echo "::warning::snapshot commit failed (unstageable state, e.g. submodule content) — bundling committed work only"
           fi
           git bundle create implementation.bundle --all
 
