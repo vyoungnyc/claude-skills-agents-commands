@@ -141,6 +141,8 @@ expect_denied 'echo "$(echo "$(git push origin main)")"' "main/master"
 expect_allowed 'echo "$(git status)"'
 # ...while single-quoted substitutions are NOT executed.
 expect_allowed "echo 'literal \$(git push origin main)'"
+# A quoted ) inside the body must not truncate extraction (round-28).
+expect_denied 'echo "$(printf ")" && git push --force origin feature/x)"' "Force push"
 
 # Shell wrappers do not bypass enforcement (round-25): subshells, brace
 # groups, and command-position keywords all still execute git.

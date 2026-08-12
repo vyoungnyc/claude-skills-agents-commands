@@ -192,19 +192,29 @@ deny() {
 # quote-blind — an unbalanced ")" inside a body's own quoted string can
 # truncate the extracted body, which fails toward stricter checking.
 _extract_cmd_subs() {
-  local cmd="$1" i c n sq=0 depth=0 body=""
+  local cmd="$1" i c n sq=0 depth=0 body="" bq=""
   n=${#cmd}
   for ((i = 0; i < n; i++)); do
     c="${cmd:$i:1}"
     if [ "$depth" -gt 0 ]; then
-      if [ "$c" = "(" ]; then
-        depth=$((depth + 1)); body="$body$c"
-      elif [ "$c" = ")" ]; then
-        depth=$((depth - 1))
-        if [ "$depth" -eq 0 ]; then printf '%s\x01' "$body"; body=""; else body="$body$c"; fi
-      else
+      # Quote-aware paren matching INSIDE the body: a quoted ")" (e.g.
+      # printf ')' before the git invocation) is content, not a closer —
+      # counting it blindly truncated the body and let the remainder of
+      # the substitution escape classification.
+      if [ -n "$bq" ]; then
         body="$body$c"
+        [ "$c" = "$bq" ] && bq=""
+        continue
       fi
+      case "$c" in
+        \"|\') bq="$c"; body="$body$c" ;;
+        '(') depth=$((depth + 1)); body="$body$c" ;;
+        ')')
+          depth=$((depth - 1))
+          if [ "$depth" -eq 0 ]; then printf '%s\x01' "$body"; body=""; else body="$body$c"; fi
+          ;;
+        *) body="$body$c" ;;
+      esac
       continue
     fi
     case "$c" in

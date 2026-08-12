@@ -291,6 +291,9 @@ case "$FILE_PATH" in
         stamp_lock "$SH_LOCK" "$SH_CHILD:$(_pid_start_time "$SH_CHILD")"
         wait "$SH_CHILD"
         SH_EXIT=$?
+        # Orphan sweep before any further claim/release: a suite that
+        # backgrounded a descendant and exited leaves it in the group.
+        kill -0 -- -"$SH_CHILD" 2>/dev/null && kill -9 -- -"$SH_CHILD" 2>/dev/null
         SH_RAN=1
       done
       release_lock "$SH_LOCK"
@@ -378,6 +381,12 @@ while :; do
     stamp_lock "$LOCK" "$TEST_CHILD:$(_pid_start_time "$TEST_CHILD")"
     wait "$TEST_CHILD"
     TEST_EXIT=$?
+    # Orphan sweep: unlike the shell branch's run-tests.sh (which sweeps
+    # its own suites' orphans), vitest/jest have no such guarantee — a
+    # runner that backgrounded a descendant and exited normally would
+    # otherwise leave it alive past the lock release, and the next edit
+    # would start a suite alongside it.
+    kill -0 -- -"$TEST_CHILD" 2>/dev/null && kill -9 -- -"$TEST_CHILD" 2>/dev/null
     RAN=1
   done
   release_lock "$LOCK"
