@@ -113,10 +113,16 @@ SUITE_OUT=$(mktemp "${TMPDIR:-/tmp}/run-tests-suite-out.XXXXXX")
 # via EXIT.
 ACTIVE_SUITE_PID=""
 cleanup_runner() {
-  if [ -n "$ACTIVE_SUITE_PID" ] && kill -0 "$ACTIVE_SUITE_PID" 2>/dev/null; then
-    kill -- -"$ACTIVE_SUITE_PID" 2>/dev/null || kill "$ACTIVE_SUITE_PID" 2>/dev/null
-    sleep 1
-    kill -9 -- -"$ACTIVE_SUITE_PID" 2>/dev/null
+  # Probe the GROUP, not the leader: a suite whose leader already exited
+  # can still have live descendants in its group (the PGID stays valid
+  # while any member lives), and gating on leader liveness would skip
+  # exactly those.
+  if [ -n "$ACTIVE_SUITE_PID" ]; then
+    if kill -0 -- -"$ACTIVE_SUITE_PID" 2>/dev/null; then
+      kill -- -"$ACTIVE_SUITE_PID" 2>/dev/null
+      sleep 1
+      kill -9 -- -"$ACTIVE_SUITE_PID" 2>/dev/null
+    fi
     wait "$ACTIVE_SUITE_PID" 2>/dev/null
   fi
   rm -f "$SUITE_OUT"

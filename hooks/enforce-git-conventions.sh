@@ -164,6 +164,13 @@ _normalize_git() {
   local s="$1" prev
   while true; do
     prev="$s"
+    # Strip environment-assignment prefixes (FOO=1 git ..., env FOO=1
+    # git ...) — leaving them in place made the anchored ^git match skip
+    # validation entirely, a full bypass. Quoted assignment values are a
+    # known limitation (the sed stops at the first space); unquoted
+    # values cover the practical cases.
+    s=$(echo "$s" | sed -E 's/^[[:space:]]*//; s/^([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)+//')
+    s=$(echo "$s" | sed -E 's/^env[[:space:]]+(-[^[:space:]]+[[:space:]]+)*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*//')
     s=$(echo "$s" | sed -E 's/^[[:space:]]*//; s/^(git[[:space:]]+)(-[Cc]|--git-dir|--work-tree|--namespace|--super-prefix|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+/\1/')
     s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)(-[pP]|--paginate|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--no-optional-locks|--no-lazy-fetch|--html-path|--man-path|--info-path)[[:space:]]+/\1/')
     s=$(echo "$s" | sed -E 's/^(git[[:space:]]+)--[a-zA-Z][a-zA-Z0-9_-]*=[^[:space:]]+[[:space:]]+/\1/')

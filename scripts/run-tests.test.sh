@@ -195,4 +195,33 @@ if pgrep -f "$SIG_SENTINEL" >/dev/null 2>&1; then
   fail "runner termination: active suite survived the runner's cleanup trap"
 fi
 
+# =============================================================================
+# (g) Runner termination cleans the suite GROUP even after the leader
+# exited: suite backgrounds a TERM-ignoring sentinel and exits immediately;
+# runner is TERM'd during its polling window. Whichever path handles it
+# (signal cleanup's group probe or the normal orphan sweep), the sentinel
+# must be dead once the runner is gone.
+# =============================================================================
+DEADLDR_DIR=$(sandbox_new_nongit)
+DEADLDR_SENTINEL="deadleader-sentinel-$$"
+cat > "$DEADLDR_DIR/orphaning.test.sh" <<EOF
+#!/bin/bash
+( trap '' TERM; exec -a "$DEADLDR_SENTINEL" sleep 300 ) &
+exit 0
+EOF
+bash "$DEADLDR_DIR/scripts/run-tests.sh" >"$SUITE_TMP/deadldr.out" 2>&1 &
+DEADLDR_RUNNER=$!
+sleep 0.5
+kill -TERM "$DEADLDR_RUNNER" 2>/dev/null
+wait "$DEADLDR_RUNNER" 2>/dev/null || true
+DEADLDR_WAITED=0
+while pgrep -f "$DEADLDR_SENTINEL" >/dev/null 2>&1 && [ "$DEADLDR_WAITED" -lt 5 ]; do
+  sleep 1
+  DEADLDR_WAITED=$((DEADLDR_WAITED + 1))
+done
+if pgrep -f "$DEADLDR_SENTINEL" >/dev/null 2>&1; then
+  pkill -9 -f "$DEADLDR_SENTINEL" 2>/dev/null
+  fail "dead-leader group cleanup: sentinel survived runner termination"
+fi
+
 echo "run-tests.sh tests passed"

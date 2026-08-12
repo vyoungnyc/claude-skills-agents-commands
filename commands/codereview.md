@@ -23,10 +23,11 @@ You are reviewing code changes interactively with the user. You run a 7-angle pa
 
 Before parsing scope, detect what remote platform this repo is on so you only use supported tooling.
 
-1. Read the remote URL from git config (prefer branch remote, then origin):
+1. Read the remote URL from git config (prefer branch remote, then origin, then a sole configured remote):
    - `git config --get branch.$(git branch --show-current).remote`
    - `git config --get remote.<remote>.url`
    - Fallback: `git config --get remote.origin.url`
+   - Final fallback: if the branch tracks nothing and no `origin` exists but `git remote` lists exactly one remote, use that remote and its URL (several remotes → ask the user). Host classification and the capability map below MUST be computed from whichever remote was actually selected here — discovering the sole remote only later, at base-ref resolution, would leave `repo_host=unknown` and wrongly route `PR #N`/`MR #N` scopes to the local fallback even when the matching host CLI is available.
 2. Classify repo host from the URL/hostname:
    - Contains `github` → `repo_host=github`
    - Contains `gitlab` → `repo_host=gitlab`

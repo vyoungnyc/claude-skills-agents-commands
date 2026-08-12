@@ -112,4 +112,9 @@ expect_denied 'echo hi ; git commit --no-verify -m "fix: x"' "no-verify"
 expect_allowed 'echo "git push --force origin main is forbidden"'
 expect_allowed 'git commit -m "docs: explain why git push --force is blocked"'
 
+# Environment-assignment and env prefixes do not bypass validation.
+expect_denied 'GIT_AUTHOR_DATE=2026-01-01 git commit -m "not conventional"' "conventional commits format"
+expect_denied 'env FOO=1 git commit -m "still not conventional"' "conventional commits format"
+expect_allowed 'FOO=1 git commit -m "fix(hooks): env-prefixed valid subject"'
+
 echo "enforce-git-conventions.sh tests passed"
