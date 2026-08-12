@@ -264,9 +264,9 @@ jobs:
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name "ci-dispatch"
             git config user.email "ci-dispatch@users.noreply.github.com"
-            git add -A
-            git commit -m "chore(ci): snapshot uncommitted working-tree changes before bundling" \
-              || echo "::warning::snapshot commit failed (unstageable state, e.g. submodule content) — bundling committed work only"
+            { git add -A && \
+              git commit -m "chore(ci): snapshot uncommitted working-tree changes before bundling"; } \
+              || echo "::warning::snapshot failed (unstageable state, submodule content, or a leftover index.lock) — bundling committed work only"
           fi
           git bundle create implementation.bundle --all
 

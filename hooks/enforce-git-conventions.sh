@@ -52,7 +52,7 @@ _split_segments() {
     case "$c" in
       \"|\') q="$c"; seg="$seg$c" ;;
       '&'|'|'|';'|'
-') printf '%s\x01' "$seg"; seg="" ;;
+'|$'\001') printf '%s\x01' "$seg"; seg="" ;;
       *) seg="$seg$c" ;;
     esac
   done
@@ -184,6 +184,46 @@ deny() {
   exit 0
 }
 
+# Extract $(...) command-substitution bodies: the shell EXECUTES them even
+# inside double quotes, so `echo "$(git push origin main)"` is a real push
+# the quote-aware segmenter would otherwise treat as inert text. Bodies are
+# appended as additional input for classification. Single-quoted '$(...)'
+# is not executed and is skipped. Parenthesis matching inside a body is
+# quote-blind — an unbalanced ")" inside a body's own quoted string can
+# truncate the extracted body, which fails toward stricter checking.
+_extract_cmd_subs() {
+  local cmd="$1" i c n sq=0 depth=0 body=""
+  n=${#cmd}
+  for ((i = 0; i < n; i++)); do
+    c="${cmd:$i:1}"
+    if [ "$depth" -gt 0 ]; then
+      if [ "$c" = "(" ]; then
+        depth=$((depth + 1)); body="$body$c"
+      elif [ "$c" = ")" ]; then
+        depth=$((depth - 1))
+        if [ "$depth" -eq 0 ]; then printf '%s\x01' "$body"; body=""; else body="$body$c"; fi
+      else
+        body="$body$c"
+      fi
+      continue
+    fi
+    case "$c" in
+      \') sq=$((1 - sq)) ;;
+      \$) if [ "$sq" -eq 0 ] && [ "${cmd:$((i + 1)):1}" = "(" ]; then depth=1; i=$((i + 1)); fi ;;
+    esac
+  done
+}
+
+SEG_INPUT="$COMMAND"
+SUBS=$(_extract_cmd_subs "$COMMAND")
+if [ -n "$SUBS" ]; then
+  SEG_INPUT="$SEG_INPUT"$'\x01'"$SUBS"
+  # One more level for nested substitutions; deeper nesting is a known
+  # accepted limitation.
+  SUBS2=$(_extract_cmd_subs "$SUBS")
+  [ -n "$SUBS2" ] && SEG_INPUT="$SEG_INPUT"$'\x01'"$SUBS2"
+fi
+
 # --- Per-segment enforcement -------------------------------------------
 
 while IFS= read -r -d $'\x01' SEG; do
@@ -291,7 +331,7 @@ while IFS= read -r -d $'\x01' SEG; do
       fi
     fi
   fi
-done < <(_split_segments "$COMMAND")
+done < <(_split_segments "$SEG_INPUT")
 
 # All checks passed
 exit 0

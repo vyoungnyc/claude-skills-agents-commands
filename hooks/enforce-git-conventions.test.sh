@@ -133,6 +133,15 @@ expect_allowed 'git commit -am "docs: explain --no-verify usage"'
 expect_denied 'git push "/tmp/remote repo.git" main' "main/master"
 expect_allowed 'git push "/tmp/remote repo.git" feature-branch'
 
+# Command substitutions are executed by the shell even inside double
+# quotes (round-27) — their bodies must be classified.
+expect_denied 'echo "$(git push origin main)"' "main/master"
+expect_denied 'result="$(git push --force origin feature/foo)"' "Force push"
+expect_denied 'echo "$(echo "$(git push origin main)")"' "main/master"
+expect_allowed 'echo "$(git status)"'
+# ...while single-quoted substitutions are NOT executed.
+expect_allowed "echo 'literal \$(git push origin main)'"
+
 # Shell wrappers do not bypass enforcement (round-25): subshells, brace
 # groups, and command-position keywords all still execute git.
 expect_denied '(git push origin main)' "main/master"
