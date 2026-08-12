@@ -18,6 +18,10 @@ These are cross-project personal standards. Project-specific details (tech stack
 
 Never save working files, scratch notes/markdown, or tests to a project root. Use the project's structure: `/src`, `/tests`, `/docs`, `/config`, `/scripts`, `/examples`. Phased work goes under `/plans/PHASE_*` with scope, risks, dependencies, and exit criteria.
 
+## Shell Commands
+
+- Never append `echo "exit=$?"`-style suffixes, and don't use `$VAR`/`$(...)` in one-off Bash commands when a literal would do; expansions always trigger permission prompts ("Contains simple_expansion"). The Bash tool already reports exit codes. Prefer literal paths and plain commands. Expansions are fine where a workflow genuinely needs a dynamic value (e.g. `/codereview` base-ref resolution).
+
 ## Git
 
 - Conventional commits: `type(scope): subject` (feat/fix/refactor/test/docs/chore).
