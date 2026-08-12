@@ -44,6 +44,16 @@ if [ -z "$FEATURE_ID" ] || [ -z "$PLAN_STEPS_FILE" ]; then
   exit $EXIT_USAGE
 fi
 
+# FEATURE_ID is interpolated into PLANS_DIR="plans/${FEATURE_ID}" below — an
+# unvalidated value like "../../somewhere" or "/abs/path" would write issue
+# files (and later, epic content) outside the repo (path traversal, CWE-22).
+# No slashes allowed, and the first character must not be a dot, which also
+# rejects "." and "..".
+if ! [[ "$FEATURE_ID" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ ]]; then
+  echo '{"error": "feature_id must match ^[A-Za-z0-9_-][A-Za-z0-9._-]*$ (no slashes, no leading dot)"}' >&2
+  exit $EXIT_USAGE
+fi
+
 if ! command -v jq &>/dev/null; then
   echo '{"error": "jq is required but not installed"}' >&2
   exit $EXIT_FATAL

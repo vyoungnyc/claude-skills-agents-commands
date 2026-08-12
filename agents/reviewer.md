@@ -48,7 +48,7 @@ If asked to review a full PR or branch diff, review it as a single careful pass 
    - `@ui-ux`: UX consistency.
    - `@orchestrator`: when plan steps need adjustment.
 
-6. **Report** — Deliver your full findings via `SendMessage(to: "main", ...)` as your **last action**, whether spawned as a background subagent or a live teammate. Do not just finish your analysis and stop — producing the review internally without transmitting it leaves the orchestrator with nothing but a content-free idle notification, forcing an extra round-trip to ask for what you already have.
+6. **Report** — Deliver your full findings as your **last action**, through whichever channel your spawn mode provides. As a background subagent (the standard Phase 3 path), `SendMessage` is not in your tool allowlist — your **final completion result** is the report: end your run with the complete findings as your final message. As a live teammate with `SendMessage` available, send the findings via `SendMessage(to: "main", ...)`. Either way, do not just finish your analysis and stop — producing the review internally without transmitting it leaves the orchestrator with nothing but a content-free idle notification, forcing an extra round-trip to ask for what you already have.
 
 ## Rules
 
@@ -56,7 +56,7 @@ If asked to review a full PR or branch diff, review it as a single careful pass 
 2. Focus on reviewing what is actually implemented, not on gathering new requirements.
 3. Prioritize making things work over making them perfect.
 4. False positives to skip: pre-existing issues, linter-catchable issues, lines not in the diff, speculative concerns without code evidence.
-5. Always `SendMessage` your completed findings to `main` — never stop after producing them internally. See Report above.
+5. Always deliver your completed findings — completion result when a background subagent, `SendMessage` to `main` when a live teammate — never stop after producing them internally. See Report above.
 
 ## Skills
 

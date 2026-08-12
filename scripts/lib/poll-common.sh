@@ -87,6 +87,18 @@ acquire_pidfile() {
     return 0
   fi
 
+  # -O above proves ownership, not mode: a pre-existing directory owned by
+  # this user can still be group/world-writable (e.g. created earlier by a
+  # different tool, or mode-tampered before ownership passed to us), which
+  # would let another local user forge an identity-matching pidfile or plant
+  # a symlink despite the ownership check. We own it, so chmod cannot fail
+  # for permission reasons — if it does fail anyway, refuse rather than
+  # trust a directory whose mode we couldn't repair.
+  if ! chmod 700 "$piddir" 2>/dev/null; then
+    echo "[$(date +"%H:%M:%S")] Could not restrict pidfile directory mode, refusing (path: $piddir)" >&2
+    return 0
+  fi
+
   register_cleanup "$pidfile"
 
   # Never follow a symlink at the pidfile path — `echo ... > "$pidfile"`

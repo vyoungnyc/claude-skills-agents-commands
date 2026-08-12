@@ -2,6 +2,21 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.11.0] - 2026-08-11
+
+### Review-Hardened Hooks, Scripts, And Commands (PR #31)
+
+Twenty-eight rounds of automated review (Codex per-push, plus a 7-angle preemptive audit) against the review-findings branch, every confirmed finding fixed with regression tests. Highlights:
+
+- **`hooks/auto-test-runner.sh`:** project-namespaced coordination (two projects never share a lock/marker); runner ownership as an atomic symlink lock carrying a PID-reuse-safe `pid:start-time` identity for both the wrapper and the live suite child; single-winner stale-lock reclamation with reclaim-token re-verification; release-then-recheck marker handoff; exiting signal handlers with group-wide child termination; orphan sweeps after every suite run.
+- **`hooks/enforce-git-conventions.sh`:** rebuilt as a segment/token classifier — chained commands, env/wrapper prefixes, subshells, quoted real arguments, and command substitutions (nested, quote-aware) are all enforced; commit-message values are masked so free text never false-positives; ordered `-m`/`--message` extraction validates every commit in a chained command. Closed a long-standing fast-path bypass that skipped all checks for any command not starting with `git`.
+- **`hooks/plan-context.sh`:** status-dialect plans pair `step_id` with status before truncation (anchored field match, END-flush fail-open for status-less steps); fully-completed plans are never reinjected.
+- **`scripts/run-tests.sh`:** same-tree recursion refusal; validated per-suite watchdog timeout with unconditional group escalation; orphan sweeps on normal completion; active-suite group cleanup on runner termination; root-anchored runtime-dir prunes; zero-suite discovery guard.
+- **`scripts/poll-pr-reviews.sh` / `scripts/lib/poll-common.sh` / `scripts/create-local-issues.sh`:** full `owner/name` shape validation; `feature_id` path-traversal rejection; pidfile-directory mode repair.
+- **Four new test suites** (`hooks/auto-test-runner.test.sh`, `hooks/plan-context.test.sh`, `scripts/run-tests.test.sh`, and poll-common's chmod case) bring the runner to 10 suites.
+- **`commands/codereview.md`:** lazy, verified base-ref resolution with sole-remote discovery; dirty-tree and untracked-file review supplements; per-scope proposed-fix sourcing; Codex scope classification corrections; branch checkout restore with `--no-overwrite-ignore`.
+- **`docs/CI_DISPATCH.md`:** failure-isolated snapshot + bundle steps so committed CI work always ships; artifact-exposure warnings extended to the implementation bundle; `run-result.json` written outside the checkout.
+
 ## [2.10.1] - 2026-08-11
 
 ### Pre-Merge Checklist Codified In CLAUDE.md + `/git`

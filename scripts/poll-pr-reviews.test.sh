@@ -147,6 +147,28 @@ mark_exercised() {
   esac
 }
 
+# dir_mode <dir> — portable octal mode lookup. `uname` alone is not a
+# reliable signal here: this host reports Darwin but has GNU coreutils'
+# `stat` ahead of BSD `stat` on PATH, so `stat -f '%Lp'` doesn't cleanly
+# fail (GNU's -f means "show filesystem info", not "format", and silently
+# treats '%Lp' as a second file operand) — it can exit 0 while printing
+# filesystem-info garbage instead of an octal mode. Validate the shape of
+# stat's output instead of trusting either the exit code or `uname`.
+dir_mode() {
+  local dir="$1" mode
+  mode="$(stat -f '%Lp' "$dir" 2>/dev/null)"
+  if [[ "$mode" =~ ^[0-7]+$ ]]; then
+    printf '%s' "$mode"
+    return 0
+  fi
+  mode="$(stat -c '%a' "$dir" 2>/dev/null)"
+  if [[ "$mode" =~ ^[0-7]+$ ]]; then
+    printf '%s' "$mode"
+    return 0
+  fi
+  return 1
+}
+
 # --- Fixture builders -------------------------------------------------------
 
 fixture_empty_snapshot() {
@@ -352,13 +374,15 @@ expect_exit 10 "GraphQL-injection pr_number"
 expect_stderr_match "pr_number must be a positive integer" "GraphQL-injection pr_number message"
 expect_stderr_no_match "unbound variable" "GraphQL-injection pr_number: clean stderr"
 
-# owner/name charset guard: values outside ^[A-Za-z0-9._-]+$ must be rejected
-# before GraphQL interpolation, not passed through.
-for bad_repo in "bad owner/repo" "owner/bad name" "owner/repo;drop"; do
+# owner/name shape guard: charset violations, a slash-less value (which the
+# old per-component check let through as OWNER=NAME=<value>), and extra path
+# segments (silently dropped middle segment) must all be rejected before
+# GraphQL interpolation, not passed through.
+for bad_repo in "bad owner/repo" "owner/bad name" "owner/repo;drop" "norepo" "a/b/c" "/leading" "trailing/"; do
   new_case; new_pr
   run_pr "$CASE_DIR" "$bad_repo" "$PR" 1 4
   expect_exit 10 "invalid owner/name repo='$bad_repo'"
-  expect_stderr_match 'owner and name must match' "invalid owner/name repo='$bad_repo' message"
+  expect_stderr_match 'repo must be in owner/name format' "invalid owner/name repo='$bad_repo' message"
   expect_stderr_no_match "unbound variable" "invalid owner/name repo='$bad_repo': clean stderr"
 done
 
@@ -555,6 +579,27 @@ echo "$ERR" | grep -q "Pidfile directory is untrusted, refusing" || fail "untrus
 # cleanup trap) expect the shared piddir to be a real, owned directory.
 rm -f "$PIDDIR_BADDIR"
 mkdir -m 700 -p "$PIDDIR_BADDIR"
+
+# chmod-repair: `mkdir -m` only sets the mode on directories mkdir actually
+# creates — a piddir that already exists (owned by this user, so it passes
+# the [ ! -O ] check above) can still be left group/world-writable from an
+# earlier run predating this repair, or from mode-tampering. acquire_pidfile
+# must actively chmod 700 it on every call, not just at creation time. Pre-
+# create the piddir at 0770 (owned by this user, so the untrusted-directory
+# check passes) and confirm a normal run tightens it back to 0700.
+new_case; new_pr
+OWNER_CHMOD="chmodowner$$"
+NAME_CHMOD="chmodrepo"
+fixture_empty_snapshot > "$CASE_DIR/1.json"
+fixture_poll_approval "dependabot[bot]" > "$CASE_DIR/2.json"
+PF_CHMOD="$(pidfile_for "$OWNER_CHMOD" "$NAME_CHMOD" "$PR")"
+PIDDIR_CHMOD="$(dirname "$PF_CHMOD")"
+rm -rf "$PIDDIR_CHMOD"
+mkdir -m 770 -p "$PIDDIR_CHMOD"
+run_pr "$CASE_DIR" "$OWNER_CHMOD/$NAME_CHMOD" "$PR" 1 4
+expect_exit 0 "chmod-repair: run still completes normally"
+PIDDIR_CHMOD_MODE="$(dir_mode "$PIDDIR_CHMOD")" || fail "chmod-repair: could not determine piddir mode via stat"
+[ "$PIDDIR_CHMOD_MODE" = "700" ] || fail "chmod-repair: expected piddir mode 700 after run, got $PIDDIR_CHMOD_MODE"
 
 # TOCTOU closure: a symlink planted at the pidfile *path* (not its parent
 # directory) mid-run — specifically during the multi-second kill-retry loop

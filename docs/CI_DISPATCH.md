@@ -77,7 +77,7 @@ interactively — nothing about running in CI changes them:
 - The shared task queue is not visible to isolated background workers — steps must be
   **pre-assigned in each worker's spawn prompt** (step id, `file_domain`, `issue_ref`,
   `complexity`, acceptance criteria), not claimed from a queue at runtime.
-- Each worker runs under `agents/coder.md`'s fixed `maxTurns: 30` — CI does not get a larger
+- Each worker runs under `agents/coder.md`'s fixed `maxTurns: 45` — CI does not get a larger
   per-worker turn budget than an interactive run does.
 
 ## Turn budget ceiling
@@ -109,7 +109,7 @@ in `PLAN_steps.md`) rather than assumed to complete in one invocation.
   protocol likewise does not apply in headless runs — a card is an `AskUserQuestion` call, so any
   would-be card fails the job the same way instead of being presented.
 - **Timeouts:** set both a job-level timeout (`timeout-minutes` in the workflow, sized to the
-  orchestrator's `maxTurns: 50` ceiling plus the parallel workers' `maxTurns: 30` each) and rely on
+  orchestrator's `maxTurns: 50` ceiling plus the parallel workers' `maxTurns: 45` each) and rely on
   the harness's own turn limits as the inner bound. An unattended run that exceeds its timeout
   should fail the job rather than continue silently — there is no human present to notice a stuck
   run otherwise.
@@ -138,7 +138,13 @@ in `PLAN_steps.md`) rather than assumed to complete in one invocation.
 - **Uploaded artifacts are readable by anyone with repo read access.** `run-result.json` (uploaded
   below) is visible to any principal with read access to the repository, not just the person who
   triggered the run — set the artifact's retention period deliberately and treat its contents as
-  no more sensitive than repo contents, never as a place to capture secrets or tokens.
+  no more sensitive than repo contents, never as a place to capture secrets or tokens. The same
+  exposure applies — with higher stakes — to `implementation.bundle`: it is a full `git bundle
+  --all` of the branch, built after a snapshot-commit step that runs `git add -A` over the entire
+  working tree, so it contains complete source, commit history, and any un-ignored file a worker
+  left behind. Anything a run writes into the checkout that must not be published needs to be
+  gitignored (or cleaned) before the bundle step, and the bundle's `retention-days` deserves the
+  same deliberate choice as the run result's.
 
 ## Example workflow (copy into a target project's `.github/workflows/`)
 
@@ -219,14 +225,57 @@ jobs:
             --max-turns 50 \
             --permission-mode acceptEdits \
             --allowedTools "Read,Write,Edit,Grep,Glob,Bash,Agent,TaskCreate,TaskList,TaskUpdate,SendMessage" \
-            --output-format json > run-result.json
+            --output-format json > "$RUNNER_TEMP/run-result.json"
+          # Written to $RUNNER_TEMP, not the checkout: the snapshot-commit
+          # step below stages everything in the working tree, and a
+          # generated CI transcript inside the checkout would be committed
+          # into the bundled branch history on every run.
 
       - name: Upload run result
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ci-dispatch-result-${{ env.FEATURE_ID }}
-          path: run-result.json
+          path: ${{ runner.temp }}/run-result.json
+          retention-days: 14
+
+      # The prompt prohibits pushing and checkout ran with
+      # persist-credentials: false, so every commit the orchestrator and its
+      # workers made exists only in this ephemeral checkout. Without this
+      # step the implementation is discarded when the runner is torn down —
+      # while coders may already have closed issues referencing those
+      # now-unreachable commits. A git bundle preserves the full branch
+      # history as a downloadable artifact; a human reviews it and pushes
+      # from a trusted machine (`git bundle verify`, then fetch + push).
+      #
+      # Snapshot-commit first: `git bundle` captures only objects reachable
+      # from refs, never modified or untracked working-tree files — and a
+      # successful run's final Phase 4 documentation/plan-status edits may
+      # be exactly that. Committing them (locally only; nothing is pushed)
+      # makes them reachable so the bundle actually preserves them.
+      - name: Snapshot uncommitted changes, then bundle branch
+        if: always()
+        run: |
+          # The snapshot commit is best-effort and must never prevent the
+          # bundle: a dirty state `git add -A` cannot stage (e.g. modified
+          # submodule content) makes the commit exit nonzero, and under
+          # fail-fast that would discard even the run's already-committed
+          # work. Warn and continue — the bundle below always runs.
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "ci-dispatch"
+            git config user.email "ci-dispatch@users.noreply.github.com"
+            { git add -A && \
+              git commit -m "chore(ci): snapshot uncommitted working-tree changes before bundling"; } \
+              || echo "::warning::snapshot failed (unstageable state, submodule content, or a leftover index.lock) — bundling committed work only"
+          fi
+          git bundle create implementation.bundle --all
+
+      - name: Upload implementation bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-dispatch-branch-${{ env.FEATURE_ID }}
+          path: implementation.bundle
           retention-days: 14
 ```
 

@@ -238,6 +238,25 @@ expect_exit 10 "$EMPTY_DIR" "emptyfeat" "empty.json"
 expect_stderr_match "at least one step"
 
 # =======================================================================
+# Path-traversal guard (CWE-22): FEATURE_ID is interpolated into
+# plans/${FEATURE_ID} — traversal sequences, absolute paths, and dotted
+# names must be rejected as usage errors before any directory is created
+# or file written.
+# =======================================================================
+for bad_id in "../escape" "../../etc" "/abs/path" "a/b" "." ".." ".hidden"; do
+  TRAV_DIR=$(sandbox_new)
+  write_json "$TRAV_DIR/steps.json" <<'EOF'
+[{"step_id": "step_x", "title": "T", "acceptance_criteria": [], "file_domain": ["src/"], "complexity": "low", "dependencies": [], "batch_hint": "backend"}]
+EOF
+  expect_exit 10 "$TRAV_DIR" "$bad_id" "steps.json"
+  expect_stderr_match "feature_id must match"
+  # Nothing may be written anywhere — neither inside plans/ nor at the
+  # traversal target (e.g. a sibling of the sandbox).
+  [ ! -d "$TRAV_DIR/plans" ] || fail "traversal guard: plans/ created for feature_id='$bad_id'"
+  [ ! -e "$TRAV_DIR/../escape" ] || fail "traversal guard: wrote outside sandbox for feature_id='$bad_id'"
+done
+
+# =======================================================================
 # SKIP_GITIGNORE branches.
 # =======================================================================
 GI_STEPS='[{"step_id": "step_01", "title": "T", "acceptance_criteria": [], "file_domain": ["src/"], "complexity": "low", "dependencies": [], "batch_hint": "backend"}]'

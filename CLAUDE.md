@@ -65,6 +65,7 @@ Agents are defined in `~/.claude/agents/` (orchestrator, architect, backend-code
 - Only **architect** and **ui-ux** may ask the user clarifying questions; other agents escalate through them.
 - Agent teams (peer-to-peer) only when teammates must debate or share findings; assign non-overlapping file domains. Full guidance: `docs/AGENT_TEAMS_GUIDE.md`.
 - Worktree-isolated workers commit incrementally (per fix/file/test suite, not batched at the end) — preserves progress if the worker exhausts its turn budget mid-task. Enforced in `agents/coder.md`, `agents/backend-coder.md`, `agents/frontend-coder.md`.
+- **Stall watch:** when spawning a background worker, decide its expected duration up front (test-suite authoring ≈ 15 min; single-file fixes ≈ 5 min). Once exceeded, do not keep waiting — inspect immediately: `ps` for the worker's processes (nested/duplicated commands = recursion; long-idle sleeps = a wait that will never return), worktree file mtimes (recent writes = progress, stale = stuck), then `SendMessage` a concrete unblock. Observed failure shape this rule exists for: a hook test invoked the real hook instead of its sandbox copy, the hook re-entered its own test runner, and the run nested silently for ~1h before anyone looked (2026-08-11; structural guards now in `scripts/run-tests.sh`: same-tree recursion refusal + per-suite watchdog timeout).
 
 ## Feature-Work Artifacts
 

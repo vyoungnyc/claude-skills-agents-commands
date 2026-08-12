@@ -23,10 +23,11 @@ You are reviewing code changes interactively with the user. You run a 7-angle pa
 
 Before parsing scope, detect what remote platform this repo is on so you only use supported tooling.
 
-1. Read the remote URL from git config (prefer branch remote, then origin):
+1. Read the remote URL from git config (prefer branch remote, then origin, then a sole configured remote):
    - `git config --get branch.$(git branch --show-current).remote`
    - `git config --get remote.<remote>.url`
    - Fallback: `git config --get remote.origin.url`
+   - Final fallback: if the branch tracks nothing and no `origin` exists but `git remote` lists exactly one remote, use that remote and its URL (several remotes → ask the user). Host classification and the capability map below MUST be computed from whichever remote was actually selected here — discovering the sole remote only later, at base-ref resolution, would leave `repo_host=unknown` and wrongly route `PR #N`/`MR #N` scopes to the local fallback even when the matching host CLI is available.
 2. Classify repo host from the URL/hostname:
    - Contains `github` → `repo_host=github`
    - Contains `gitlab` → `repo_host=gitlab`
@@ -45,19 +46,23 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 `$ARGUMENTS` may contain a scope, intent description, or both.
 
-**Scope** (determines which diff to review):
-- No args or `staged` → `git diff --cached`, fall back to `git diff`
-- Commit ref (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`
-- `PR #N`, `MR #N`, or just a number:
+**Base ref** `BASEREF` — resolve **lazily, only when the selected scope below actually uses it** (default, branch name, file path, or the PR/MR local fallback). Explicit `staged`/`unstaged` and pure commit-ref scopes never touch `BASEREF`, so an unresolvable base must not block them — parse the scope first, then resolve. To resolve: use the remote already discovered in Step 0 as `REMOTE` (the branch's tracking remote, falling back to `origin`; if the branch has no tracking remote AND no `origin` exists, use the repository's sole configured remote when `git remote` lists exactly one, and ask the user which remote to use when there are several) — do not hard-code `origin`, which breaks repos whose remote has another name, and do not treat a repo with a configured remote as local-only just because the branch doesn't track it. Detect the base branch `BASE`: probe `git symbolic-ref --quiet refs/remotes/$REMOTE/HEAD` first and only strip the prefix when the probe itself succeeded AND the stripped result is non-empty — piping straight into `sed` masks a failed probe behind `sed`'s exit 0, which would accept an empty `BASE` and skip the verified fallbacks below; if the probe fails, use `main` when `git rev-parse --verify "$REMOTE/main"` succeeds, else `master` when `git rev-parse --verify "$REMOTE/master"` succeeds — **never select a fallback without verifying the ref exists**. If neither exists (default branch has another name and the clone lacks `refs/remotes/$REMOTE/HEAD`), resolve the name with `git ls-remote --symref "$REMOTE" HEAD` (one network call) — and then **fetch it**, since resolving a name does not make the commit available locally: `git fetch "$REMOTE" "$BASE:refs/remotes/$REMOTE/$BASE"` (explicit refspec, so narrow/single-branch clones get the tracking ref too). Only then use `$REMOTE/$BASE`. If resolution also fails, ask the user for the base branch rather than proceeding against a nonexistent ref. Then `BASEREF="$REMOTE/$BASE"`. **Local-only repos** (no remotes configured): skip the remote prefix entirely — `BASEREF` is the local `main` (or `master`) branch when it exists and differs from `HEAD`; if the repo has no such base branch, fall back to reviewing the working tree (`git diff`) and note the limitation. Reviews always diff against `$BASEREF`.
+
+**Scope** (determines which diff to review). The default is **always the current branch diff against the base branch** — never just unstaged/staged files:
+- **No args** (default) → `git diff $BASEREF...HEAD` (current branch vs base). If `HEAD` is on `BASE` itself, fall back to `git diff $BASEREF` (uncommitted work) and note it. **Dirty-tree guard:** `$BASEREF...HEAD` covers committed work only — if `git status --porcelain` is non-empty, the working tree holds edits the review would never examine, and an `approve` on that basis is misleading. Append the working-tree diff (`git diff` + `git diff --cached`) to the reviewed input as clearly-labeled supplementary sections, **plus untracked source files** (`git ls-files --others --exclude-standard`) — a brand-new file appears in neither diff yet is exactly the kind of unreviewed implementation an approve would falsely bless; include each untracked file's content as its own labeled section (or, for large/binary ones, list them prominently as unreviewed). If none of that is feasible, state prominently that uncommitted changes were NOT reviewed and cap the verdict at `approve-with-nits`.
+- **A branch name** (the arg names a ref that is a branch) → `git diff $BASEREF...<branch>`. For Codex to review the same target (it reviews the *checked-out* branch), checkout `<branch>` first **only if the working tree is clean** (`git status --porcelain` empty), and always with `git checkout --no-overwrite-ignore <branch>` — a clean porcelain status does not protect ignored local files at paths the target branch tracks, and a default checkout silently overwrites them unrecoverably. If the checkout refuses the switch (or the tree is dirty), proceed with the Claude agents on `git diff $BASEREF...<branch>` without checking out and note that Codex reviewed the current branch instead. If you do checkout, first record the original ref (`ORIG_REF=$(git rev-parse --abbrev-ref HEAD)`; if that prints `HEAD`, use `git rev-parse HEAD` for the detached SHA) and **restore it with `git checkout "$ORIG_REF"` after both Codex jobs finish — including when a job errors out**. Never leave the user's repository on a branch they didn't check out.
+- **Commit ref** (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`.
+- **`PR #N`, `MR #N`, or just a number:**
   - `repo_host=github` and `has_gh` → `gh pr diff N`
   - `repo_host=gitlab` and `has_glab` → `glab mr diff N`
-  - otherwise → `git diff main...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
-- File path → read the file + `git log -5 --follow <file>`
-- Default: staged/unstaged diff
+  - otherwise → `git diff $BASEREF...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
+- **File path** → `git diff $BASEREF...HEAD -- <file>` + `git log -5 --follow <file>`, **plus that file's local edits**: append `git diff -- <file>` and `git diff --cached -- <file>` as labeled supplementary sections, and if the file is untracked include its working-tree content — a file-scoped review whose subject exists only as uncommitted work would otherwise be empty despite being exactly what the user asked to review.
+
+`staged` / `unstaged` are **not** default behaviors — only review the index/working tree if the user explicitly types `staged` (`git diff --cached`) or `unstaged` (`git diff`).
 
 **Intent** (everything that isn't a scope token): treat as authoritative context for correctness checking. If the code diverges from the stated intent, that's a blocking finding.
 
-Show a one-line summary: `Reviewing N files, M lines changed` before proceeding.
+Show a one-line summary before proceeding — mention the base only when the selected scope used one: `Reviewing <scope> vs $BASEREF — N files, M lines changed` for base-relative scopes, `Reviewing <scope> — N files, M lines changed` for `staged`/`unstaged`/commit-ref scopes (where `BASEREF` was never resolved).
 
 ## Step 2: Gather context and clarify intent
 
@@ -88,7 +93,8 @@ Each sub-agent must return findings as a JSON array. Use this schema:
     "severity": "critical|high|medium|low",
     "title": "Short title",
     "body": "What is wrong and why it matters.",
-    "recommendation": "Concrete fix."
+    "recommendation": "Concrete fix.",
+    "mr_comment": "Paste-ready comment for the MR/PR thread on this line: what is wrong, the supporting evidence, and the fix direction. 1-4 sentences, addressed to the author. Plain prose, no code fences."
   }
 ]
 ```
@@ -121,10 +127,10 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
 
-**Scope note:** Codex uses its own scope detection (current branch diff against default branch). It does not receive the scope parsed in Step 1 and does not accept explicit scope flags. If the user specified a non-default scope (e.g., a single file, a specific commit range, or `PR #N`), Codex will review a different target than the Claude agents. Handle this as follows:
-- **User scope matches branch-vs-default** (no args, `staged`, or full branch diff): Codex findings are in-scope — include them in the primary verdict.
-- **User scope is narrower than branch-vs-default** (single file, commit range): Tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict — present them in a separate "Branch-wide Codex findings" section.
-- **User scope is a different target entirely** (`PR #N`, `MR #N`, specific commit ref): Treat Codex as **skipped** for this review — it cannot review the same target. Note in the summary: "Codex reviewers skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide.
+**Scope note:** Codex reviews the **checked-out branch diffed against the base branch** — exactly the new default scope from Step 1. It does not accept explicit scope flags. Since the default and the branch-arg path (after checkout) both put Codex on the same target as the Claude agents, Codex is normally in-scope. Handle the cases:
+- **Default (no args), or a branch arg that was checked out** (working tree clean): Codex reviews the same current-branch-vs-base target — findings are in-scope, include them in the primary verdict.
+- **Branch arg that could NOT be checked out** (dirty tree) **or explicit `staged`/`unstaged`/single file**: Codex reviewed a different/wider target than the Claude agents. Tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict — present in the separate "Branch-wide Codex findings" section.
+- **`PR #N`/`MR #N` resolved via the host API** (`gh pr diff` / `glab mr diff`), **or a commit ref** (the only commit-shaped scope Step 1 defines — e.g. `abc123`, `HEAD~3`): Treat Codex as **skipped** — it cannot scope to that target. Note in the summary: "Codex reviewers skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide. **Exception:** when `PR #N`/`MR #N` fell back to the local `git diff $BASEREF...HEAD` path (no host CLI), the review target IS the checked-out branch vs base — classify like the default scope and keep Codex in the primary verdict.
 
 **Codex #6 — Standard review:**
 ```bash
@@ -209,7 +215,7 @@ Before dedup, normalize Codex findings (#6 and #7) so they have the same `score`
 Spawn a **single haiku agent** with all normalized **scoped** findings (agents #1–#5, plus Codex findings that are NOT tagged `scope: "branch-wide"`).
 
 Instructions for the haiku agent:
-> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial).
+> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, mr_comment, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial). For mr_comment, merge the source comments into one clear paste-ready review comment (Codex findings have no mr_comment — synthesize one from the body/recommendation).
 
 **Branch-wide Codex findings** (tagged `scope: "branch-wide"` in Step 3) are excluded from dedup and the primary verdict. Present them in a separate section after the main findings (see Step 6).
 
@@ -218,6 +224,12 @@ Instructions for the haiku agent:
 Sort findings by `score` descending. **Show everything — do not filter.** The user decides which items to fix.
 
 Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have. Codex findings will be added incrementally once background tasks complete (see Incremental Codex results below).
+
+**Per-finding output — every presented finding must include two paste-ready artifacts:**
+1. **MR comment** — the finding's `mr_comment` field, ready to drop on the MR/PR thread at the cited line.
+2. **Proposed fix (diff)** — a unified diff that resolves the finding. Generate this at presentation time, NOT from the agents: read the cited file at `line_start..line_end` **from the revision that was actually reviewed** and craft a real `diff` block with **accurate surrounding context lines** (correct `@@` hunk header, the actual unchanged lines, `-` for removed, `+` for added). Read from the side the diff actually reviewed: explicit `unstaged` scope → the working-tree file (`Read`); explicit `staged` scope → the index (`git show :<path>`); default branch scope (`$BASEREF...HEAD`) → the HEAD snapshot (`git show HEAD:<path>`), because uncommitted local edits were not part of the reviewed diff and would leak unreviewed context into the hunk — **except** when the default scope fell back to `git diff $BASEREF` because `HEAD` was already on `BASE`: that diff reviews index and working-tree changes, so read the working-tree file like `unstaged` scope; and **except** for findings that arose from the dirty-tree supplementary sections (Step 1's dirty-tree guard labels the appended `git diff` / `git diff --cached` / untracked-file sections — track which section each finding came from): read the working tree for unstaged-section AND untracked-file findings (an untracked path does not exist at `HEAD` at all — a `HEAD` read would produce no fix despite the content having been reviewed), and the index (`git show :<path>`) for staged-section findings, since a `HEAD` read would omit or contradict exactly the code those findings reviewed; explicit commit-ref scope (`<ref>...HEAD`, e.g. `HEAD~3`) → the **HEAD** snapshot (`git show HEAD:<path>`) — the proposed side of that diff is HEAD, and reading `<ref>` would source the OLD side, producing patches with obsolete context for newly added code; any other revision (`PR #N`/`MR #N` via the host API, a branch that was not checked out) → that revision (`git show <ref>:<path>`, or the PR-diff API response) — **except** when `PR #N`/`MR #N` fell back to the local `git diff $BASEREF...HEAD` path because neither `gh` nor `glab` was available: that reviewed exactly the default branch scope, so read the HEAD snapshot (`git show HEAD:<path>`) like rule (c); there is no PR-diff API response and no ref literally named "PR #N" to `git show`. If the reviewed revision cannot be read, **omit the diff** and write `_No diff — reviewed revision not readable locally_` rather than fabricating a patch against unrelated code. Do not invent context — read the reviewed revision first. Verify the change is lint-clean for the repo (e.g. run the formatter/linter mentally per any CLAUDE.md rule).
+   - If the finding is resolved by a **non-code change** (a test/YAML addition, a doc/description rewrite), provide that snippet as the diff instead.
+   - If the finding needs a **design decision before any fix** (e.g. NULL-vs-FALSE policy, grain change), write `_No diff — decision required:_` and state the options succinctly instead of a diff.
 
 ```
 ## Review: <short description of what changed>
@@ -230,11 +242,21 @@ Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do 
 
 [95] [critical] src/foo.ts:42–45 — Null dereference on empty response
 Sources: claude-bugs
-Description and recommendation.
+<What is wrong and why it matters.>
+**MR comment:** <paste-ready mr_comment>
+**Proposed fix:**
+​```diff
+@@ -41,7 +41,7 @@
+   const rows = await db.query(sql)
+-  return rows[0].id
++  return rows[0]?.id ?? null
+​```
 
 [67] [medium] src/bar.ts:12 — Deviates from error-handling pattern in CLAUDE.md
 Sources: claude-compliance · claude-history
-Description and recommendation.
+<What is wrong and why it matters.>
+**MR comment:** <paste-ready mr_comment>
+**Proposed fix:** _No diff — decision required:_ <options>.
 
 ### Branch-wide Codex findings (informational — excluded from verdict)
 <Only shown when user scope is narrower than branch-vs-default. Omit section if all Codex findings are in scope.>
@@ -243,7 +265,7 @@ Description and recommendation.
 <If Codex reviews are still pending, label as: "Verdict (preliminary — Codex pending): ..." and note that the user should not act on a preliminary verdict. Present the final verdict after all reviewers complete.>
 ```
 
-**Incremental Codex results:** When Codex background tasks complete (after initial presentation), normalize their findings per Step 4.5, deduplicate against existing findings, and **append new Codex findings to the presented list**. Update the verdict if new high-confidence findings change it. Clearly mark additions: "Codex review completed — N new findings added."
+**Incremental Codex results:** When Codex background tasks complete (after initial presentation), normalize their findings per Step 4.5, deduplicate against existing findings, and **append new Codex findings to the presented list**. Update the verdict if new high-confidence findings change it. Clearly mark additions: "Codex review completed — N new findings added." **Ordering with the branch restore:** when Step 1 checked out a branch for Codex, generate the proposed-fix diffs for these late-arriving findings BEFORE restoring `$ORIG_REF` — both actions trigger on "Codex jobs finish", and restoring first would make `git show HEAD:<path>` silently read the wrong branch's file content into the diffs. Restore the original ref only after incremental presentation is complete.
 
 Verdict is based on the presence of high-confidence findings (score ≥ 75):
 - Any critical/high at ≥ 75 → `changes-requested`
