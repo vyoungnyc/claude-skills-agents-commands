@@ -56,7 +56,7 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
   - `repo_host=github` and `has_gh` → `gh pr diff N`
   - `repo_host=gitlab` and `has_glab` → `glab mr diff N`
   - otherwise → `git diff $BASEREF...HEAD` and note that remote PR/MR diff is unavailable in this repo/tooling setup
-- **File path** → `git diff $BASEREF...HEAD -- <file>` + `git log -5 --follow <file>`.
+- **File path** → `git diff $BASEREF...HEAD -- <file>` + `git log -5 --follow <file>`, **plus that file's local edits**: append `git diff -- <file>` and `git diff --cached -- <file>` as labeled supplementary sections, and if the file is untracked include its working-tree content — a file-scoped review whose subject exists only as uncommitted work would otherwise be empty despite being exactly what the user asked to review.
 
 `staged` / `unstaged` are **not** default behaviors — only review the index/working tree if the user explicitly types `staged` (`git diff --cached`) or `unstaged` (`git diff`).
 

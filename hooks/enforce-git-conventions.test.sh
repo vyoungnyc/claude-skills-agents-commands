@@ -112,6 +112,14 @@ expect_denied 'echo hi ; git commit --no-verify -m "fix: x"' "no-verify"
 expect_allowed 'echo "git push --force origin main is forbidden"'
 expect_allowed 'git commit -m "docs: explain why git push --force is blocked"'
 
+# Quoted REAL arguments are equivalent to unquoted ones (round-24): shell
+# quoting is invisible to git.
+expect_denied 'git push origin "main"' "main/master"
+expect_denied 'git commit "--no-verify" -m "fix: x"' "no-verify"
+expect_denied 'git push "--force" origin feature/foo' "Force push"
+# ...while dangerous text inside a commit MESSAGE stays plain text.
+expect_allowed 'git commit -m "docs: never run git push --force or --no-verify"'
+
 # Environment-assignment and env prefixes do not bypass validation.
 expect_denied 'GIT_AUTHOR_DATE=2026-01-01 git commit -m "not conventional"' "conventional commits format"
 expect_denied 'env FOO=1 git commit -m "still not conventional"' "conventional commits format"
