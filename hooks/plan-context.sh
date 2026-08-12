@@ -33,7 +33,11 @@ shopt -u nullglob
 active_lines() {
   if grep -qE '^[[:space:]]*status:' "$1" 2>/dev/null; then
     awk '
-      /step_id/ { if (held != "") print held; held = $0; next }
+      # Anchored to the actual field syntax (optional list dash and
+      # backticks, then a colon) — bare /step_id/ also matched PROSE
+      # mentioning step_id after a completed step, storing it as a
+      # phantom status-less step and reinjecting finished plans forever.
+      /^[[:space:]]*-?[[:space:]]*`?step_id`?[[:space:]]*:/ { if (held != "") print held; held = $0; next }
       /^[[:space:]]*status:[[:space:]]*"?(pending|in_progress|blocked)/ {
         if (held != "") { print held; held = "" }
         print; next

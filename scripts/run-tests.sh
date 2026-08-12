@@ -140,6 +140,23 @@ while IFS= read -r -d '' suite; do
   fi
 
   if wait "$suite_pid"; then
+    suite_status=0
+  else
+    suite_status=1
+  fi
+
+  # Orphan sweep on NORMAL completion too: a suite that backgrounds a
+  # process and exits leaves that descendant alive in the suite's process
+  # group — the timed-out path already group-kills, but the happy path
+  # would let orphans interfere with later suites or outlive the run.
+  # kill -0 on the group probes for survivors; the group id is the
+  # leader's pid (set -m) and is not recycled meaningfully in this window.
+  if kill -0 -- -"$suite_pid" 2>/dev/null; then
+    kill -9 -- -"$suite_pid" 2>/dev/null
+    echo "WARN: $suite_rel left background processes running after exit — killed (suites must reap their own children)"
+  fi
+
+  if [ "$suite_status" -eq 0 ]; then
     echo "PASS: $suite_rel"
     PASS_COUNT=$((PASS_COUNT + 1))
   else
