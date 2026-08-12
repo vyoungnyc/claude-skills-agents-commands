@@ -125,6 +125,14 @@ expect_denied 'GIT_AUTHOR_DATE=2026-01-01 git commit -m "not conventional"' "con
 expect_denied 'env FOO=1 git commit -m "still not conventional"' "conventional commits format"
 expect_allowed 'FOO=1 git commit -m "fix(hooks): env-prefixed valid subject"'
 
+# Combined -am messages are masked in the argument view (round-26): free
+# text mentioning --no-verify must not false-deny a valid commit.
+expect_allowed 'git commit -am "docs: explain --no-verify usage"'
+# Quoted multi-word arguments stay single tokens (round-26): a spaced repo
+# path cannot camouflage a protected-ref push.
+expect_denied 'git push "/tmp/remote repo.git" main' "main/master"
+expect_allowed 'git push "/tmp/remote repo.git" feature-branch'
+
 # Shell wrappers do not bypass enforcement (round-25): subshells, brace
 # groups, and command-position keywords all still execute git.
 expect_denied '(git push origin main)' "main/master"

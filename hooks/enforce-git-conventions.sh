@@ -72,10 +72,21 @@ _seg_tokens() {
     if [ "$skip_next" -eq 1 ]; then
       skip_next=0
     else
+      # Internal whitespace inside a (quoted) token is encoded so token
+      # boundaries survive the space-joined view the checks read — a
+      # quoted multi-word repository path must stay ONE argument, or a
+      # trailing refspec slides into the wrong match position.
+      tok="${tok// /$'\002'}"
+      tok="${tok//$'\t'/$'\002'}"
+      tok="${tok//$'\n'/$'\002'}"
       case "$tok" in
         -m|--message) skip_next=1; printf '%s\n' "$tok" ;;
         --message=*)  printf '%s\n' "--message=<msg>" ;;
         -m?*)         printf '%s\n' "-m<msg>" ;;
+        # Combined short flags ending in m (-am, -sm) take the NEXT token
+        # as the message — mask it exactly like the extractor does, or a
+        # message mentioning --no-verify/-n false-denies a valid commit.
+        -[a-zA-Z]*m)  skip_next=1; printf '%s\n' "$tok" ;;
         *)            printf '%s\n' "$tok" ;;
       esac
     fi
