@@ -16,6 +16,13 @@ All notable changes to this multi-agent orchestration system are documented in t
 - **Valid YAML for `--map-models` + jq gating (Codex PR #38):** `--map-models` now emits quoted role aliases (`model: "@good"` / `"@fast"`) — an unquoted leading `@` is a reserved YAML indicator that made generated agent files unparseable. Separately, the jq/awk preflight moved after argument parsing; awk stays unconditional but jq is required only for an `--apply` that actually deploys hooks — the converter never calls jq (only the deployed hook scripts do), so `--help`, unknown args, dry runs, and `--no-hooks` syncs no longer require jq on `PATH`.
 - **Never follow a symlink into an external target when deploying (Codex PR #38, both scripts):** a live directory where a staged file belongs made `cp` nest the file (`reviewer.md/reviewer.md`); a symlink anywhere on the destination path (the staged file itself, a **nested ancestor** like `skills/demo-skill/`, or the **category root** like `agent/agents`) made `cp` follow the link and overwrite the EXTERNAL referent, with the snapshot capturing only the link. Both overlays now detect a non-regular/symlink component and replace it with a real file/dir before copying — recording a replaced root/link in the backup, leaving the external referent untouched, so the deploy always lands at the intended path and a bad apply stays restorable.
 - **Version note:** cut from `main` (2.11.3) alongside the in-flight statusline branch that also claims 2.12.0; took 2.13.0 to avoid the collision. Whichever of the two lands second must re-verify its bump per the `## Git` squash-merge rule.
+## [2.11.4] - 2026-08-26
+
+### /codereview: Markdown-Formatted MR Comments
+
+- **`commands/codereview.md`:** `mr_comment` is now required to be Markdown-formatted for readability and actionability by the MR author — a self-contained first sentence (thread previews and notification emails show only the first line), then a blank line, then bullet points for evidence and listed fix steps — instead of a flat 1-4 sentence prose paragraph. The dedup step preserves that shape when merging comments from multiple reviewers, and Step 6 presents each comment inside a fenced markdown block so it copies verbatim, reformatting any prose-only comment that slipped through.
+
+Note: authored before `2.11.2`/`2.11.3` landed on `main`; renumbered from a colliding `2.11.2` self-assignment to the next free slot when rebased in.
 
 ## [2.11.3] - 2026-08-20
 
