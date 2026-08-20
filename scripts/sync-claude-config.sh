@@ -10,6 +10,8 @@
 #
 # agents/, skills/, commands/, rules/, hooks/*.sh are overlay-copied — never
 # deleted, so a live-only file not present in the repo survives untouched.
+# Any file/dir about to be overwritten is backed up first, same as CLAUDE.md
+# and settings.json below.
 #
 # CLAUDE.md is fully overwritten (it's meant to be an exact mirror of the
 # repo's copy) but only when it differs, and only after backing up the live
@@ -94,6 +96,11 @@ for name in agents skills commands rules; do
   note "$name/ — $n_lines difference(s) from $dst/"
   CHANGED=1
   if [ "$APPLY" -eq 1 ]; then
+    if [ -d "$dst" ]; then
+      backup_once
+      mkdir -p "$BACKUP_DIR/$name"
+      cp -r "$dst/." "$BACKUP_DIR/$name/"
+    fi
     mkdir -p "$dst"
     cp -r "$src/." "$dst/"
   fi
@@ -111,6 +118,11 @@ if [ -d "$src_hooks" ]; then
       note "hooks/$base -> $dst_f"
       CHANGED=1
       if [ "$APPLY" -eq 1 ]; then
+        if [ -f "$dst_f" ]; then
+          backup_once
+          mkdir -p "$BACKUP_DIR/hooks"
+          cp "$dst_f" "$BACKUP_DIR/hooks/$base"
+        fi
         mkdir -p "$dst_hooks"
         cp "$f" "$dst_f"
         chmod +x "$dst_f"

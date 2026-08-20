@@ -2,6 +2,13 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.11.2] - 2026-08-20
+
+### `sync-claude-config.sh`: Back Up Overlay-Copied Files Before Overwrite
+
+- **`scripts/sync-claude-config.sh`:** `agents/`, `skills/`, `commands/`, `rules/`, and `hooks/*.sh` now get the same backup-before-overwrite treatment as `CLAUDE.md` and `settings.json` — any live file/dir the sync is about to overwrite is copied under `<CLAUDE_HOME>/backups/sync-<timestamp>/` first. Previously only `CLAUDE.md` and `settings.json` were backed up; a live agent/skill/command/rule/hook file colliding with a repo file of the same name was silently overwritten with no recovery path.
+- **`scripts/sync-claude-config.test.sh`:** new case covers a live `agents/example.md` and `hooks/example.sh` colliding with repo files of the same name — asserts both are overwritten with the repo version and both are backed up with their pre-sync content intact.
+
 ## [2.11.1] - 2026-08-12
 
 ### Shell Commands Rule: No Expansions In One-Off Bash Commands

@@ -191,6 +191,31 @@ expect_exit 0 "$OVERLAY_REPO" "$OVERLAY_HOME" --apply
 [ -f "$OVERLAY_HOME/agents/example.md" ] || fail "repo file missing after overlay copy"
 
 # =======================================================================
+# --apply overlay-copy where a repo file collides with a live file of the
+# same name: the live version is backed up before being overwritten, and
+# hook scripts are backed up the same way.
+# =======================================================================
+COLLIDE_REPO=$(fake_repo)
+COLLIDE_HOME=$(fake_home)
+mkdir -p "$COLLIDE_HOME/agents" "$COLLIDE_HOME/hooks"
+echo "live agent content, pre-sync" > "$COLLIDE_HOME/agents/example.md"
+printf '#!/bin/bash\necho live-pre-sync\n' > "$COLLIDE_HOME/hooks/example.sh"
+expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
+
+[ "$(cat "$COLLIDE_HOME/agents/example.md")" = "agent content" ] || fail "colliding agents/ file not overwritten with repo version"
+[ "$(cat "$COLLIDE_HOME/hooks/example.sh")" = "#!/bin/bash
+echo hi" ] || fail "colliding hooks/ file not overwritten with repo version"
+
+COLLIDE_AGENT_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1)
+[ -n "$COLLIDE_AGENT_BACKUP" ] || fail "expected a backup of the overwritten agents/example.md"
+[ "$(cat "$COLLIDE_AGENT_BACKUP")" = "live agent content, pre-sync" ] || fail "backed-up agents/example.md does not match pre-sync content"
+
+COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1)
+[ -n "$COLLIDE_HOOK_BACKUP" ] || fail "expected a backup of the overwritten hooks/example.sh"
+[ "$(cat "$COLLIDE_HOOK_BACKUP")" = "#!/bin/bash
+echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
+
+# =======================================================================
 # --apply on a differing CLAUDE.md: backs up the live version byte-for-byte
 # before overwriting it with the repo version.
 # =======================================================================
