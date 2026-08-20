@@ -2,6 +2,13 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.11.3] - 2026-08-20
+
+### `/codereview`: `--no-codex-adversarial` Flag
+
+- **`commands/codereview.md`:** new optional flag `--no-codex-adversarial` skips the Codex adversarial reviewer (#7) while keeping the other 6 (5 Claude agents + standard Codex #6). Skipped like a not-installed Codex companion — no verdict impact, not counted toward the reviewer-failure threshold.
+- **`README.md`:** `/codereview` command table entry documents the new flag.
+
 ## [2.11.2] - 2026-08-20
 
 ### `sync-claude-config.sh`: Back Up Overlay-Copied Files Before Overwrite

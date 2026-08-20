@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.11.2
+**Version:** 2.11.3
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -87,7 +87,7 @@ Or if you already have a PRD:
 |---|---|
 | /discover | **Main entry point.** Interactive PRD discovery or review existing spec → adversarial review gate → auto-invokes `/execute-prd` on approval |
 | /execute-prd | Execute a PRD through the full swarm pipeline: review → plan → issues → swarm → review → PR |
-| /codereview | Interactive 7-angle code review — 5 Claude sub-agents + 2 Codex reviewers (standard + adversarial), haiku scoring, cross-source dedup. Surfaces all findings; you decide what to fix. |
+| /codereview | Interactive up-to-7-angle code review — 5 Claude sub-agents + 2 Codex reviewers (standard + adversarial), haiku scoring, cross-source dedup. Pass `--no-codex-adversarial` to skip the Codex adversarial reviewer. Surfaces all findings; you decide what to fix. |
 | /pr-fix-loop | Fix review comments (Codex, Cursor BugBot, GitLab Copilot, users) with Category A/B/C triage, push, poll until 👍/✅ on PR description (mandatory approval gate) or 15 min silence |
 | /mr-fix-loop | Fix review comments on GitLab MRs (GitLab Duo, Cursor BugBot, Codex, users) with Category A/B/C triage, fix pipeline failures locally, push, poll until MR approval or bot emoji gate or 15 min silence |
 | /backend-test-runner | Run backend tests, analyze results, route failures |

@@ -1,17 +1,17 @@
 ---
 name: codereview
-description: "Interactive code review — runs 7 parallel reviewers (5 Claude angles + Codex + Codex adversarial), scores with haiku, deduplicates across all sources, and surfaces all findings. You decide what to fix."
+description: "Interactive code review — runs up to 7 parallel reviewers (5 Claude angles + Codex + Codex adversarial), scores with haiku, deduplicates across all sources, and surfaces all findings. You decide what to fix."
 args:
   - name: input
     type: string
     required: false
-    description: "Scope and/or intent. Can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', 'adding scan_type to src_abc model for Hello World product. Needed to distinguish full from classic scans.'"
+    description: "Optional flag(s) followed by scope and/or intent. Flag: '--no-codex-adversarial' (skip the Codex adversarial reviewer, keep the other 6). Scope can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', '--no-codex-adversarial PR #5', 'adding scan_type to src_abc model for Hello World product. Needed to distinguish full from classic scans.'"
 model: opus
 ---
 
 # Code Review
 
-You are reviewing code changes interactively with the user. You run a 7-angle parallel review, score all findings, deduplicate across sources, and surface everything — the user decides what to fix.
+You are reviewing code changes interactively with the user. You run a parallel review (7 angles, or 6 when `--no-codex-adversarial` is passed), score all findings, deduplicate across sources, and surface everything — the user decides what to fix.
 
 ## Priorities (in order)
 
@@ -44,7 +44,9 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 ## Step 1: Parse input and scope
 
-`$ARGUMENTS` may contain a scope, intent description, or both.
+**Flags first:** if `$ARGUMENTS` contains the token `--no-codex-adversarial` (anywhere, typically leading), set `SKIP_CODEX_ADVERSARIAL=true` and strip that token from `$ARGUMENTS` before any further parsing. This disables Codex reviewer #7 only (Step 3) — the other 6 reviewers (5 Claude agents + standard Codex #6) run as normal.
+
+`$ARGUMENTS` (after flag stripping) may contain a scope, intent description, or both.
 
 **Base ref** `BASEREF` — resolve **lazily, only when the selected scope below actually uses it** (default, branch name, file path, or the PR/MR local fallback). Explicit `staged`/`unstaged` and pure commit-ref scopes never touch `BASEREF`, so an unresolvable base must not block them — parse the scope first, then resolve. To resolve: use the remote already discovered in Step 0 as `REMOTE` (the branch's tracking remote, falling back to `origin`; if the branch has no tracking remote AND no `origin` exists, use the repository's sole configured remote when `git remote` lists exactly one, and ask the user which remote to use when there are several) — do not hard-code `origin`, which breaks repos whose remote has another name, and do not treat a repo with a configured remote as local-only just because the branch doesn't track it. Detect the base branch `BASE`: probe `git symbolic-ref --quiet refs/remotes/$REMOTE/HEAD` first and only strip the prefix when the probe itself succeeded AND the stripped result is non-empty — piping straight into `sed` masks a failed probe behind `sed`'s exit 0, which would accept an empty `BASE` and skip the verified fallbacks below; if the probe fails, use `main` when `git rev-parse --verify "$REMOTE/main"` succeeds, else `master` when `git rev-parse --verify "$REMOTE/master"` succeeds — **never select a fallback without verifying the ref exists**. If neither exists (default branch has another name and the clone lacks `refs/remotes/$REMOTE/HEAD`), resolve the name with `git ls-remote --symref "$REMOTE" HEAD` (one network call) — and then **fetch it**, since resolving a name does not make the commit available locally: `git fetch "$REMOTE" "$BASE:refs/remotes/$REMOTE/$BASE"` (explicit refspec, so narrow/single-branch clones get the tracking ref too). Only then use `$REMOTE/$BASE`. If resolution also fails, ask the user for the base branch rather than proceeding against a nonexistent ref. Then `BASEREF="$REMOTE/$BASE"`. **Local-only repos** (no remotes configured): skip the remote prefix entirely — `BASEREF` is the local `main` (or `master`) branch when it exists and differs from `HEAD`; if the repo has no such base branch, fall back to reviewing the working tree (`git diff`) and note the limitation. Reviews always diff against `$BASEREF`.
 
@@ -74,9 +76,9 @@ Before launching reviewers:
 
 **Intent gate (before Step 3):** If the intent of the changes is not obvious from the diff, commit messages, or user-provided context, ask the user what the changes are supposed to do **before** launching reviewers. Reviewers need clear intent context to produce accurate findings. Do not launch Step 3 until intent is established.
 
-## Step 3: Launch all 7 reviewers in parallel
+## Step 3: Launch all reviewers in parallel (up to 7)
 
-In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, detected `repo_host`, CLI availability (`has_gh`, `has_glab`), and any clarified intent context from Step 2 to each.
+In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, detected `repo_host`, CLI availability (`has_gh`, `has_glab`), and any clarified intent context from Step 2 to each. If `SKIP_CODEX_ADVERSARIAL=true` (Step 1), omit Codex #7 from this launch entirely — 6 reviewers run instead of 7.
 
 ---
 
@@ -149,7 +151,7 @@ fi
 ```
 `Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
-**Codex #7 — Adversarial review:**
+**Codex #7 — Adversarial review** (skip entirely if `SKIP_CODEX_ADVERSARIAL=true` — do not launch this Bash call; note in the summary: "Codex adversarial review skipped (--no-codex-adversarial)." Treat as a **skipped** reviewer, same as "Codex companion not found" — no verdict impact, not counted toward the failure threshold):
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
@@ -171,7 +173,7 @@ fi
 - **Any other error** (runtime failure, timeout) → Codex is installed but failed. Treat as a **failed** reviewer — note in the summary and apply the verdict downgrade per the failure adjustment rule below.
 Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
 
-**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed. **Exception:** "Codex companion not found" is a **skipped** reviewer (optional dependency not installed), not a failed one — do not count it toward the failure threshold or downgrade the verdict. Only count runtime errors or timeouts from an installed Codex as failures.
+**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed. **Exception:** "Codex companion not found" and a user-requested `--no-codex-adversarial` skip are both **skipped** reviewers (not run), not failed ones — do not count either toward the failure threshold or downgrade the verdict. Only count runtime errors or timeouts from a Codex reviewer that was actually launched as failures.
 
 **Codex output format:** Codex may return structured JSON (with `confidence` 0–1 per finding) or rendered markdown. Handle both:
 - **JSON output:** Extract `confidence` per finding, compute `score = confidence × 100`.
