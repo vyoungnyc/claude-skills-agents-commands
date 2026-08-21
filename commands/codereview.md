@@ -1,17 +1,17 @@
 ---
 name: codereview
-description: "Interactive code review — runs up to 7 parallel reviewers (5 Claude angles + Codex + Codex adversarial), scores with haiku, deduplicates across all sources, and surfaces all findings. You decide what to fix."
+description: "Interactive code review — runs up to 7 parallel reviewers (6 Claude angles, including an adversarial reviewer, + Codex), scores with haiku, deduplicates across all sources, and surfaces all findings. You decide what to fix."
 args:
   - name: input
     type: string
     required: false
-    description: "Optional flag(s) followed by scope and/or intent. Flag: '--no-codex-adversarial' (skip the Codex adversarial reviewer, keep the other 6). Scope can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', '--no-codex-adversarial PR #5', 'adding scan_type to src_abc model for Hello World product. Needed to distinguish full from classic scans.'"
+    description: "Optional flag(s) followed by scope and/or intent. Flag: '--no-codex' (skip the Codex reviewer entirely, keep the 6 Claude agents). Scope can be a scope ('staged', commit ref, 'PR #N', file path), a description of what the changes do, or both. Examples: 'abc123', 'PR #5', '--no-codex PR #5', 'adding scan_type to src_abc model for Hello World product. Needed to distinguish full from classic scans.'"
 model: opus
 ---
 
 # Code Review
 
-You are reviewing code changes interactively with the user. You run a parallel review (7 angles, or 6 when `--no-codex-adversarial` is passed), score all findings, deduplicate across sources, and surface everything — the user decides what to fix.
+You are reviewing code changes interactively with the user. You run a parallel review (7 angles, or 6 when `--no-codex` is passed), score all findings, deduplicate across sources, and surface everything — the user decides what to fix.
 
 ## Priorities (in order)
 
@@ -44,7 +44,7 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 ## Step 1: Parse input and scope
 
-**Flags first:** if `$ARGUMENTS` contains the token `--no-codex-adversarial` (anywhere, typically leading), set `SKIP_CODEX_ADVERSARIAL=true` and strip that token from `$ARGUMENTS` before any further parsing. This disables Codex reviewer #7 only (Step 3) — the other 6 reviewers (5 Claude agents + standard Codex #6) run as normal.
+**Flags first:** if `$ARGUMENTS` contains the token `--no-codex` (anywhere, typically leading), set `SKIP_CODEX=true` and strip that token from `$ARGUMENTS` before any further parsing. This disables the Codex reviewer entirely (Step 3) — the 6 Claude agents (#1–#6, including the adversarial reviewer) run as normal.
 
 `$ARGUMENTS` (after flag stripping) may contain a scope, intent description, or both.
 
@@ -52,7 +52,7 @@ Print one line before Step 1: `Repo host: <github|gitlab|unknown> (gh: <yes/no>,
 
 **Scope** (determines which diff to review). The default is **always the current branch diff against the base branch** — never just unstaged/staged files:
 - **No args** (default) → `git diff $BASEREF...HEAD` (current branch vs base). If `HEAD` is on `BASE` itself, fall back to `git diff $BASEREF` (uncommitted work) and note it. **Dirty-tree guard:** `$BASEREF...HEAD` covers committed work only — if `git status --porcelain` is non-empty, the working tree holds edits the review would never examine, and an `approve` on that basis is misleading. Append the working-tree diff (`git diff` + `git diff --cached`) to the reviewed input as clearly-labeled supplementary sections, **plus untracked source files** (`git ls-files --others --exclude-standard`) — a brand-new file appears in neither diff yet is exactly the kind of unreviewed implementation an approve would falsely bless; include each untracked file's content as its own labeled section (or, for large/binary ones, list them prominently as unreviewed). If none of that is feasible, state prominently that uncommitted changes were NOT reviewed and cap the verdict at `approve-with-nits`.
-- **A branch name** (the arg names a ref that is a branch) → `git diff $BASEREF...<branch>`. For Codex to review the same target (it reviews the *checked-out* branch), checkout `<branch>` first **only if the working tree is clean** (`git status --porcelain` empty), and always with `git checkout --no-overwrite-ignore <branch>` — a clean porcelain status does not protect ignored local files at paths the target branch tracks, and a default checkout silently overwrites them unrecoverably. If the checkout refuses the switch (or the tree is dirty), proceed with the Claude agents on `git diff $BASEREF...<branch>` without checking out and note that Codex reviewed the current branch instead. If you do checkout, first record the original ref (`ORIG_REF=$(git rev-parse --abbrev-ref HEAD)`; if that prints `HEAD`, use `git rev-parse HEAD` for the detached SHA) and **restore it with `git checkout "$ORIG_REF"` after both Codex jobs finish — including when a job errors out**. Never leave the user's repository on a branch they didn't check out.
+- **A branch name** (the arg names a ref that is a branch) → `git diff $BASEREF...<branch>`. For Codex to review the same target (it reviews the *checked-out* branch), checkout `<branch>` first **only if the working tree is clean** (`git status --porcelain` empty), and always with `git checkout --no-overwrite-ignore <branch>` — a clean porcelain status does not protect ignored local files at paths the target branch tracks, and a default checkout silently overwrites them unrecoverably. If the checkout refuses the switch (or the tree is dirty), proceed with the Claude agents on `git diff $BASEREF...<branch>` without checking out and note that Codex reviewed the current branch instead. If you do checkout, first record the original ref (`ORIG_REF=$(git rev-parse --abbrev-ref HEAD)`; if that prints `HEAD`, use `git rev-parse HEAD` for the detached SHA) and **restore it with `git checkout "$ORIG_REF"` after the Codex job finishes — including if it errors out** (skip this entirely when `SKIP_CODEX=true`; there is no Codex job to wait for). Never leave the user's repository on a branch they didn't check out.
 - **Commit ref** (e.g. `abc123`, `HEAD~3`) → `git diff <ref>...HEAD`.
 - **`PR #N`, `MR #N`, or just a number:**
   - `repo_host=github` and `has_gh` → `gh pr diff N`
@@ -78,7 +78,7 @@ Before launching reviewers:
 
 ## Step 3: Launch all reviewers in parallel (up to 7)
 
-In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, detected `repo_host`, CLI availability (`has_gh`, `has_glab`), and any clarified intent context from Step 2 to each. If `SKIP_CODEX_ADVERSARIAL=true` (Step 1), omit Codex #7 from this launch entirely — 6 reviewers run instead of 7.
+In a **single parallel tool-use turn**, launch all of the following simultaneously, passing the full diff, CLAUDE.md file paths, detected `repo_host`, CLI availability (`has_gh`, `has_glab`), and any clarified intent context from Step 2 to each. If `SKIP_CODEX=true` (Step 1), omit the Codex reviewer from this launch entirely — 6 reviewers run instead of 7.
 
 ---
 
@@ -123,18 +123,22 @@ Return `[]` if no findings. Never include: pre-existing issues (lines not in the
 
 > You are a code comments compliance reviewer. Read inline comments, docstrings, and TODO/FIXME/NOTE comments in the modified files. Check that the changes comply with guidance documented in those comments — violated invariants, ignored preconditions, broken documented contracts. Return a JSON array of findings using the schema provided. Return [] if changes comply with documented guidance.
 
+**Agent #6 — Adversarial review**
+
+> You are an adversarial code reviewer. Assume this diff is broken until proven otherwise and actively try to find how. Consider: malicious or malformed input, concurrent/racing access, resource exhaustion, boundary and off-by-one conditions, error paths that leak state or fail silently, security bypasses (auth, injection, path traversal, secrets), and interactions with callers/consumers not shown in the diff. Read surrounding code and callers as needed to construct concrete failure scenarios — do not limit yourself to the diff's own lines. For each finding, state the exact input or state that triggers it and the observable failure. Return a JSON array of findings using the schema provided. Return [] if you cannot construct a concrete failure scenario — do not report speculative concerns without a reproducing scenario.
+
 ---
 
-### Codex reviewers (Bash — run in background, 15-minute timeout)
+### Codex reviewer (Bash — run in background, 15-minute timeout)
 
-Launch **both** Codex reviewers in the **same parallel tool-use turn** as the 5 Claude agents above. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for each Bash call — they run concurrently while Claude agents complete.
+Launch the Codex reviewer in the **same parallel tool-use turn** as the 6 Claude agents above, unless `SKIP_CODEX=true` (Step 1) — in that case, skip this Bash call entirely and note in the summary: "Codex reviewer skipped (--no-codex)." Treat as a **skipped** reviewer, same as "Codex companion not found" — no verdict impact, not counted toward the failure threshold. Use `run_in_background: true` and `timeout: 900000` (15 minutes) for the Bash call — it runs concurrently while Claude agents complete.
 
 **Scope note:** Codex reviews the **checked-out branch diffed against the base branch** — exactly the new default scope from Step 1. It does not accept explicit scope flags. Since the default and the branch-arg path (after checkout) both put Codex on the same target as the Claude agents, Codex is normally in-scope. Handle the cases:
 - **Default (no args), or a branch arg that was checked out** (working tree clean): Codex reviews the same current-branch-vs-base target — findings are in-scope, include them in the primary verdict.
 - **Branch arg that could NOT be checked out** (dirty tree) **or explicit `staged`/`unstaged`/single file**: Codex reviewed a different/wider target than the Claude agents. Tag all Codex findings with `scope: "branch-wide"` and exclude them from the primary verdict — present in the separate "Branch-wide Codex findings" section.
-- **`PR #N`/`MR #N` resolved via the host API** (`gh pr diff` / `glab mr diff`), **or a commit ref** (the only commit-shaped scope Step 1 defines — e.g. `abc123`, `HEAD~3`): Treat Codex as **skipped** — it cannot scope to that target. Note in the summary: "Codex reviewers skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide. **Exception:** when `PR #N`/`MR #N` fell back to the local `git diff $BASEREF...HEAD` path (no host CLI), the review target IS the checked-out branch vs base — classify like the default scope and keep Codex in the primary verdict.
+- **`PR #N`/`MR #N` resolved via the host API** (`gh pr diff` / `glab mr diff`), **or a commit ref** (the only commit-shaped scope Step 1 defines — e.g. `abc123`, `HEAD~3`): Treat Codex as **skipped** — it cannot scope to that target. Note in the summary: "Codex reviewer skipped (cannot scope to PR/commit ref)." Do not include Codex findings in the verdict or present them as branch-wide. **Exception:** when `PR #N`/`MR #N` fell back to the local `git diff $BASEREF...HEAD` path (no host CLI), the review target IS the checked-out branch vs base — classify like the default scope and keep Codex in the primary verdict.
 
-**Codex #6 — Standard review:**
+**Codex #7 — Standard review:**
 ```bash
 CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
 if [ -n "$CODEX" ]; then
@@ -151,29 +155,12 @@ fi
 ```
 `Bash({ command: "...", run_in_background: true, timeout: 900000 })`
 
-**Codex #7 — Adversarial review** (skip entirely if `SKIP_CODEX_ADVERSARIAL=true` — do not launch this Bash call; note in the summary: "Codex adversarial review skipped (--no-codex-adversarial)." Treat as a **skipped** reviewer, same as "Codex companion not found" — no verdict impact, not counted toward the failure threshold):
-```bash
-CODEX=$(find ~/.claude/plugins -name "codex-companion.mjs" -type f 2>/dev/null | head -1)
-if [ -n "$CODEX" ]; then
-  OUTPUT=$(node "$CODEX" adversarial-review 2>/dev/null)
-  EXIT=$?
-  if [ $EXIT -eq 0 ] && [ -n "$OUTPUT" ]; then
-    echo "$OUTPUT"
-  else
-    echo '{"verdict":"error","summary":"Codex adversarial review failed (exit '$EXIT')","findings":[],"next_steps":[]}'
-  fi
-else
-  echo '{"verdict":"error","summary":"Codex companion not found","findings":[],"next_steps":[]}'
-fi
-```
-`Bash({ command: "...", run_in_background: true, timeout: 900000 })`
-
-**Handling Codex results:** After Claude agents #1–#5 complete and haiku scoring finishes, check the Codex background task outputs. If Codex tasks are still running, proceed to dedup and initial presentation with Claude findings only — Codex results will be integrated incrementally per Step 6. Check the `summary` field to distinguish two error cases:
+**Handling Codex results:** After Claude agents #1–#6 complete and haiku scoring finishes, check the Codex background task output. If the Codex task is still running, proceed to dedup and initial presentation with Claude findings only — the Codex result will be integrated incrementally per Step 6. Check the `summary` field to distinguish two error cases:
 - **`"Codex companion not found"`** → Codex is not installed. Treat as a **skipped** reviewer — note in the summary, no verdict impact.
 - **Any other error** (runtime failure, timeout) → Codex is installed but failed. Treat as a **failed** reviewer — note in the summary and apply the verdict downgrade per the failure adjustment rule below.
 Do **not** inject error findings into the findings array — report Codex errors only in the summary text.
 
-**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed. **Exception:** "Codex companion not found" and a user-requested `--no-codex-adversarial` skip are both **skipped** reviewers (not run), not failed ones — do not count either toward the failure threshold or downgrade the verdict. Only count runtime errors or timeouts from a Codex reviewer that was actually launched as failures.
+**Reviewer failure verdict adjustment:** If any reviewer (Claude or Codex) errors or times out, the verdict cannot be `approve`. Downgrade `approve` → `approve-with-nits` and note incomplete coverage. If ≥ 3 reviewers failed, force `changes-requested` with a note that the review had insufficient coverage — the user must explicitly override to proceed. **Exception:** "Codex companion not found" and a user-requested `--no-codex` skip are both **skipped** reviewers (not run), not failed ones — do not count either toward the failure threshold or downgrade the verdict. Only count a runtime error or timeout from a Codex reviewer that was actually launched as a failure.
 
 **Codex output format:** Codex may return structured JSON (with `confidence` 0–1 per finding) or rendered markdown. Handle both:
 - **JSON output:** Extract `confidence` per finding, compute `score = confidence × 100`.
@@ -187,7 +174,7 @@ Note which reviewers were skipped, errored, or used a different scope in the fin
 
 ## Step 4: Score Claude findings with haiku
 
-Once Claude agents #1–#5 complete, spawn a **parallel haiku agent per finding** from those agents. Do not wait for Codex — it runs in the background and its results are read after haiku scoring finishes (see Step 3 handling note).
+Once Claude agents #1–#6 complete, spawn a **parallel haiku agent per finding** from those agents. Do not wait for Codex — it runs in the background and its results are read after haiku scoring finishes (see Step 3 handling note).
 
 Give each haiku agent the finding JSON, the diff, and the CLAUDE.md file paths. Use this rubric verbatim:
 
@@ -205,19 +192,19 @@ Assign the returned score to its finding.
 
 ## Step 4.5: Normalize Codex findings
 
-Before dedup, normalize Codex findings (#6 and #7) so they have the same `score` field as Claude findings:
+Before dedup, normalize the Codex reviewer's findings so they have the same `score` field as Claude findings:
 - **JSON output with `confidence`:** compute `score = confidence × 100` (e.g., 0.85 → 85).
 - **Markdown output without `confidence`:** assign `score` from severity: `[P0]`/`blocker` → 100, `[P1]`/`critical`/`high` → 85, `[P2]`/`medium` → 65, `[P3]`/`low` → 40. Fail closed on unknown severities — assign 85 and flag for manual review.
 - Add the `score` field to each Codex finding object.
-- All findings from all 7 agents **must** have a `score` (0–100) field before entering Step 5.
+- All findings from all 7 agents (or 6 when Codex was skipped) **must** have a `score` (0–100) field before entering Step 5.
 - **Scope tagging:** If the user-specified scope is narrower than branch-vs-default, tag each Codex finding with `scope: "branch-wide"`. These findings are excluded from dedup and the primary verdict in Step 5 — present them in a separate section per Step 6.
 
 ## Step 5: Deduplicate and merge
 
-Spawn a **single haiku agent** with all normalized **scoped** findings (agents #1–#5, plus Codex findings that are NOT tagged `scope: "branch-wide"`).
+Spawn a **single haiku agent** with all normalized **scoped** findings (agents #1–#6, plus Codex findings that are NOT tagged `scope: "branch-wide"`).
 
 Instructions for the haiku agent:
-> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, mr_comment, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial). For mr_comment, merge the source comments into one clear paste-ready review comment (Codex findings have no mr_comment — synthesize one from the body/recommendation).
+> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, mr_comment, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, claude-adversarial, codex). For mr_comment, merge the source comments into one clear paste-ready review comment (Codex findings have no mr_comment — synthesize one from the body/recommendation).
 
 **Branch-wide Codex findings** (tagged `scope: "branch-wide"` in Step 3) are excluded from dedup and the primary verdict. Present them in a separate section after the main findings (see Step 6).
 
@@ -225,7 +212,7 @@ Instructions for the haiku agent:
 
 Sort findings by `score` descending. **Show everything — do not filter.** The user decides which items to fix.
 
-Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have. Codex findings will be added incrementally once background tasks complete (see Incremental Codex results below).
+Present Claude agent findings (#1–#6) immediately after scoring and dedup. Do not wait for the Codex background task to present initial results — show what you have. Codex findings will be added incrementally once the background task completes (see Incremental Codex results below).
 
 **Per-finding output — every presented finding must include two paste-ready artifacts:**
 1. **MR comment** — the finding's `mr_comment` field, ready to drop on the MR/PR thread at the cited line.
@@ -238,7 +225,7 @@ Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do 
 
 ### Summary
 <1-3 sentences: what changed and overall signal from the reviewers>
-<Note any skipped/pending reviewers, e.g. "Codex reviews still running — findings will be added when they complete">
+<Note any skipped/pending reviewers, e.g. "Codex review still running — findings will be added when it completes">
 
 ### Findings
 
@@ -264,10 +251,10 @@ Sources: claude-compliance · claude-history
 <Only shown when user scope is narrower than branch-vs-default. Omit section if all Codex findings are in scope.>
 
 ### Verdict: `approve` | `approve-with-nits` | `changes-requested`
-<If Codex reviews are still pending, label as: "Verdict (preliminary — Codex pending): ..." and note that the user should not act on a preliminary verdict. Present the final verdict after all reviewers complete.>
+<If the Codex review is still pending, label as: "Verdict (preliminary — Codex pending): ..." and note that the user should not act on a preliminary verdict. Present the final verdict after all reviewers complete.>
 ```
 
-**Incremental Codex results:** When Codex background tasks complete (after initial presentation), normalize their findings per Step 4.5, deduplicate against existing findings, and **append new Codex findings to the presented list**. Update the verdict if new high-confidence findings change it. Clearly mark additions: "Codex review completed — N new findings added." **Ordering with the branch restore:** when Step 1 checked out a branch for Codex, generate the proposed-fix diffs for these late-arriving findings BEFORE restoring `$ORIG_REF` — both actions trigger on "Codex jobs finish", and restoring first would make `git show HEAD:<path>` silently read the wrong branch's file content into the diffs. Restore the original ref only after incremental presentation is complete.
+**Incremental Codex results:** When the Codex background task completes (after initial presentation), normalize its findings per Step 4.5, deduplicate against existing findings, and **append new Codex findings to the presented list**. Update the verdict if new high-confidence findings change it. Clearly mark additions: "Codex review completed — N new findings added." **Ordering with the branch restore:** when Step 1 checked out a branch for Codex, generate the proposed-fix diffs for these late-arriving findings BEFORE restoring `$ORIG_REF` — both actions trigger on "the Codex job finishes", and restoring first would make `git show HEAD:<path>` silently read the wrong branch's file content into the diffs. Restore the original ref only after incremental presentation is complete.
 
 Verdict is based on the presence of high-confidence findings (score ≥ 75):
 - Any critical/high at ≥ 75 → `changes-requested`
