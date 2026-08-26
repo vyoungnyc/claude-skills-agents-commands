@@ -54,11 +54,18 @@ resets=$(date -d "$(date +%Y-%m-01) +1 month" +%s 2>/dev/null) \
     || resets=$(date -v1d -v+1m -v0H -v0M -v0S +%s 2>/dev/null) \
     || resets=""
 
-# ISO-8601 -> epoch (GNU date first, BSD fallback stripping fractional seconds/zone)
+# ISO-8601 -> epoch (GNU date first, BSD fallback stripping fractional seconds/zone).
+# BSD `date -j -f` requires an exact match against the fixed format below (no
+# timezone directive), so a trailing `Z` or numeric UTC offset left over after
+# stripping fractional seconds (e.g. "...T18:00:00Z" with no ".NNN" to trigger
+# the %%.* strip) must be stripped too, or the parse silently fails.
 iso2epoch() {
     [ -z "${1:-}" ] && return
     date -d "$1" +%s 2>/dev/null && return
-    date -jf "%Y-%m-%dT%H:%M:%S" "${1%%.*}" +%s 2>/dev/null
+    clean="${1%%.*}"
+    clean="${clean%Z}"
+    clean="${clean%[+-][0-9][0-9]:[0-9][0-9]}"
+    date -jf "%Y-%m-%dT%H:%M:%S" "$clean" +%s 2>/dev/null
 }
 
 # 5h / 7d rate-limit windows come from the SAME endpoint (null unless on Max/Pro).

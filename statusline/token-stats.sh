@@ -79,7 +79,13 @@ ctx=$(jq -rn '
 ' "$tp" 2>/dev/null)
 [ -z "$ctx" ] && ctx=0
 
-# subagents: sum every agent-*.jsonl in the session-scoped subagents dir
+# subagents: sum every agent-*.jsonl in the session-scoped subagents dir.
+# Run SUM_FILTER separately PER FILE, then add the results — not once across
+# all files concatenated. Two subagents streaming concurrently can each end
+# their own transcript on a billable stop_reason:null row; feeding every file
+# into one jq invocation makes `inputs` one continuous stream, so the
+# "keep a trailing null row" dedup rule only protects the LAST file in the
+# list, silently dropping any earlier file's pending trailing row.
 tdir=$(dirname "$tp")
 stem=$(basename "$tp" .jsonl)
 agents='{"i":0,"o":0,"r":0,"w":0,"c":0}'
@@ -87,8 +93,20 @@ for d in "$tdir/$stem/subagents" "$tdir/subagents"; do
     [ -d "$d" ] || continue
     files=$(find "$d" -maxdepth 1 -name 'agent-*.jsonl' 2>/dev/null)
     [ -z "$files" ] && continue
-    # shellcheck disable=SC2086
-    agents=$(jq -n "$SUM_FILTER" $files 2>/dev/null || echo '{"i":0,"o":0,"r":0,"w":0,"c":0}')
+    per_file=$(
+        while IFS= read -r af; do
+            [ -n "$af" ] || continue
+            jq -n "$SUM_FILTER" "$af" 2>/dev/null
+        done <<AGENT_FILES
+$files
+AGENT_FILES
+    )
+    agents=$(printf '%s' "$per_file" | jq -s '{
+        i: (map(.i) | add // 0), o: (map(.o) | add // 0),
+        r: (map(.r) | add // 0), w: (map(.w) | add // 0),
+        c: (map(.c) | add // 0)
+    }' 2>/dev/null)
+    [ -z "$agents" ] && agents='{"i":0,"o":0,"r":0,"w":0,"c":0}'
     break
 done
 

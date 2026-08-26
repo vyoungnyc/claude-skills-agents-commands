@@ -117,6 +117,27 @@ printf '%s' "$OUT" | grep -q "no OAuth token found" || fail "expected a clear no
 [ ! -s "$NOTOKEN_STATE/calls" ] || fail "no-token path must never call curl"
 
 # =======================================================================
+# Credentials file exists and is valid JSON, but has none of the recognized
+# token fields: must fall through to the Keychain, not report "no token
+# found" (jq exits 0 on a valid-but-fieldless file, which used to short-
+# circuit the `&&  return 0` before the Keychain fallback ever ran).
+# =======================================================================
+EMPTYCREDS_HOME=$(mktemp -d "$SUITE_TMP/home.XXXXXX")
+mkdir -p "$EMPTYCREDS_HOME/.claude"
+echo '{}' > "$EMPTYCREDS_HOME/.claude/.credentials.json"
+EMPTYCREDS_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf '200::from-keychain\n' > "$EMPTYCREDS_STATE/plan"
+STUBDIR=$(fake_bindir "$EMPTYCREDS_STATE")
+cat > "$STUBDIR/security" <<'EOF'
+#!/usr/bin/env bash
+echo '{"claudeAiOauth":{"accessToken":"keychain-token-456"}}'
+EOF
+chmod +x "$STUBDIR/security"
+OUT=$(env HOME="$EMPTYCREDS_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT")
+printf '%s' "$OUT" | grep -q '__HTTP_STATUS__200' || fail "an empty-but-valid credentials file should still fall through to the Keychain, got: $OUT"
+printf '%s' "$OUT" | grep -q 'from-keychain' || fail "expected the Keychain-sourced token to reach curl successfully"
+
+# =======================================================================
 # Immediate 200: body + __HTTP_STATUS__200 emitted, exactly one curl call.
 # =======================================================================
 OK_HOME=$(fake_home_with_token)

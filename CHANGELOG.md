@@ -2,7 +2,6 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
-<<<<<<< HEAD
 ## [2.13.0] - 2026-08-27
 
 ### `sync-omp-config.sh`: Convert + Deploy Claude Config to oh-my-pi (omp)
@@ -17,7 +16,6 @@ All notable changes to this multi-agent orchestration system are documented in t
 - **Valid YAML for `--map-models` + jq gating (Codex PR #38):** `--map-models` now emits quoted role aliases (`model: "@good"` / `"@fast"`) — an unquoted leading `@` is a reserved YAML indicator that made generated agent files unparseable. Separately, the jq/awk preflight moved after argument parsing; awk stays unconditional but jq is required only for an `--apply` that actually deploys hooks — the converter never calls jq (only the deployed hook scripts do), so `--help`, unknown args, dry runs, and `--no-hooks` syncs no longer require jq on `PATH`.
 - **Never follow a symlink into an external target when deploying (Codex PR #38, both scripts):** a live directory where a staged file belongs made `cp` nest the file (`reviewer.md/reviewer.md`); a symlink anywhere on the destination path (the staged file itself, a **nested ancestor** like `skills/demo-skill/`, or the **category root** like `agent/agents`) made `cp` follow the link and overwrite the EXTERNAL referent, with the snapshot capturing only the link. Both overlays now detect a non-regular/symlink component and replace it with a real file/dir before copying — recording a replaced root/link in the backup, leaving the external referent untouched, so the deploy always lands at the intended path and a bad apply stays restorable.
 - **Version note:** cut from `main` (2.11.3) alongside the in-flight statusline branch that also claims 2.12.0; took 2.13.0 to avoid the collision. Whichever of the two lands second must re-verify its bump per the `## Git` squash-merge rule.
-=======
 ## [2.12.0] - 2026-08-26
 
 ### Rich Status Line, Deployed Via `sync-claude-config.sh`
@@ -31,7 +29,18 @@ All notable changes to this multi-agent orchestration system are documented in t
 - **Fix:** the `hooks/*.sh` and `statusline/*.sh` flat-copy globs also matched `*.test.sh`, so dev-only test suites were being deployed alongside the real scripts into a live `~/.claude` (harmless clutter — nothing there ever executes them — but deadweight). Both loops now skip `*.test.sh`.
 - **Fix:** the `hooks`/`env`/`statusLine` settings.json merge deduped by whole `.hooks`-array equality, not by individual command. A live event that bundles multiple commands into one hand-merged group (discovered live: `SessionStart` running a local hook + `usage-refresh.sh` together) was treated as unrelated to the repo's own single-command group for that same command, so every sync appended a duplicate group — running that command twice on every session start. The merge now skips a repo group only when every one of its commands already appears somewhere in the live groups for that event.
 
->>>>>>> 4feb847 (feat(statusline): add rich status line + sync-script fixes (v2.12.0))
+<<<<<<< HEAD
+=======
+### PR Review Fixes (Codex, PR #37)
+
+- **Fix (`scripts/sync-claude-config.sh`):** the command-level hook dedup (above) was itself all-or-nothing per repo group — a repo group `[A, B]` where live already had `A` (in some other group) but not `B` appended the *whole* group anyway, re-duplicating `A`. Now filters each repo group down to just its missing commands before appending, dropping the group entirely if nothing is left.
+- **Fix (`statusline/fetch-usage.sh`):** `get_token()`'s credentials-file branch returned as soon as `jq` exited 0, even when the extracted token was empty (a valid-JSON file missing every recognized field) — permanently blocking the Keychain fallback. Now only returns early on an actual non-empty token.
+- **Fix (`statusline/mr-refresh.sh`, `statusline/statusline-command.sh`):** the `.mr-cache.json` MR lookup was keyed only by branch name, so (a) two different repos sharing a branch name could show/reuse each other's cached MR, and (b) switching branches within the cache's 10-minute freshness window left the new branch showing no MR (the stale-check only looked at mtime, not which branch the cache was actually for). The cache now also records repo identity (`origin` remote URL, falling back to the repo root path); both the freshness check and the display check require branch **and** repo to match.
+- **Fix (`statusline/token-stats.sh`):** subagent transcripts were summed by passing every `agent-*.jsonl` file to one `jq` invocation, so the streaming-dedup rule ("keep a trailing `stop_reason:null` row") only protected whichever file `find` happened to list last — any other concurrently-streaming subagent's own pending trailing row was silently dropped, undercounting tokens/cost. Now runs the sum filter once per file and adds the per-file results.
+- **Fix (`statusline/usage-refresh.sh`):** `iso2epoch`'s BSD fallback only stripped fractional seconds (`${1%%.*}`) before parsing with the fixed format `%Y-%m-%dT%H:%M:%S`, which has no timezone directive. A `resets_at` with a trailing `Z` and no fractional seconds (e.g. `2026-08-26T18:00:00Z`) has no `.` for that strip to trigger, so real BSD `date -j -f` rejects the leftover `Z` and the 5h/7d reset epoch silently comes back null. Now also strips a trailing `Z` or numeric UTC offset.
+- **Reviewed, not changed:** a `find -maxdepth 1` finding claimed BSD `find` on macOS rejects `-maxdepth` as GNU-only. Verified false — `-maxdepth` is supported by both BSD and GNU `find`; no fix applied.
+
+>>>>>>> ce28ea0 (fix(statusline,scripts): address Codex review findings on PR #37)
 ## [2.11.4] - 2026-08-26
 
 ### /codereview: Markdown-Formatted MR Comments

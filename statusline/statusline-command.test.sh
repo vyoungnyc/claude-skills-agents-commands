@@ -90,6 +90,30 @@ expect_match "📁 myrepo"
 expect_match "🌿 feature/widget"
 
 # =======================================================================
+# Regression: an .mr-cache.json entry for the SAME branch name but a
+# DIFFERENT repo must not be shown for this repo (glab is installed on
+# this machine's real PATH, so this exercises the real command-v check).
+# =======================================================================
+MRSCOPE_HOME=$(fake_home)
+mkdir -p "$MRSCOPE_HOME/.claude"
+jq -n '{branch:"feature/widget", repo:"/some/other/repo-not-this-one", number: "55", url: "https://example.com/mr/55"}' \
+  > "$MRSCOPE_HOME/.claude/.mr-cache.json"
+run_statusline "$MRSCOPE_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')"
+expect_match "🌿 feature/widget"
+expect_not_match "(#55)"
+
+# =======================================================================
+# Same branch, matching repo (toplevel path, since this fixture repo has no
+# remote configured): the cached MR number/link IS shown.
+# =======================================================================
+MRMATCH_HOME=$(fake_home)
+mkdir -p "$MRMATCH_HOME/.claude"
+jq -n --arg repo "$GIT_REPO" '{branch:"feature/widget", repo:$repo, number: "77", url: "https://example.com/mr/77"}' \
+  > "$MRMATCH_HOME/.claude/.mr-cache.json"
+run_statusline "$MRMATCH_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')"
+expect_match "(#77)"
+
+# =======================================================================
 # Context segment: (NN%) TOK/TOTAL, using the JSON snapshot when no
 # transcript-derived cache exists (token-stats.sh absent from fixture HOME).
 # =======================================================================

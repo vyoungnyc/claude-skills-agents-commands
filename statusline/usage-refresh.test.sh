@@ -109,6 +109,53 @@ RESETS=$(jq -r '.resets' "$CACHE")
 [ ! -f "$OK_HOME/.claude/.usage-backoff" ] || fail "a successful refresh should clear any existing backoff"
 
 # =======================================================================
+# iso2epoch on a real BSD date (no GNU `-d` support): a resets_at with a
+# trailing `Z` and no fractional seconds must still parse. This sandbox's
+# own `date` is GNU-compatible (so `date -d` always succeeds and the BSD
+# fallback path never runs for real), so a dedicated `date` stub forces
+# that fallback and enforces BSD's actual constraint: `date -j -f` fails on
+# any input with characters left over after the fixed format is consumed.
+# Without stripping a lone trailing `Z` (no `.` present to trigger the
+# existing fractional-seconds strip), this reproduces the real bug.
+# =======================================================================
+DATESTUB_HOME=$(fake_home 200 "$SUCCESS_BODY")
+DATESTUB_DIR=$(mktemp -d "$SUITE_TMP/datestub.XXXXXX")
+REAL_DATE=$(command -v date)
+# REAL_DATE is substituted in below (unquoted heredoc); every other $ must
+# stay literal for the stub's own shell to expand at run time, hence the
+# backslash-escapes. Calling the stub's own name via PATH would recurse
+# into itself forever (PATH still has this stub dir first) -- must invoke
+# the real binary by its captured absolute path instead.
+cat > "$DATESTUB_DIR/date" <<EOF
+#!/usr/bin/env bash
+# Minimal stand-in for BOTH GNU and real BSD date, dispatched by flag:
+#   date -d <val> <fmt>   -> always fail (real BSD date has no -d at all)
+#   date -jf <fmt> <val> +%s -> succeed ONLY if <val> exactly matches
+#     "%Y-%m-%dT%H:%M:%S" with nothing left over (BSD's real behavior)
+#   anything else (file_age's stat-less date calls, +%Y-%m-01 etc.) ->
+#     delegate to the real system date so the rest of the script still works
+case "\$1" in
+  -d) exit 1 ;;
+  -jf)
+    fmt="\$2"; val="\$3"
+    if [ "\$fmt" = "%Y-%m-%dT%H:%M:%S" ] && printf '%s' "\$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\$'; then
+      exec "$REAL_DATE" -u -d "\$val" +%s
+    else
+      echo "date: illegal time format" >&2
+      exit 1
+    fi
+    ;;
+  *) exec "$REAL_DATE" "\$@" ;;
+esac
+EOF
+chmod +x "$DATESTUB_DIR/date"
+env HOME="$DATESTUB_HOME" PATH="$DATESTUB_DIR:$PATH" bash "$SCRIPT" --force
+DATESTUB_CACHE="$DATESTUB_HOME/.claude/usage-cache.json"
+FIVE_RESETS=$(jq -r '.five.resets' "$DATESTUB_CACHE")
+[ -n "$FIVE_RESETS" ] && [ "$FIVE_RESETS" != "null" ] \
+  || fail "a Z-suffixed, no-fractional-seconds resets_at should still parse under BSD date (got five.resets=$FIVE_RESETS)"
+
+# =======================================================================
 # Throttle (429): backoff file is written with a future epoch, and the run
 # exits non-zero without clobbering the prior cache.
 # =======================================================================

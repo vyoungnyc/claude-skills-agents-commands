@@ -6,8 +6,16 @@ set -uo pipefail
 
 get_token() {
     if [ -f "$HOME/.claude/.credentials.json" ]; then
-        jq -r '.claudeAiOauth.accessToken // .accessToken // .oauth.accessToken // empty' \
-            "$HOME/.claude/.credentials.json" 2>/dev/null && return 0
+        # jq exits 0 on a valid-JSON file even when none of the token fields
+        # are present (the `// empty` just yields an empty string) — only
+        # return early on an actual non-empty token, or a present-but-empty
+        # credentials file permanently blocks the Keychain fallback below.
+        file_tok=$(jq -r '.claudeAiOauth.accessToken // .accessToken // .oauth.accessToken // empty' \
+            "$HOME/.claude/.credentials.json" 2>/dev/null)
+        if [ -n "$file_tok" ] && [ "$file_tok" != "null" ]; then
+            printf '%s' "$file_tok"
+            return 0
+        fi
     fi
     if command -v security >/dev/null 2>&1; then
         security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \

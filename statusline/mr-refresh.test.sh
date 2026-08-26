@@ -121,6 +121,31 @@ glab_called "$DIFFBRANCH_HOME" || fail "a cache for a different branch should tr
 [ "$(jq -r '.branch' "$DIFFBRANCH_HOME/.claude/.mr-cache.json")" = "feature/x" ] || fail "cache should now reflect the requested branch"
 
 # =======================================================================
+# Regression: cache is scoped to the repo, not just the branch name. Two
+# different repos sharing a branch name must not reuse each other's fresh
+# cache entry (the global .mr-cache.json is not per-repo on disk).
+# =======================================================================
+REPO_A="$SUITE_TMP/repo-a"
+REPO_B="$SUITE_TMP/repo-b"
+mkdir -p "$REPO_A" "$REPO_B"
+git init -q "$REPO_A"
+git -C "$REPO_A" remote add origin "https://gitlab.example.com/group/repo-a.git"
+git init -q "$REPO_B"
+git -C "$REPO_B" remote add origin "https://gitlab.example.com/group/repo-b.git"
+
+REPOSCOPE_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$REPOSCOPE_HOME" "$FOUND_JSON")
+mkdir -p "$REPOSCOPE_HOME/.claude"
+jq -n '{branch:"feature/x", repo:"https://gitlab.example.com/group/repo-a.git", number: "99", url: "https://example.com/mr/99"}' \
+  > "$REPOSCOPE_HOME/.claude/.mr-cache.json"
+
+# Same branch name, but requested from repo-b: must NOT be treated as fresh.
+env HOME="$REPOSCOPE_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$REPO_B" "feature/x"
+glab_called "$REPOSCOPE_HOME" || fail "a fresh cache from a DIFFERENT repo with the same branch name should not block a fresh lookup"
+[ "$(jq -r '.repo' "$REPOSCOPE_HOME/.claude/.mr-cache.json")" = "https://gitlab.example.com/group/repo-b.git" ] \
+  || fail "cache should now record repo-b's identity, not repo-a's"
+
+# =======================================================================
 # Single-flight lock: a held (fresh) lock skips the lookup.
 # =======================================================================
 LOCK_HOME=$(fake_home)

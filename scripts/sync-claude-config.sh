@@ -243,14 +243,18 @@ if [ -f "$repo_settings" ]; then
       # one entry) that a repo group re-adds as its own single-command group.
       # Comparing whole `.hooks` arrays for equality would treat those as
       # unrelated and append the repo group anyway, duplicating that command
-      # on every sync. Instead: skip a repo group only when EVERY one of its
-      # commands already appears somewhere in the live groups for that event.
+      # on every sync. Per repo group: keep only the commands NOT already
+      # present anywhere in the live groups for that event, and drop the
+      # group entirely if nothing is left — a *partial* overlap (repo group
+      # has [A, B], live already has A but not B) must add only B, not the
+      # whole group (which would re-add A as a duplicate).
       (reduce ($repoHooks | keys_unsorted[]) as $ev ($liveHooks;
         ($liveHooks[$ev] // []) as $liveGroups |
         ([$liveGroups[].hooks[]?.command]) as $liveCommands |
-        .[$ev] = ($liveGroups + ([$repoHooks[$ev][] | select(
-          ([.hooks[]?.command] - $liveCommands | length) > 0
-        )]))
+        .[$ev] = ($liveGroups + ([$repoHooks[$ev][]
+          | .hooks |= [.[] | select(([.command] - $liveCommands | length) > 0)]
+          | select((.hooks | length) > 0)
+        ]))
       )) as $mergedHooks |
       # statusLine: repo wins when it defines one (full replace, like CLAUDE.md);
       # otherwise keep whatever live has (including having none — never introduce

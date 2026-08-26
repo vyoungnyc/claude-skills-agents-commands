@@ -435,6 +435,41 @@ expect_exit 0 "$BUNDLE_REPO" "$BUNDLE_HOME" --apply
 expect_stdout_match "Already in sync"
 
 # =======================================================================
+# Regression: a PARTIAL overlap must add only the missing command, not the
+# whole repo group. A repo group with commands [A, B] where live already has
+# A (in some other group) but not B must end up with exactly one live copy
+# of A and one new copy of B -- not a second A alongside the new B.
+# =======================================================================
+PARTIAL_REPO=$(fake_repo)
+cat > "$PARTIAL_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [
+        {"type": "command", "command": "shared-format.sh"},
+        {"type": "command", "command": "new-only-in-repo.sh"}
+      ]}
+    ]
+  }
+}
+EOF
+PARTIAL_HOME=$(fake_home)
+cat > "$PARTIAL_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": "shared-format.sh"}]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$PARTIAL_REPO" "$PARTIAL_HOME" --apply
+PARTIAL_SHARED_COUNT=$(jq '[.hooks.PostToolUse[].hooks[] | select(.command == "shared-format.sh")] | length' "$PARTIAL_HOME/settings.json")
+[ "$PARTIAL_SHARED_COUNT" -eq 1 ] || fail "a partially-overlapping repo group duplicated the already-present command (count=$PARTIAL_SHARED_COUNT)"
+PARTIAL_NEW_COUNT=$(jq '[.hooks.PostToolUse[].hooks[] | select(.command == "new-only-in-repo.sh")] | length' "$PARTIAL_HOME/settings.json")
+[ "$PARTIAL_NEW_COUNT" -eq 1 ] || fail "the missing command from a partially-overlapping repo group was not added (count=$PARTIAL_NEW_COUNT)"
+
+# =======================================================================
 # Coverage note: every branch this suite can reach without mocking a
 # missing `jq` binary has an assertion above. Exit codes exercised: 0, 10.
 # =======================================================================

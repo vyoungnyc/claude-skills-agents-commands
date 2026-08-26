@@ -108,6 +108,37 @@ bash "$SCRIPT" "$T4" "$OUT4"
 [ "$(jq -r '.input' "$OUT4")" = "130" ] || fail "subagents: top-level input should be main+agents = 100+30=130"
 
 # =======================================================================
+# Regression: streaming dedup must run PER SUBAGENT FILE, not once across
+# all of them concatenated. Two concurrently-streaming subagents can each
+# end their own transcript on a billable stop_reason:null trailing row.
+# Feeding every file into one jq invocation makes the "keep a trailing null
+# row" rule protect only the file `find` happens to list LAST -- silently
+# dropping the OTHER file's pending row. Both files get their own pending
+# row here so the assertion is independent of find's (unspecified,
+# filesystem-dependent) listing order: under the bug, whichever file lands
+# non-last always loses its pending row, so the total is always short by
+# one of the two regardless of order; the fix requires the full total.
+# =======================================================================
+SESSION_DIR2="$SUITE_TMP/subagent-streaming-session"
+mkdir -p "$SESSION_DIR2/mysession/subagents"
+T5="$SESSION_DIR2/mysession.jsonl"
+echo '{"message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-26T14:00:00.000Z"}' > "$T5"
+cat > "$SESSION_DIR2/mysession/subagents/agent-1.jsonl" <<'EOF'
+{"message":{"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":true,"timestamp":"2026-08-26T14:01:00.000Z"}
+{"message":{"usage":{"input_tokens":100,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":null},"isSidechain":true,"timestamp":"2026-08-26T14:01:30.000Z"}
+EOF
+cat > "$SESSION_DIR2/mysession/subagents/agent-2.jsonl" <<'EOF'
+{"message":{"usage":{"input_tokens":20,"output_tokens":8,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":true,"timestamp":"2026-08-26T14:02:00.000Z"}
+{"message":{"usage":{"input_tokens":200,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":null},"isSidechain":true,"timestamp":"2026-08-26T14:02:30.000Z"}
+EOF
+OUT5="$SUITE_TMP/out5/session.json"
+bash "$SCRIPT" "$T5" "$OUT5"
+[ "$(jq -r '.agents.input' "$OUT5")" = "330" ] \
+  || fail "both files' own trailing pending rows must survive per-file dedup: expected (10+100)+(20+200)=330, got $(jq -r '.agents.input' "$OUT5")"
+[ "$(jq -r '.agents.output' "$OUT5")" = "313" ] \
+  || fail "expected (5+100)+(8+200)=313, got $(jq -r '.agents.output' "$OUT5")"
+
+# =======================================================================
 # Nested cache path auto-create: the new token_history/<project>/ layout
 # means the output directory usually doesn't exist yet — token-stats.sh
 # must mkdir -p it rather than assuming ~/.claude already exists.
