@@ -470,6 +470,62 @@ PARTIAL_NEW_COUNT=$(jq '[.hooks.PostToolUse[].hooks[] | select(.command == "new-
 [ "$PARTIAL_NEW_COUNT" -eq 1 ] || fail "the missing command from a partially-overlapping repo group was not added (count=$PARTIAL_NEW_COUNT)"
 
 # =======================================================================
+# Regression: the SAME command under a DIFFERENT matcher is a different
+# trigger, not a duplicate. Live already runs `shared.sh` under matcher
+# "Edit"; the repo group runs the same command under matcher "Write" too --
+# that must be added as its own group, not treated as already covered.
+# =======================================================================
+MATCHER_REPO=$(fake_repo)
+cat > "$MATCHER_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Write", "hooks": [{"type": "command", "command": "shared.sh"}]}
+    ]
+  }
+}
+EOF
+MATCHER_HOME=$(fake_home)
+cat > "$MATCHER_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "shared.sh"}]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$MATCHER_REPO" "$MATCHER_HOME" --apply
+jq -e '[.hooks.PostToolUse[] | select(.matcher == "Edit" and (.hooks[0].command == "shared.sh"))] | length == 1' "$MATCHER_HOME/settings.json" >/dev/null \
+  || fail "the original Edit-matcher group must survive intact"
+jq -e '[.hooks.PostToolUse[] | select(.matcher == "Write" and (.hooks[0].command == "shared.sh"))] | length == 1' "$MATCHER_HOME/settings.json" >/dev/null \
+  || fail "shared.sh under matcher Write must be added -- command-only dedup would have wrongly treated it as already covered by the Edit-matcher group"
+
+# =======================================================================
+# Regression: deploying to an explicit alternate CLAUDE_HOME rewrites the
+# literal "$HOME"/.claude prefix in repo-authored commands (hooks AND
+# statusLine) to the actual target -- otherwise the deployed config tells
+# Claude Code to run scripts from the wrong (default) location.
+# =======================================================================
+ALT_REPO=$(fake_repo)
+cat > "$ALT_REPO/settings.json" <<'EOF'
+{
+  "statusLine": {"type": "command", "command": "\"$HOME\"/.claude/statusline-command.sh", "refreshInterval": 30},
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"$HOME\"/.claude/hooks/some-hook.sh"}]}
+    ]
+  }
+}
+EOF
+ALT_TARGET=$(mktemp -d "$SUITE_TMP/alt-target.XXXXXX")
+expect_exit 0 "$ALT_REPO" "$ALT_TARGET" --apply
+jq -e --arg t "$ALT_TARGET" '.statusLine.command == ($t + "/statusline-command.sh")' "$ALT_TARGET/settings.json" >/dev/null \
+  || fail "statusLine.command should be rewritten to the alternate CLAUDE_HOME, got: $(jq -r '.statusLine.command' "$ALT_TARGET/settings.json")"
+jq -e --arg t "$ALT_TARGET" '.hooks.UserPromptSubmit[0].hooks[0].command == ($t + "/hooks/some-hook.sh")' "$ALT_TARGET/settings.json" >/dev/null \
+  || fail "hook command should also be rewritten to the alternate CLAUDE_HOME, got: $(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' "$ALT_TARGET/settings.json")"
+
+# =======================================================================
 # Coverage note: every branch this suite can reach without mocking a
 # missing `jq` binary has an assertion above. Exit codes exercised: 0, 10.
 # =======================================================================

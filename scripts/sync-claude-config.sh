@@ -231,28 +231,60 @@ fi
 # --- settings.json: merge hooks + env only, preserve every other live key ---
 repo_settings="$REPO_ROOT/settings.json"
 live_settings="$CLAUDE_HOME/settings.json"
+# Repo-authored hook/statusLine commands hardcode the literal, UNexpanded
+# text `"$HOME"/.claude/...` — portable for the default deploy target, since
+# Claude Code expands $HOME itself at hook-invocation time on whatever
+# machine ends up running it. That portability assumption breaks when
+# deploying to an explicit alternate CLAUDE_HOME (a real, documented use of
+# this script, not just for tests): the scripts land under $CLAUDE_HOME, but
+# the merged settings.json would still tell Claude Code to run them from
+# $HOME/.claude, the wrong (default) location. Passed to both jq invocations
+# below as $rewrite_home (empty when CLAUDE_HOME is the default — a no-op —
+# so the normal deploy path keeps the portable, unexpanded "$HOME" form);
+# applied only to freshly-read $repo content, never to pre-existing live
+# commands. Doing this as a jq `walk` over decoded string values (rather
+# than raw sed/text substitution on the JSON file) sidesteps having to
+# hand-match JSON's own backslash-escaping of the embedded quote characters.
+rewrite_home=""
+[ "$CLAUDE_HOME" != "$HOME/.claude" ] && rewrite_home="$CLAUDE_HOME"
+# Single-quoted: $HOME and $marker below are literal jq source, not shell
+# expansion. Inside JQ's own string literal, \" is an escaped literal quote,
+# so $marker's jq-string VALUE is `"$HOME"/.claude` (real quote characters) —
+# exactly what a decoded JSON command string looks like once parsed.
+REWRITE_HOME_JQ='
+  def rewriteHome($rh):
+    ("\"$HOME\"/.claude") as $marker |
+    if $rh == "" then . else
+      walk(if type == "string" and startswith($marker) then $rh + .[($marker | length):] else . end)
+    end;
+'
+
 if [ -f "$repo_settings" ]; then
   if [ -f "$live_settings" ]; then
-    merged=$(jq -s '
-      .[0] as $live | .[1] as $repo |
+    merged=$(jq -s --arg rh "$rewrite_home" "$REWRITE_HOME_JQ"'
+      .[0] as $live | (.[1] | rewriteHome($rh)) as $repo |
       ($live.hooks // {}) as $liveHooks |
       ($repo.hooks // {}) as $repoHooks |
-      # Dedup by individual hook COMMAND, not by whole-group array equality: a
-      # live group can bundle multiple commands together (e.g. a hand-merged
-      # SessionStart group running both a local hook and usage-refresh.sh in
-      # one entry) that a repo group re-adds as its own single-command group.
-      # Comparing whole `.hooks` arrays for equality would treat those as
-      # unrelated and append the repo group anyway, duplicating that command
-      # on every sync. Per repo group: keep only the commands NOT already
-      # present anywhere in the live groups for that event, and drop the
-      # group entirely if nothing is left — a *partial* overlap (repo group
-      # has [A, B], live already has A but not B) must add only B, not the
-      # whole group (which would re-add A as a duplicate).
+      # Dedup by individual hook (COMMAND, MATCHER) pair, not by whole-group
+      # array equality or by command alone: a live group can bundle multiple
+      # commands together (e.g. a hand-merged SessionStart group running both
+      # a local hook and usage-refresh.sh in one entry) that a repo group
+      # re-adds as its own single-command group — comparing whole `.hooks`
+      # arrays for equality would treat those as unrelated and append the
+      # repo group anyway, duplicating that command on every sync. But
+      # command alone is too coarse: the SAME command under two DIFFERENT
+      # matchers (e.g. live already runs X under matcher "Edit", repo wants
+      # X under matcher "Write" too) are different triggers, not duplicates —
+      # keying on command alone would treat X-under-Write as already covered
+      # and drop it, so it would never run for Write. Per repo group: keep
+      # only the (command, matcher) pairs NOT already present anywhere in the
+      # live groups for that event, dropping the group if nothing is left.
       (reduce ($repoHooks | keys_unsorted[]) as $ev ($liveHooks;
         ($liveHooks[$ev] // []) as $liveGroups |
-        ([$liveGroups[].hooks[]?.command]) as $liveCommands |
+        ([$liveGroups[] | . as $g | $g.hooks[]? | {command: .command, matcher: ($g.matcher // null)}]) as $liveKeys |
         .[$ev] = ($liveGroups + ([$repoHooks[$ev][]
-          | .hooks |= [.[] | select(([.command] - $liveCommands | length) > 0)]
+          | . as $rg
+          | .hooks |= [.[] | select(([{command: .command, matcher: ($rg.matcher // null)}] - $liveKeys | length) > 0)]
           | select((.hooks | length) > 0)
         ]))
       )) as $mergedHooks |
@@ -278,7 +310,7 @@ if [ -f "$repo_settings" ]; then
     CHANGED=1
     if [ "$APPLY" -eq 1 ]; then
       mkdir -p "$CLAUDE_HOME"
-      cp "$repo_settings" "$live_settings"
+      jq --arg rh "$rewrite_home" "$REWRITE_HOME_JQ"'rewriteHome($rh)' "$repo_settings" > "$live_settings"
     fi
   fi
 fi

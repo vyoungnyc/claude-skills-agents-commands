@@ -37,17 +37,36 @@ fake_home() {
   printf '%s' "$dir"
 }
 
-# run_statusline <home> <json> — feeds <json> on stdin with HOME=<home>;
-# captures raw stdout into LAST_OUT and an ANSI-stripped copy into
-# LAST_OUT_PLAIN. Content assertions match against the stripped copy since
-# a color escape can land *between* an emoji and the text it prefixes (the
-# emoji is printed outside the color-wrapped segment) — matching raw output
-# would require re-deriving exact escape placement in every assertion.
+# fake_glab_stubdir — a PATH directory with a no-op `glab` executable, so
+# `command -v glab` succeeds without depending on whether the real `glab` is
+# installed on the machine running these tests (offline/stub convention —
+# see README's "Offline/stub rule"). None of the tests using this actually
+# invoke glab's own lookup (MRREFRESH is never made executable in these
+# fixtures, so mr-refresh.sh itself never runs); they only need
+# `command -v glab` to succeed so statusline-command.sh reads the
+# pre-populated .mr-cache.json fixture instead of skipping that branch.
+fake_glab_stubdir() {
+  local dir
+  dir=$(mktemp -d "$SUITE_TMP/glabstub.XXXXXX")
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/glab"
+  chmod +x "$dir/glab"
+  printf '%s' "$dir"
+}
+
+# run_statusline <home> <json> [extra_path_dir] — feeds <json> on stdin with
+# HOME=<home> (and, if given, <extra_path_dir> prepended to PATH); captures
+# raw stdout into LAST_OUT and an ANSI-stripped copy into LAST_OUT_PLAIN.
+# Content assertions match against the stripped copy since a color escape
+# can land *between* an emoji and the text it prefixes (the emoji is printed
+# outside the color-wrapped segment) — matching raw output would require
+# re-deriving exact escape placement in every assertion.
 LAST_OUT=""
 LAST_OUT_PLAIN=""
 run_statusline() {
-  local home="$1" json="$2"
-  LAST_OUT=$(printf '%s' "$json" | env HOME="$home" bash "$SCRIPT")
+  local home="$1" json="$2" extra_path="${3:-}"
+  local path="$PATH"
+  [ -n "$extra_path" ] && path="$extra_path:$PATH"
+  LAST_OUT=$(printf '%s' "$json" | env HOME="$home" PATH="$path" bash "$SCRIPT")
   LAST_OUT_PLAIN=$(printf '%s' "$LAST_OUT" | sed 's/\x1b\[[0-9;]*m//g')
 }
 
@@ -91,14 +110,16 @@ expect_match "🌿 feature/widget"
 
 # =======================================================================
 # Regression: an .mr-cache.json entry for the SAME branch name but a
-# DIFFERENT repo must not be shown for this repo (glab is installed on
-# this machine's real PATH, so this exercises the real command-v check).
+# DIFFERENT repo must not be shown for this repo. Stubs glab on PATH
+# per the offline/stub convention -- must not depend on whether the real
+# glab happens to be installed on whatever machine runs this suite.
 # =======================================================================
+GLAB_STUB=$(fake_glab_stubdir)
 MRSCOPE_HOME=$(fake_home)
 mkdir -p "$MRSCOPE_HOME/.claude"
 jq -n '{branch:"feature/widget", repo:"/some/other/repo-not-this-one", number: "55", url: "https://example.com/mr/55"}' \
   > "$MRSCOPE_HOME/.claude/.mr-cache.json"
-run_statusline "$MRSCOPE_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')"
+run_statusline "$MRSCOPE_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')" "$GLAB_STUB"
 expect_match "🌿 feature/widget"
 expect_not_match "(#55)"
 
@@ -110,7 +131,7 @@ MRMATCH_HOME=$(fake_home)
 mkdir -p "$MRMATCH_HOME/.claude"
 jq -n --arg repo "$GIT_REPO" '{branch:"feature/widget", repo:$repo, number: "77", url: "https://example.com/mr/77"}' \
   > "$MRMATCH_HOME/.claude/.mr-cache.json"
-run_statusline "$MRMATCH_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')"
+run_statusline "$MRMATCH_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')" "$GLAB_STUB"
 expect_match "(#77)"
 
 # =======================================================================
