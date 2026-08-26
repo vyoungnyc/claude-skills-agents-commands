@@ -2,8 +2,12 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
+<<<<<<< HEAD
 **Version:** 2.13.0
 **Version:** 2.11.4
+=======
+**Version:** 2.12.0
+>>>>>>> 4feb847 (feat(statusline): add rich status line + sync-script fixes (v2.12.0))
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -115,8 +119,12 @@ Or if you already have a PRD:
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
+<<<<<<< HEAD
 | sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env` are merged in, idempotently, preserving every other live-only key. |
 | sync-omp-config.sh | Any | Convert this repo's Claude config to oh-my-pi (omp) format and sync it into `~/.omp/agent/` (or `$OMP_HOME`). Agents get their frontmatter rewritten to the omp task-agent schema (tools translated to omp names, Claude-only keys dropped); skills/commands copy verbatim; hooks are bridged by a generated `claude-compat.ts` adapter that shells out to the original `.sh`. Conversion is ephemeral — nothing converted is committed. Dry run by default; `--apply` writes with backups. Flags: `--map-models`, `--no-hooks`. |
+=======
+| sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/statusline/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env`/`statusLine` are merged in, idempotently, preserving every other live-only key. |
+>>>>>>> 4feb847 (feat(statusline): add rich status line + sync-script fixes (v2.12.0))
 | run-tests.sh | Any | Discovers and runs every `*.test.sh` suite in the repo (no hardcoded list); prints per-suite PASS/FAIL plus a final summary; exits 0 only if every suite passes. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
@@ -156,6 +164,18 @@ bash scripts/run-tests.sh
 
 **Offline/stub rule:** no suite may reach the network. Suites that need `gh` or `glab` prepend a per-run temp directory containing a stub executable to `PATH`; `jq` is a genuine dependency of both the scripts and their suites, and every suite exits with a clear message if it is missing.
 
+## Status line (optional)
+
+A two-line Claude Code status line under `statusline/`: model + reasoning effort, clickable repo/branch/PR-or-MR, context-window usage, a computed cache-hit rate, and (on Max/Pro or API billing) 5h/7d rate limits or credit spend — all pulled from the same data the built-in `/usage` command uses.
+
+**Prerequisites:** `jq` and `curl` (required); `glab` (optional, only for the GitLab MR number/link — `brew install glab && glab auth login`). An OSC 8-capable terminal (iTerm2, kitty, WezTerm, Ghostty) for clickable links; unsupported terminals just show plain text.
+
+**Install:** `scripts/sync-claude-config.sh --apply` flat-copies `statusline/*.sh` into `~/.claude/` and merges the `statusLine` key plus a `SessionStart` hook (forces a usage-cache refresh on login, since login rotates the OAuth token) into `~/.claude/settings.json` — same mechanism as everything else this script deploys. Then prime the cache once: `~/.claude/usage-refresh.sh && cat ~/.claude/usage-cache.json`.
+
+Per-session token counts are cached at `~/.claude/token_history/<project-slug>/<session_id>.json` — one subdirectory per project (named after Claude Code's own transcript directory slug, so no separate repo lookup is needed), refreshed in the background and pruned after 7 days of inactivity.
+
+Multi-session safe: an atomic lock guarantees only one background refresh runs across every open Claude session, with backoff on throttling.
+
 ## Platform Support
 
 | Component | GitHub | GitLab | Notes |
@@ -194,6 +214,14 @@ bash scripts/run-tests.sh
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.12.0** — Rich status line, deployed via `sync-claude-config.sh`:
+- New `statusline/` directory (5 scripts): model/effort/repo/branch/context/cache-hit-rate on line 1, session cost on line 2, and — on Max/Pro or API billing — 5h/7d rate limits or credit spend pulled from the same endpoint `/usage` uses
+- `sync-claude-config.sh` flat-copies `statusline/*.sh` into `~/.claude/` (same level as everything else there, since the scripts reference each other by `$HOME/.claude/*.sh` path) and now also merges a `statusLine` settings key (full replace when the repo defines one, like `CLAUDE.md`) alongside the existing `hooks`/`env` merge
+- Root `settings.json` gains the `statusLine` key and a `SessionStart` hook that force-refreshes the usage cache on login
+- Per-session token stats move from a flat `~/.claude/.tokstats-<session_id>.json` to `~/.claude/token_history/<project-slug>/<session_id>.json` — one subdirectory per project, named from Claude Code's own transcript directory slug
+- Every overwrite this script performs is now backed up first, including `agents/`/`skills`/`commands`/`rules`/`hooks`/`statusline` files that already exist and differ (previously only `CLAUDE.md` and `settings.json` were)
+- Script/hook counts unchanged (statusline scripts live in their own top-level directory, not `scripts/`)
 
 **v2.10.1** — Pre-merge checklist codified in CLAUDE.md + `/git`:
 - New `## Git` bullet: before every squash-merge, check whether the branch is behind the target and rebase if so, and — if the repo tracks a version (README `**Version:**` + matching `CHANGELOG.md` entry) — verify the bump is still correct against the target branch's current version before merging
@@ -334,11 +362,22 @@ scripts/
   create-github-issues.test.sh  # Test suite for create-github-issues.sh
   create-local-issues.sh     # Non-GitHub fallback: file-based issues in plans/
   create-local-issues.test.sh   # Test suite for create-local-issues.sh
-  sync-claude-config.sh      # Deploy agents/skills/commands/rules/hooks/CLAUDE.md to ~/.claude
+  sync-claude-config.sh      # Deploy agents/skills/commands/rules/hooks/statusline/CLAUDE.md to ~/.claude
   sync-claude-config.test.sh    # Test suite for sync-claude-config.sh
   sync-omp-config.sh         # Convert Claude config to omp format + deploy to ~/.omp
   sync-omp-config.test.sh       # Test suite for sync-omp-config.sh
   run-tests.sh                # Discovers and runs every *.test.sh suite in the repo
+statusline/                  # Flat-deployed into ~/.claude/ itself (not ~/.claude/statusline/)
+  statusline-command.sh      # The status line entrypoint (statusLine.command)
+  statusline-command.test.sh    # Test suite for statusline-command.sh
+  fetch-usage.sh             # Calls api.anthropic.com/api/oauth/usage with the OAuth token
+  fetch-usage.test.sh           # Test suite for fetch-usage.sh
+  usage-refresh.sh           # Refreshes usage-cache.json (5h/7d limits + credit spend)
+  usage-refresh.test.sh         # Test suite for usage-refresh.sh
+  mr-refresh.sh              # Optional: caches the open GitLab MR for a branch (needs glab)
+  mr-refresh.test.sh            # Test suite for mr-refresh.sh
+  token-stats.sh             # Sums session token usage into ~/.claude/token_history/<project>/
+  token-stats.test.sh           # Test suite for token-stats.sh
 rules/
   typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
   infra.md                   # Path-scoped: Prisma/Terraform standards (loads only for matching files)

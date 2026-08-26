@@ -37,7 +37,7 @@ record_exit() {
 fake_repo() {
   local dir
   dir=$(mktemp -d "$SUITE_TMP/repo.XXXXXX")
-  mkdir -p "$dir/scripts" "$dir/agents" "$dir/skills" "$dir/commands" "$dir/rules" "$dir/hooks"
+  mkdir -p "$dir/scripts" "$dir/agents" "$dir/skills" "$dir/commands" "$dir/rules" "$dir/hooks" "$dir/statusline"
   cp "$REAL_SCRIPT" "$dir/scripts/sync-claude-config.sh"
   chmod +x "$dir/scripts/sync-claude-config.sh"
   echo "agent content" > "$dir/agents/example.md"
@@ -45,10 +45,14 @@ fake_repo() {
   echo "command content" > "$dir/commands/example.md"
   echo "rule content" > "$dir/rules/example.md"
   printf '#!/bin/bash\necho hi\n' > "$dir/hooks/example.sh"
+  printf '#!/bin/bash\necho hook test\n' > "$dir/hooks/example.test.sh"
+  printf '#!/bin/bash\necho statusline\n' > "$dir/statusline/statusline-example.sh"
+  printf '#!/bin/bash\necho statusline test\n' > "$dir/statusline/statusline-example.test.sh"
   echo "# CLAUDE.md repo version" > "$dir/CLAUDE.md"
   cat > "$dir/settings.json" <<'EOF'
 {
   "env": {"REPO_FLAG": "1"},
+  "statusLine": {"type": "command", "command": "repo-statusline.sh"},
   "hooks": {
     "UserPromptSubmit": [
       {"matcher": "", "hooks": [{"type": "command", "command": "repo-hook.sh"}]}
@@ -129,10 +133,12 @@ cp "$SYNCED_REPO/skills/example.md" "$SYNCED_HOME/skills/example.md"
 cp "$SYNCED_REPO/commands/example.md" "$SYNCED_HOME/commands/example.md"
 cp "$SYNCED_REPO/rules/example.md" "$SYNCED_HOME/rules/example.md"
 cp "$SYNCED_REPO/hooks/example.sh" "$SYNCED_HOME/hooks/example.sh"
+cp "$SYNCED_REPO/statusline/statusline-example.sh" "$SYNCED_HOME/statusline-example.sh"
 cp "$SYNCED_REPO/CLAUDE.md" "$SYNCED_HOME/CLAUDE.md"
 cat > "$SYNCED_HOME/settings.json" <<'EOF'
 {
   "env": {"REPO_FLAG": "1"},
+  "statusLine": {"type": "command", "command": "repo-statusline.sh"},
   "hooks": {
     "UserPromptSubmit": [
       {"matcher": "", "hooks": [{"type": "command", "command": "repo-hook.sh"}]}
@@ -154,9 +160,12 @@ DRY_HOME=$(fake_home)
 expect_exit 0 "$DRY_REPO" "$DRY_HOME"
 expect_stdout_match "Dry run"
 expect_stdout_match "agents/"
+expect_stdout_match "statusline-example.sh"
 expect_stdout_match "CLAUDE.md"
 expect_stdout_match "settings.json"
 expect_stdout_match "Re-run with --apply"
+expect_stdout_not_match "example\.test\.sh"
+expect_stdout_not_match "statusline-example\.test\.sh"
 [ -z "$(ls -A "$DRY_HOME")" ] || fail "dry run must not write any file under CLAUDE_HOME"
 
 # =======================================================================
@@ -172,10 +181,18 @@ expect_stdout_match "Applied:"
 [ "$(cat "$APPLY_HOME/agents/example.md")" = "agent content" ] || fail "agents/ not copied"
 [ "$(cat "$APPLY_HOME/CLAUDE.md")" = "# CLAUDE.md repo version" ] || fail "CLAUDE.md not copied"
 [ -x "$APPLY_HOME/hooks/example.sh" ] || fail "synced hook script must be executable"
+[ -x "$APPLY_HOME/statusline-example.sh" ] || fail "synced statusline script must be executable"
+[ "$(cat "$APPLY_HOME/statusline-example.sh")" = "$(cat "$APPLY_REPO/statusline/statusline-example.sh")" ] \
+  || fail "statusline script content mismatch after flat copy"
+[ ! -f "$APPLY_HOME/statusline/statusline-example.sh" ] || fail "statusline script must land flat in CLAUDE_HOME, not under a statusline/ subdirectory"
+[ ! -f "$APPLY_HOME/hooks/example.test.sh" ] || fail "hooks/*.test.sh must never be deployed to a live CLAUDE_HOME"
+[ ! -f "$APPLY_HOME/statusline-example.test.sh" ] || fail "statusline/*.test.sh must never be deployed to a live CLAUDE_HOME"
 [ ! -d "$APPLY_HOME/backups" ] || fail "first-ever apply with no live files must not create a backup"
 
 jq -e '.hooks.UserPromptSubmit' "$APPLY_HOME/settings.json" >/dev/null \
   || fail "settings.json not created with repo hooks"
+jq -e '.statusLine.command == "repo-statusline.sh"' "$APPLY_HOME/settings.json" >/dev/null \
+  || fail "settings.json not created with repo statusLine"
 
 # =======================================================================
 # --apply overlay-copy: a live-only file not present in the repo survives
@@ -190,10 +207,17 @@ expect_exit 0 "$OVERLAY_REPO" "$OVERLAY_HOME" --apply
 [ "$(cat "$OVERLAY_HOME/agents/live-only.md")" = "live-only, not in repo" ] || fail "live-only file content changed"
 [ -f "$OVERLAY_HOME/agents/example.md" ] || fail "repo file missing after overlay copy"
 
+# --apply where a live file already exists and differs, in each of the three
+# copy styles (overlay dir, hooks/*.sh flat, statusline/*.sh flat): the old
+# content is backed up byte-for-byte before being overwritten. Supersedes an
+# earlier agents+hooks-only version of this test (main's 671b3c9) — this one
+# additionally covers statusline/*.sh.
 # =======================================================================
-# --apply overlay-copy where a repo file collides with a live file of the
-# same name: the live version is backed up before being overwritten, and
-# hook scripts are backed up the same way.
+# --apply where a live file already exists and differs, in each of the three
+# copy styles (overlay dir, hooks/*.sh flat, statusline/*.sh flat into
+# $CLAUDE_HOME root): the old content is backed up byte-for-byte before being
+# overwritten. Also covers whole-directory snapshotting and symlink
+# preservation for the hooks dir.
 # =======================================================================
 COLLIDE_REPO=$(fake_repo)
 COLLIDE_HOME=$(fake_home)
@@ -202,20 +226,24 @@ echo "live agent content, pre-sync" > "$COLLIDE_HOME/agents/example.md"
 printf '#!/bin/bash\necho live-pre-sync\n' > "$COLLIDE_HOME/hooks/example.sh"
 printf '#!/bin/bash\necho keep\n' > "$COLLIDE_HOME/hooks/keep.sh"  # live-only, not in repo
 ln -s example.sh "$COLLIDE_HOME/hooks/linked.sh"  # live-only symlink hook
+echo "live-statusline-presync" > "$COLLIDE_HOME/statusline-example.sh"  # flat-copied style
 expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
 
-[ "$(cat "$COLLIDE_HOME/agents/example.md")" = "agent content" ] || fail "colliding agents/ file not overwritten with repo version"
-[ "$(cat "$COLLIDE_HOME/hooks/example.sh")" = "#!/bin/bash
-echo hi" ] || fail "colliding hooks/ file not overwritten with repo version"
+[ "$(cat "$OW_HOME/agents/example.md")" = "agent content" ] || fail "agents/example.md not overwritten with repo version"
+[ "$(cat "$OW_HOME/hooks/example.sh")" = "$(cat "$OW_REPO/hooks/example.sh")" ] || fail "hooks/example.sh not overwritten with repo version"
+[ "$(cat "$OW_HOME/statusline-example.sh")" = "$(cat "$OW_REPO/statusline/statusline-example.sh")" ] || fail "statusline-example.sh not overwritten with repo version"
 
-COLLIDE_AGENT_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1)
-[ -n "$COLLIDE_AGENT_BACKUP" ] || fail "expected a backup of the overwritten agents/example.md"
-[ "$(cat "$COLLIDE_AGENT_BACKUP")" = "live agent content, pre-sync" ] || fail "backed-up agents/example.md does not match pre-sync content"
+OW_AGENT_BACKUP=$(find "$OW_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1)
+[ -n "$OW_AGENT_BACKUP" ] || fail "expected an agents/example.md backup"
+[ "$(cat "$OW_AGENT_BACKUP")" = "live agent, pre-sync" ] || fail "backed-up agents/example.md does not match pre-sync content"
 
-COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1)
-[ -n "$COLLIDE_HOOK_BACKUP" ] || fail "expected a backup of the overwritten hooks/example.sh"
-[ "$(cat "$COLLIDE_HOOK_BACKUP")" = "#!/bin/bash
-echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
+OW_HOOK_BACKUP=$(find "$OW_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1)
+[ -n "$OW_HOOK_BACKUP" ] || fail "expected a hooks/example.sh backup"
+[ "$(cat "$OW_HOOK_BACKUP")" = "$(printf '#!/bin/bash\necho live-hook-presync\n')" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
+
+OW_SL_BACKUP=$(find "$OW_HOME/backups" -name "statusline-example.sh" 2>/dev/null | head -1)
+[ -n "$OW_SL_BACKUP" ] || fail "expected a statusline-example.sh backup"
+[ "$(cat "$OW_SL_BACKUP")" = "live-statusline-presync" ] || fail "backed-up statusline-example.sh does not match pre-sync content"
 
 # Whole-directory snapshot: the live-only hook (never in the repo) is captured
 # in the hooks backup too, and survives in place after the overlay.
@@ -229,6 +257,15 @@ COLLIDE_HOOK_LIVEONLY=$(find "$COLLIDE_HOME/backups" -path "*/hooks/keep.sh" 2>/
 COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/dev/null | head -1)
 [ -L "$COLLIDE_HOOK_LINK" ] || fail "hooks backup dereferenced a symlink instead of preserving it"
 [ "$(readlink "$COLLIDE_HOOK_LINK")" = "example.sh" ] || fail "backed-up symlink target changed"
+
+# statusline/*.sh land flat in $CLAUDE_HOME's root, so they are backed up per
+# file rather than as a directory snapshot.
+[ "$(cat "$COLLIDE_HOME/statusline-example.sh")" = "$(cat "$COLLIDE_REPO/statusline/statusline-example.sh")" ] \
+  || fail "colliding statusline script not overwritten with repo version"
+COLLIDE_SL_BACKUP=$(find "$COLLIDE_HOME/backups" -name "statusline-example.sh" 2>/dev/null | head -1)
+[ -n "$COLLIDE_SL_BACKUP" ] || fail "expected a backup of the overwritten statusline-example.sh"
+[ "$(cat "$COLLIDE_SL_BACKUP")" = "live-statusline-presync" ] \
+  || fail "backed-up statusline-example.sh does not match pre-sync content"
 
 # =======================================================================
 # --apply where a destination is a symlink to an external file: the sync
@@ -318,11 +355,31 @@ jq -e '.hooks.UserPromptSubmit[0].hooks[0].command == "repo-hook.sh"' "$ST_HOME/
   || fail "settings.json merge did not add the repo's hook event"
 jq -e '.env.LIVE_ONLY_FLAG == "1" and .env.REPO_FLAG == "1"' "$ST_HOME/settings.json" >/dev/null \
   || fail "settings.json env merge did not union live and repo keys"
+jq -e '.statusLine.command == "repo-statusline.sh"' "$ST_HOME/settings.json" >/dev/null \
+  || fail "settings.json merge did not add the repo's statusLine (live had none)"
 
 ST_BACKUP=$(find "$ST_HOME/backups" -name "settings.json" 2>/dev/null | head -1)
 [ -n "$ST_BACKUP" ] || fail "expected a settings.json backup"
-jq -e '.hooks.PreToolUse[0].hooks[0].command == "live-only-hook.sh" and (.hooks.UserPromptSubmit | not)' "$ST_BACKUP" >/dev/null \
+jq -e '.hooks.PreToolUse[0].hooks[0].command == "live-only-hook.sh" and (.hooks.UserPromptSubmit | not) and (.statusLine | not)' "$ST_BACKUP" >/dev/null \
   || fail "backed-up settings.json does not match pre-merge content"
+
+# =======================================================================
+# statusLine merge: a live-only statusLine survives untouched when the repo
+# defines none (mirrors the overlay-dir "never delete a live-only file" rule).
+# =======================================================================
+NOSL_REPO=$(fake_repo)
+jq 'del(.statusLine)' "$NOSL_REPO/settings.json" > "$NOSL_REPO/settings.json.tmp" && mv "$NOSL_REPO/settings.json.tmp" "$NOSL_REPO/settings.json"
+NOSL_HOME=$(fake_home)
+mkdir -p "$NOSL_HOME"
+cat > "$NOSL_HOME/settings.json" <<'EOF'
+{
+  "statusLine": {"type": "command", "command": "live-only-statusline.sh"},
+  "hooks": {}
+}
+EOF
+expect_exit 0 "$NOSL_REPO" "$NOSL_HOME" --apply
+jq -e '.statusLine.command == "live-only-statusline.sh"' "$NOSL_HOME/settings.json" >/dev/null \
+  || fail "settings.json merge dropped a live-only statusLine when the repo defines none"
 
 # =======================================================================
 # Idempotency: running --apply a second time makes no further change and
@@ -332,6 +389,50 @@ expect_exit 0 "$ST_REPO" "$ST_HOME" --apply
 expect_stdout_match "Already in sync"
 UPS_COUNT=$(jq '.hooks.UserPromptSubmit | length' "$ST_HOME/settings.json")
 [ "$UPS_COUNT" -eq 1 ] || fail "second apply duplicated the merged hook entry (count=$UPS_COUNT)"
+
+# =======================================================================
+# Regression: a live event can bundle multiple hook commands into ONE
+# group (e.g. hand-edited, or merged from two separate additions over
+# time). If the repo defines one of those commands as its own single-
+# command group, the merge must recognize the command is already present
+# and skip re-adding it -- comparing whole `.hooks` arrays for equality
+# (instead of individual commands) would treat the bundled live group as
+# unrelated and append the repo's group anyway, duplicating that command's
+# execution on every future sync.
+# =======================================================================
+BUNDLE_REPO=$(fake_repo)
+cat > "$BUNDLE_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "usage-refresh.sh --force"}]}
+    ]
+  }
+}
+EOF
+BUNDLE_HOME=$(fake_home)
+cat > "$BUNDLE_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [
+        {"type": "command", "command": "local-only-hook.js"},
+        {"type": "command", "command": "usage-refresh.sh --force"}
+      ]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$BUNDLE_REPO" "$BUNDLE_HOME" --apply
+BUNDLE_COUNT=$(jq '.hooks.SessionStart | length' "$BUNDLE_HOME/settings.json")
+[ "$BUNDLE_COUNT" -eq 1 ] || fail "a repo hook already bundled into a live group must not be duplicated as a second group (count=$BUNDLE_COUNT)"
+jq -e '.hooks.SessionStart[0].hooks | length == 2' "$BUNDLE_HOME/settings.json" >/dev/null \
+  || fail "the original bundled live group (local hook + usage-refresh) must survive intact"
+jq -e '[.hooks.SessionStart[0].hooks[].command] | index("local-only-hook.js") != null' "$BUNDLE_HOME/settings.json" >/dev/null \
+  || fail "the live-only command inside the bundled group must not be dropped"
+
+expect_exit 0 "$BUNDLE_REPO" "$BUNDLE_HOME" --apply
+expect_stdout_match "Already in sync"
 
 # =======================================================================
 # Coverage note: every branch this suite can reach without mocking a

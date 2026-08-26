@@ -2,6 +2,7 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+<<<<<<< HEAD
 ## [2.13.0] - 2026-08-27
 
 ### `sync-omp-config.sh`: Convert + Deploy Claude Config to oh-my-pi (omp)
@@ -16,6 +17,21 @@ All notable changes to this multi-agent orchestration system are documented in t
 - **Valid YAML for `--map-models` + jq gating (Codex PR #38):** `--map-models` now emits quoted role aliases (`model: "@good"` / `"@fast"`) — an unquoted leading `@` is a reserved YAML indicator that made generated agent files unparseable. Separately, the jq/awk preflight moved after argument parsing; awk stays unconditional but jq is required only for an `--apply` that actually deploys hooks — the converter never calls jq (only the deployed hook scripts do), so `--help`, unknown args, dry runs, and `--no-hooks` syncs no longer require jq on `PATH`.
 - **Never follow a symlink into an external target when deploying (Codex PR #38, both scripts):** a live directory where a staged file belongs made `cp` nest the file (`reviewer.md/reviewer.md`); a symlink anywhere on the destination path (the staged file itself, a **nested ancestor** like `skills/demo-skill/`, or the **category root** like `agent/agents`) made `cp` follow the link and overwrite the EXTERNAL referent, with the snapshot capturing only the link. Both overlays now detect a non-regular/symlink component and replace it with a real file/dir before copying — recording a replaced root/link in the backup, leaving the external referent untouched, so the deploy always lands at the intended path and a bad apply stays restorable.
 - **Version note:** cut from `main` (2.11.3) alongside the in-flight statusline branch that also claims 2.12.0; took 2.13.0 to avoid the collision. Whichever of the two lands second must re-verify its bump per the `## Git` squash-merge rule.
+=======
+## [2.12.0] - 2026-08-26
+
+### Rich Status Line, Deployed Via `sync-claude-config.sh`
+
+- **New `statusline/` directory (5 scripts, 5 test suites):** `statusline-command.sh` (the `statusLine.command` entrypoint — model/effort/⚡fast-mode, clickable repo/branch/PR-or-MR, context-window usage with a computed cache-hit rate on line 1, session cost on line 2), `fetch-usage.sh` (calls the same `api.anthropic.com/api/oauth/usage` endpoint `/usage` uses, retrying 429/5xx with `Retry-After`), `usage-refresh.sh` (populates `usage-cache.json` — 5h/7d rate limits, credit spend — atomic mkdir lock, single-flight across sessions, backoff on throttling), `mr-refresh.sh` (optional GitLab MR number/link via `glab`, same lock pattern), and `token-stats.sh` (sums a session's cumulative token usage, incl. subagents, and derives context length from the newest main-chain transcript entry).
+- **`scripts/sync-claude-config.sh`:** flat-copies `statusline/*.sh` straight into `$CLAUDE_HOME` (not a `statusline/` subdirectory — the scripts reference each other by their own `$HOME/.claude/*.sh` path) and now also merges a top-level `statusLine` settings key (full replace when the repo defines one, same rule as `CLAUDE.md`; a live-only `statusLine` survives untouched when the repo has none) alongside the existing `hooks`/`env` merge.
+- **`hooks/*.sh`/`statusline/*.sh` now get the same backup-before-overwrite treatment as the overlay dirs** (see `2.11.2` below) — any live hook or status-line script a sync is about to overwrite is copied under `<CLAUDE_HOME>/backups/sync-<timestamp>/` first.
+- **Root `settings.json`:** gains the `statusLine` key and a `SessionStart` hook (`usage-refresh.sh --force`, backgrounded) that force-refreshes the usage cache on login, since login rotates the OAuth token and may change plan.
+- **`token_history/` cache relocation:** per-session token stats move from a flat `~/.claude/.tokstats-<session_id>.json` (all projects mixed together) to `~/.claude/token_history/<project-slug>/<session_id>.json` — one subdirectory per project, named from Claude Code's own transcript directory slug (no separate repo lookup needed). `token-stats.sh` now `mkdir -p`s its output directory and scopes its 7-day cleanup sweep to that project's own subfolder.
+- The design doc this ships from, `~/claude-statusline-PRD.md`, is updated to match (file paths, install steps via this repo, "Last verified" date).
+- **Fix:** the `hooks/*.sh` and `statusline/*.sh` flat-copy globs also matched `*.test.sh`, so dev-only test suites were being deployed alongside the real scripts into a live `~/.claude` (harmless clutter — nothing there ever executes them — but deadweight). Both loops now skip `*.test.sh`.
+- **Fix:** the `hooks`/`env`/`statusLine` settings.json merge deduped by whole `.hooks`-array equality, not by individual command. A live event that bundles multiple commands into one hand-merged group (discovered live: `SessionStart` running a local hook + `usage-refresh.sh` together) was treated as unrelated to the repo's own single-command group for that same command, so every sync appended a duplicate group — running that command twice on every session start. The merge now skips a repo group only when every one of its commands already appears somewhere in the live groups for that event.
+
+>>>>>>> 4feb847 (feat(statusline): add rich status line + sync-script fixes (v2.12.0))
 ## [2.11.4] - 2026-08-26
 
 ### /codereview: Markdown-Formatted MR Comments
