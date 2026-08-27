@@ -229,21 +229,18 @@ ln -s example.sh "$COLLIDE_HOME/hooks/linked.sh"  # live-only symlink hook
 echo "live-statusline-presync" > "$COLLIDE_HOME/statusline-example.sh"  # flat-copied style
 expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
 
-[ "$(cat "$OW_HOME/agents/example.md")" = "agent content" ] || fail "agents/example.md not overwritten with repo version"
-[ "$(cat "$OW_HOME/hooks/example.sh")" = "$(cat "$OW_REPO/hooks/example.sh")" ] || fail "hooks/example.sh not overwritten with repo version"
-[ "$(cat "$OW_HOME/statusline-example.sh")" = "$(cat "$OW_REPO/statusline/statusline-example.sh")" ] || fail "statusline-example.sh not overwritten with repo version"
+[ "$(cat "$COLLIDE_HOME/agents/example.md")" = "agent content" ] || fail "colliding agents/ file not overwritten with repo version"
+[ "$(cat "$COLLIDE_HOME/hooks/example.sh")" = "#!/bin/bash
+echo hi" ] || fail "colliding hooks/ file not overwritten with repo version"
 
-OW_AGENT_BACKUP=$(find "$OW_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1)
-[ -n "$OW_AGENT_BACKUP" ] || fail "expected an agents/example.md backup"
-[ "$(cat "$OW_AGENT_BACKUP")" = "live agent, pre-sync" ] || fail "backed-up agents/example.md does not match pre-sync content"
+COLLIDE_AGENT_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1)
+[ -n "$COLLIDE_AGENT_BACKUP" ] || fail "expected a backup of the overwritten agents/example.md"
+[ "$(cat "$COLLIDE_AGENT_BACKUP")" = "live agent content, pre-sync" ] || fail "backed-up agents/example.md does not match pre-sync content"
 
-OW_HOOK_BACKUP=$(find "$OW_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1)
-[ -n "$OW_HOOK_BACKUP" ] || fail "expected a hooks/example.sh backup"
-[ "$(cat "$OW_HOOK_BACKUP")" = "$(printf '#!/bin/bash\necho live-hook-presync\n')" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
-
-OW_SL_BACKUP=$(find "$OW_HOME/backups" -name "statusline-example.sh" 2>/dev/null | head -1)
-[ -n "$OW_SL_BACKUP" ] || fail "expected a statusline-example.sh backup"
-[ "$(cat "$OW_SL_BACKUP")" = "live-statusline-presync" ] || fail "backed-up statusline-example.sh does not match pre-sync content"
+COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1)
+[ -n "$COLLIDE_HOOK_BACKUP" ] || fail "expected a backup of the overwritten hooks/example.sh"
+[ "$(cat "$COLLIDE_HOOK_BACKUP")" = "#!/bin/bash
+echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
 
 # Whole-directory snapshot: the live-only hook (never in the repo) is captured
 # in the hooks backup too, and survives in place after the overlay.

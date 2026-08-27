@@ -258,4 +258,68 @@ bash "$SCRIPT" "$T1" "$CLEAN_DIR/new-session.json"
 [ ! -f "$OLD_SESSION" ] || fail "a cache file older than 7 days should be swept by the cleanup pass"
 [ -f "$CLEAN_DIR/new-session.json" ] || fail "the just-written cache file should survive its own cleanup pass"
 
+# =======================================================================
+# Regression: a transcript is appended to LIVE, so its last line is often a
+# partially written object. jq aborts the whole parse on that, and the zero
+# fallback then replaced every valid row with zeros -- publishing a zeroed
+# session to the cache and misreporting cost. Valid rows must survive a torn
+# trailing row.
+# =======================================================================
+TORN="$SUITE_TMP/torn.jsonl"
+cat > "$TORN" <<'EOF'
+{"message":{"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T10:00:00.000Z"}
+{"message":{"usage":{"input_tokens":2000,"output_tokens":300,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T10:01:00.000Z"}
+EOF
+# A half-written row, with no trailing newline -- exactly how a live append looks.
+printf '{"message":{"usage":{"input_tokens":50,"outp' >> "$TORN"
+TORN_OUT="$SUITE_TMP/torn-out/session.json"
+bash "$SCRIPT" "$TORN" "$TORN_OUT"
+[ "$(jq -r '.input' "$TORN_OUT")" = "3000" ] \
+  || fail "a torn trailing row must not discard the valid rows: expected 3000, got $(jq -r '.input' "$TORN_OUT")"
+[ "$(jq -r '.output' "$TORN_OUT")" = "500" ] \
+  || fail "expected output 500 from the intact rows, got $(jq -r '.output' "$TORN_OUT")"
+[ "$(jq -r '.context_length' "$TORN_OUT")" = "2000" ] \
+  || fail "context_length should come from the newest INTACT row, got $(jq -r '.context_length' "$TORN_OUT")"
+
+# A torn row in a SUBAGENT transcript likewise must not zero that subagent.
+TORN_SESSION="$SUITE_TMP/torn-session"
+mkdir -p "$TORN_SESSION/mysession/subagents"
+echo '{"message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T11:00:00.000Z"}' > "$TORN_SESSION/mysession.jsonl"
+{
+  echo '{"message":{"usage":{"input_tokens":700,"output_tokens":70,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":true,"timestamp":"2026-08-27T11:01:00.000Z"}'
+  printf '{"message":{"usage":{"inp'
+} > "$TORN_SESSION/mysession/subagents/agent-1.jsonl"
+TORN_AG_OUT="$SUITE_TMP/torn-agent-out/session.json"
+bash "$SCRIPT" "$TORN_SESSION/mysession.jsonl" "$TORN_AG_OUT"
+[ "$(jq -r '.agents.input' "$TORN_AG_OUT")" = "700" ] \
+  || fail "a torn row in a subagent transcript must not zero that subagent: expected 700, got $(jq -r '.agents.input' "$TORN_AG_OUT")"
+
+# =======================================================================
+# A populated cache is never replaced with an all-zero one: a session's
+# cumulative totals only grow, so zeros mean the read failed, not that usage
+# really went to zero. Serving the last good figures beats silently
+# misreporting cost.
+# =======================================================================
+ZERO_OUT="$SUITE_TMP/zeroguard/session.json"
+mkdir -p "$SUITE_TMP/zeroguard"
+cat > "$ZERO_OUT" <<'EOF'
+{"input": 5000, "output": 400, "cache_read": 100, "cache_write": 0, "est_cost": 0.02,
+ "context_length": 5100,
+ "main": {"input": 5000, "output": 400, "cache_read": 100, "cache_write": 0, "est_cost": 0.02},
+ "agents": {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "est_cost": 0}}
+EOF
+# A transcript whose every row is unparseable yields zeros.
+GARBAGE="$SUITE_TMP/garbage.jsonl"
+printf 'not json at all\nstill not json\n' > "$GARBAGE"
+bash "$SCRIPT" "$GARBAGE" "$ZERO_OUT"
+[ "$(jq -r '.input' "$ZERO_OUT")" = "5000" ] \
+  || fail "an all-zero read must not overwrite a populated cache, got input=$(jq -r '.input' "$ZERO_OUT")"
+
+# ...but a genuinely-zero NEW session (no prior cache) still writes, so a fresh
+# session is not blocked from ever being created.
+FRESHZERO_OUT="$SUITE_TMP/freshzero/session.json"
+bash "$SCRIPT" "$GARBAGE" "$FRESHZERO_OUT"
+[ -f "$FRESHZERO_OUT" ] || fail "a new session with zero usage should still create its cache file"
+[ "$(jq -r '.input' "$FRESHZERO_OUT")" = "0" ] || fail "expected a zeroed cache for a brand-new session"
+
 echo "token-stats.test.sh: all assertions passed"

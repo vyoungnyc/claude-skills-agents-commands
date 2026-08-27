@@ -136,7 +136,16 @@ SUM_FILTER='
       w: ([$f[].message.usage.cache_creation_input_tokens // 0] | add // 0),
       c: ([$f[] | ecost] | add // 0) }'
 
-main=$(jq -n "$SUM_FILTER" "$tp" 2>/dev/null)
+# A transcript is appended to LIVE, so its final line is frequently a partially
+# written object. jq aborts the whole parse on that, and the zero fallback below
+# then replaced every valid row with zeros -- publishing a zeroed session to the
+# cache, which is worse than showing nothing. `jq -c .` emits each row that
+# parses and stops at the first that does not, so a torn trailing row costs only
+# itself. (A malformed row mid-file still truncates the tail, which is strictly
+# better than discarding everything.)
+rows() { jq -c . "$1" 2>/dev/null; }
+
+main=$(rows "$tp" | jq -n "$SUM_FILTER" 2>/dev/null)
 [ -z "$main" ] && main='{"i":0,"o":0,"r":0,"w":0,"c":0}'
 
 # context length: newest main-chain finalized entry by timestamp
@@ -146,7 +155,10 @@ ctx=$(jq -rn '
     | select(.message | (has("stop_reason") | not) or (.stop_reason != null)) ]
   | sort_by(.timestamp) | last
   | if . then ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0)) else 0 end
-' "$tp" 2>/dev/null)
+' <<CTX_ROWS 2>/dev/null
+$(rows "$tp")
+CTX_ROWS
+)
 [ -z "$ctx" ] && ctx=0
 
 # subagents: sum every agent-*.jsonl in the session-scoped subagents dir.
@@ -166,7 +178,7 @@ for d in "$tdir/$stem/subagents" "$tdir/subagents"; do
     per_file=$(
         while IFS= read -r af; do
             [ -n "$af" ] || continue
-            jq -n "$SUM_FILTER" "$af" 2>/dev/null
+            rows "$af" | jq -n "$SUM_FILTER" 2>/dev/null
         done <<AGENT_FILES
 $files
 AGENT_FILES
@@ -190,7 +202,26 @@ jq -n --argjson m "$main" --argjson a "$agents" --argjson ctx "$ctx" '
     context_length: $ctx,
     main:   {input:$m.i, output:$m.o, cache_read:$m.r, cache_write:$m.w, est_cost:$m.c},
     agents: {input:$a.i, output:$a.o, cache_read:$a.r, cache_write:$a.w, est_cost:$a.c}
-  }' >"$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out"
+  }' >"$out.tmp.$$" 2>/dev/null || { rm -f "$out.tmp.$$" 2>/dev/null; exit 0; }
+
+# Never replace a populated cache with an all-zero one. A session's cumulative
+# totals only ever grow, so zeros on a session that previously had usage mean
+# the read failed (an unreadable or wholly unparseable transcript), not that the
+# numbers really went to zero. Belt and braces alongside the `rows` pre-pass
+# above: publishing zeros is worse than serving the last good figures, because
+# it silently misreports cost rather than looking broken.
+if [ -s "$out" ]; then
+    keep=$(jq -rn --slurpfile old "$out" --slurpfile new "$out.tmp.$$" '
+        ($old[0] // {}) as $o | ($new[0] // {}) as $n
+        | if (($n.input // 0) + ($n.output // 0) + ($n.cache_read // 0) + ($n.cache_write // 0)) == 0
+             and (($o.input // 0) + ($o.output // 0) + ($o.cache_read // 0) + ($o.cache_write // 0)) > 0
+          then "keep" else "replace" end' 2>/dev/null)
+    if [ "$keep" = "keep" ]; then
+        rm -f "$out.tmp.$$" 2>/dev/null
+        exit 0
+    fi
+fi
+mv "$out.tmp.$$" "$out"
 
 # opportunistic cleanup: drop token-stats caches for sessions untouched for a week, scoped
 # to this session's own project subdirectory under token_history/.

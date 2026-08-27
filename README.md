@@ -2,12 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-<<<<<<< HEAD
-**Version:** 2.13.0
-**Version:** 2.11.4
-=======
-**Version:** 2.12.0
->>>>>>> 4feb847 (feat(statusline): add rich status line + sync-script fixes (v2.12.0))
+**Version:** 2.14.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -119,12 +114,8 @@ Or if you already have a PRD:
 | poll-mr-reviews.sh | GitLab | Poll an MR for new discussions, native approval, award emoji, pipeline failures, or idle timeout. Used by `/mr-fix-loop`. |
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
-<<<<<<< HEAD
-| sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env` are merged in, idempotently, preserving every other live-only key. |
-| sync-omp-config.sh | Any | Convert this repo's Claude config to oh-my-pi (omp) format and sync it into `~/.omp/agent/` (or `$OMP_HOME`). Agents get their frontmatter rewritten to the omp task-agent schema (tools translated to omp names, Claude-only keys dropped); skills/commands copy verbatim; hooks are bridged by a generated `claude-compat.ts` adapter that shells out to the original `.sh`. Conversion is ephemeral — nothing converted is committed. Dry run by default; `--apply` writes with backups. Flags: `--map-models`, `--no-hooks`. |
-=======
 | sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/statusline/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env`/`statusLine` are merged in, idempotently, preserving every other live-only key. |
->>>>>>> 4feb847 (feat(statusline): add rich status line + sync-script fixes (v2.12.0))
+| sync-omp-config.sh | Any | Convert this repo's Claude config to oh-my-pi (omp) format and sync it into `~/.omp/agent/` (or `$OMP_HOME`). Agents get their frontmatter rewritten to the omp task-agent schema (tools translated to omp names, Claude-only keys dropped); skills/commands copy verbatim; hooks are bridged by a generated `claude-compat.ts` adapter that shells out to the original `.sh`. Conversion is ephemeral — nothing converted is committed. Dry run by default; `--apply` writes with backups. Flags: `--map-models`, `--no-hooks`. |
 | run-tests.sh | Any | Discovers and runs every `*.test.sh` suite in the repo (no hardcoded list); prints per-suite PASS/FAIL plus a final summary; exits 0 only if every suite passes. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
@@ -222,9 +213,9 @@ Multi-session safe: an atomic lock guarantees only one background refresh runs a
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
-**v2.12.0** — Rich status line, deployed via `sync-claude-config.sh`:
+**v2.14.0** — Rich status line, deployed via `sync-claude-config.sh`:
 - New `statusline/` directory (5 scripts): model/effort/repo/branch/context/cache-hit-rate on line 1, session cost on line 2, and — on Max/Pro or API billing — 5h/7d rate limits or credit spend pulled from the same endpoint `/usage` uses
-- `sync-claude-config.sh` flat-copies `statusline/*.sh` into `~/.claude/` (same level as everything else there, since the scripts reference each other by `$HOME/.claude/*.sh` path) and now also merges a `statusLine` settings key (full replace when the repo defines one, like `CLAUDE.md`) alongside the existing `hooks`/`env` merge
+- `sync-claude-config.sh` flat-copies `statusline/*.sh` into `~/.claude/` (same level as everything else there, since the scripts locate each other and their caches as siblings in whatever Claude home they were deployed into) and now also merges a `statusLine` settings key (full replace when the repo defines one, like `CLAUDE.md`) alongside the existing `hooks`/`env` merge
 - Root `settings.json` gains the `statusLine` key and a `SessionStart` hook that refreshes the usage cache regardless of its age (a throttle backoff is still honored)
 - Per-session token stats move from a flat `~/.claude/.tokstats-<session_id>.json` to `~/.claude/token_history/<project-slug>/<session_id>.json` — one subdirectory per project, named from Claude Code's own transcript directory slug
 - Every overwrite this script performs is now backed up first, including `agents/`/`skills`/`commands`/`rules`/`hooks`/`statusline` files that already exist and differ (previously only `CLAUDE.md` and `settings.json` were)
