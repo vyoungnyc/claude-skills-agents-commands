@@ -191,4 +191,41 @@ env HOME="$STALE_HOME" bash "$SCRIPT" --force
 fetch_called "$STALE_HOME" || fail "a stale (>120s) lock should have been reclaimed"
 [ ! -d "$STALE_HOME/.claude/.usage-refresh.lock" ] || fail "lock should be released after a successful run"
 
+# =======================================================================
+# Regression: an install under an alternate CLAUDE_HOME must invoke the
+# fetch-usage.sh deployed BESIDE IT and write its cache there -- not reach
+# into the default $HOME/.claude, where an alternate-only install has no
+# helper at all (so usage never refreshed). Both homes get a stub helper
+# here, each tagging its own marker file, so the assertion proves which
+# one actually ran.
+# =======================================================================
+ALT_DEPLOY=$(mktemp -d "$SUITE_TMP/alt-deploy.XXXXXX")
+cp "$SCRIPT" "$ALT_DEPLOY/usage-refresh.sh"
+echo '{}' > "$ALT_DEPLOY/settings.json"   # the marker that says "deployed Claude home"
+cat > "$ALT_DEPLOY/fetch-usage.sh" <<EOF
+#!/usr/bin/env bash
+touch "$ALT_DEPLOY/alt-fetch-called"
+cat <<'BODY'
+$SUCCESS_BODY
+BODY
+printf '__HTTP_STATUS__%s\n' 200
+EOF
+chmod +x "$ALT_DEPLOY/fetch-usage.sh"
+ALTDEFAULT_HOME=$(fake_home 200 "$SUCCESS_BODY")
+env HOME="$ALTDEFAULT_HOME" bash "$ALT_DEPLOY/usage-refresh.sh" --force
+[ -f "$ALT_DEPLOY/alt-fetch-called" ] || fail "an alternate-home install must invoke the fetch-usage.sh deployed beside it"
+fetch_called "$ALTDEFAULT_HOME" && fail "an alternate-home install must NOT invoke the default \$HOME/.claude helper"
+[ -f "$ALT_DEPLOY/usage-cache.json" ] || fail "an alternate-home install must write its cache beside itself"
+[ "$(jq -r '.pct' "$ALT_DEPLOY/usage-cache.json")" = "42" ] || fail "alternate-home cache content mismatch"
+[ ! -f "$ALTDEFAULT_HOME/.claude/usage-cache.json" ] || fail "an alternate-home install must not write into the default \$HOME/.claude"
+
+# Without a sibling settings.json the copied script is not a deployed Claude
+# home and must fall back to $HOME/.claude (the repo-checkout case).
+NOMARKER_DEPLOY=$(mktemp -d "$SUITE_TMP/nomarker.XXXXXX")
+cp "$SCRIPT" "$NOMARKER_DEPLOY/usage-refresh.sh"
+NOMARKER_HOME=$(fake_home 200 "$SUCCESS_BODY")
+env HOME="$NOMARKER_HOME" bash "$NOMARKER_DEPLOY/usage-refresh.sh" --force
+fetch_called "$NOMARKER_HOME" || fail "without a sibling settings.json the script must fall back to \$HOME/.claude"
+[ -f "$NOMARKER_HOME/.claude/usage-cache.json" ] || fail "fallback run should have written the default-home cache"
+
 echo "usage-refresh.test.sh: all assertions passed"

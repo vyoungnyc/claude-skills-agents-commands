@@ -55,11 +55,26 @@ SUM_FILTER='
       + ($c5 * ($p.i * 1.25))
       + ($c1 * ($p.i * 2.0)) ) / 1000000;
   [ inputs | select(.message.usage and (.isApiErrorMessage != true)) ] as $u
-  | (if ($u | any(.message | has("stop_reason")))
-       then ($u | to_entries
-             | map(select(.value.message.stop_reason != null or .key == ($u | length - 1)))
-             | map(.value))
-       else $u end) as $f
+  | ($u | to_entries
+     | map(select(
+         # Streaming dedup is decided PER ROW, on whether that row itself
+         # carries stop_reason — not by a file-level `any(...)` probe. A
+         # transcript can mix schemas (older rows with no stop_reason field at
+         # all, newer rows with it, e.g. across a client upgrade); a file-level
+         # probe would flip every row into field-aware mode, where an ABSENT
+         # field reads as null and the row is discarded as a streaming
+         # intermediate — silently dropping every older billable row except
+         # whichever fieldless one happened to land last.
+         #   field absent          -> finalized (that schema never emitted it)
+         #   field present, truthy -> finalized
+         #   field present, null   -> streaming intermediate; keep only if it
+         #                            is the last row in the file (in flight)
+         # Matches the context_length filter below, which already treats an
+         # absent stop_reason as finalized.
+         (.value.message | has("stop_reason") | not)
+         or (.value.message.stop_reason != null)
+         or (.key == ($u | length - 1))))
+     | map(.value)) as $f
   | { i: ([$f[].message.usage.input_tokens // 0] | add // 0),
       o: ([$f[].message.usage.output_tokens // 0] | add // 0),
       r: ([$f[].message.usage.cache_read_input_tokens // 0] | add // 0),

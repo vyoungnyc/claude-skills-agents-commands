@@ -152,6 +152,13 @@ scripts/sync-omp-config.sh --apply
 OMP_HOME=/path/to/.omp scripts/sync-omp-config.sh --apply
 ```
 
+An alternate-`CLAUDE_HOME` deploy is self-contained: the sync rewrites the
+`statusLine`/hook command paths in the merged `settings.json` to the real target,
+and the deployed status-line scripts resolve their own home at runtime (explicit
+`CLAUDE_HOME`, else their own directory when a sibling `settings.json` marks it as
+a deployed Claude home, else `$HOME/.claude`) — so their caches and helper lookups
+stay inside that target instead of reaching into the default home.
+
 ### Testing
 
 Run every test suite in the repo:

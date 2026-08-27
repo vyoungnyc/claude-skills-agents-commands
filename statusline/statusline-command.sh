@@ -15,6 +15,29 @@
 #     (that endpoint returns five_hour/seven_day.{utilization,resets_at} — null unless on Max/Pro — plus
 #     spend credits). The status line reads the cache (fast) and kicks a background refresh when stale.
 
+# Which Claude home this script was DEPLOYED into. The sync script supports
+# installing to an explicit alternate CLAUDE_HOME and rewrites the entrypoint
+# path in settings.json accordingly — but every cache and helper path below
+# used to be hardcoded to $HOME/.claude, so an alternate-home install started
+# correctly and then read the DEFAULT home's caches and looked for its helper
+# scripts (mr-refresh.sh, token-stats.sh, usage-refresh.sh) somewhere they
+# were never installed: usage, token, and MR data never refreshed.
+# Resolution order:
+#   1. An explicit CLAUDE_HOME in the environment always wins.
+#   2. Else this script's own directory, when it looks like a deployed Claude
+#      home — the sync script lands statusline scripts FLAT in CLAUDE_HOME,
+#      so a sibling settings.json means "I am installed in a Claude home".
+#   3. Else $HOME/.claude — the default install, and the repo checkout, where
+#      these scripts live in statusline/ with no sibling settings.json.
+resolve_claude_home() {
+    if [ -n "${CLAUDE_HOME:-}" ]; then printf '%s' "$CLAUDE_HOME"; return; fi
+    local d
+    d=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || d=""
+    if [ -n "$d" ] && [ -f "$d/settings.json" ]; then printf '%s' "$d"; return; fi
+    printf '%s' "$HOME/.claude"
+}
+CLAUDE_DIR=$(resolve_claude_home)
+
 input=$(cat)
 now=$(date +%s)
 model=$(echo "$input" | jq -r '.model.display_name')
@@ -144,8 +167,8 @@ if [ -n "$branch" ]; then
     if [ -n "$pr" ]; then
         num="$pr"; nurl="$pr_url"
     elif command -v glab >/dev/null 2>&1; then
-        MRCACHE="$HOME/.claude/.mr-cache.json"
-        MRREFRESH="$HOME/.claude/mr-refresh.sh"
+        MRCACHE="$CLAUDE_DIR/.mr-cache.json"
+        MRREFRESH="$CLAUDE_DIR/mr-refresh.sh"
         # Repo identity, same derivation as mr-refresh.sh. The cache is one
         # file shared by every session, keyed by "<repo>\t<branch>" so this
         # session only ever reads/triggers-refresh-for its own entry -- a
@@ -194,9 +217,9 @@ fi
 TSTATS=""
 if [ -n "$session_id" ] && [ -n "$transcript" ]; then
     project_slug=$(basename "$(dirname "$transcript")")
-    TSTATS="$HOME/.claude/token_history/$project_slug/$session_id.json"
+    TSTATS="$CLAUDE_DIR/token_history/$project_slug/$session_id.json"
 fi
-TSREFRESH="$HOME/.claude/token-stats.sh"
+TSREFRESH="$CLAUDE_DIR/token-stats.sh"
 if [ -n "$TSTATS" ] && [ -n "$transcript" ] && [ -x "$TSREFRESH" ]; then
     tsstale=1
     if [ -f "$TSTATS" ]; then
@@ -288,9 +311,9 @@ fi
 
 # ---- everything below is sourced from the usage cache (background-refreshed) ----
 now=$(date +%s)
-UCACHE="$HOME/.claude/usage-cache.json"
-REFRESH="$HOME/.claude/usage-refresh.sh"
-BACKOFF="$HOME/.claude/.usage-backoff"
+UCACHE="$CLAUDE_DIR/usage-cache.json"
+REFRESH="$CLAUDE_DIR/usage-refresh.sh"
+BACKOFF="$CLAUDE_DIR/.usage-backoff"
 cache_age=""
 if [ -f "$UCACHE" ]; then
     mt=$(stat -c %Y "$UCACHE" 2>/dev/null || stat -f %m "$UCACHE" 2>/dev/null || echo 0)

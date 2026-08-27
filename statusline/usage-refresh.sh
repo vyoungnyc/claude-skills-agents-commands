@@ -3,7 +3,21 @@
 # Calls fetch-usage.sh, parses spend, computes the monthly reset (1st of next month),
 # writes ~/.claude/usage-cache.json atomically. Safe to run on a timer or on-demand.
 set -uo pipefail
-DIR="$HOME/.claude"
+# Which Claude home this script was DEPLOYED into — the cache, backoff, lock,
+# and the fetch-usage.sh helper all live beside this script, so an install
+# under an alternate CLAUDE_HOME must not read/write the DEFAULT home's files
+# (or look for its helper somewhere it was never installed). Same resolution
+# order as statusline-command.sh: explicit CLAUDE_HOME, else this script's own
+# directory when a sibling settings.json marks it as a deployed Claude home,
+# else $HOME/.claude (default install, and the repo checkout).
+resolve_claude_home() {
+    if [ -n "${CLAUDE_HOME:-}" ]; then printf '%s' "$CLAUDE_HOME"; return; fi
+    local d
+    d=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || d=""
+    if [ -n "$d" ] && [ -f "$d/settings.json" ]; then printf '%s' "$d"; return; fi
+    printf '%s' "$HOME/.claude"
+}
+DIR=$(resolve_claude_home)
 CACHE="$DIR/usage-cache.json"
 BACKOFF="$DIR/.usage-backoff"
 LOCK="$DIR/.usage-refresh.lock"

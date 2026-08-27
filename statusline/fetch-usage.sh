@@ -4,19 +4,36 @@
 # Token is never printed; only the API response body is emitted on stdout.
 set -uo pipefail
 
+# Which Claude home this script was DEPLOYED into (same resolution order as
+# statusline-command.sh: explicit CLAUDE_HOME, else this script's own directory
+# when a sibling settings.json marks it as a deployed Claude home, else
+# $HOME/.claude). Checked BEFORE the default home below, so an alternate-home
+# install reads its own credentials rather than the default home's.
+resolve_claude_home() {
+    if [ -n "${CLAUDE_HOME:-}" ]; then printf '%s' "$CLAUDE_HOME"; return; fi
+    local d
+    d=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || d=""
+    if [ -n "$d" ] && [ -f "$d/settings.json" ]; then printf '%s' "$d"; return; fi
+    printf '%s' "$HOME/.claude"
+}
+CLAUDE_DIR=$(resolve_claude_home)
+
 get_token() {
-    if [ -f "$HOME/.claude/.credentials.json" ]; then
+    # Try the deployed home first, then the default home — an alternate-home
+    # deploy may hold config only, with the OAuth login still in $HOME/.claude.
+    for creds in "$CLAUDE_DIR/.credentials.json" "$HOME/.claude/.credentials.json"; do
+        [ -f "$creds" ] || continue
         # jq exits 0 on a valid-JSON file even when none of the token fields
         # are present (the `// empty` just yields an empty string) — only
         # return early on an actual non-empty token, or a present-but-empty
         # credentials file permanently blocks the Keychain fallback below.
         file_tok=$(jq -r '.claudeAiOauth.accessToken // .accessToken // .oauth.accessToken // empty' \
-            "$HOME/.claude/.credentials.json" 2>/dev/null)
+            "$creds" 2>/dev/null)
         if [ -n "$file_tok" ] && [ "$file_tok" != "null" ]; then
             printf '%s' "$file_tok"
             return 0
         fi
-    fi
+    done
     if command -v security >/dev/null 2>&1; then
         security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null \
             | jq -r '.claudeAiOauth.accessToken // .accessToken // empty' 2>/dev/null

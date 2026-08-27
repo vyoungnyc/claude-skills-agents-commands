@@ -71,6 +71,47 @@ bash "$SCRIPT" "$T2" "$OUT2"
 [ "$(jq -r '.output' "$OUT2")" = "13" ] || fail "streaming dedup: expected 5+8=13, got $(jq -r '.output' "$OUT2")"
 
 # =======================================================================
+# Regression: streaming dedup is decided PER ROW, not by a file-level
+# `any(has("stop_reason"))` probe. A transcript can mix schemas -- older
+# rows with no stop_reason field at all, newer rows carrying it (e.g. a
+# session spanning a client upgrade). Under the file-level probe, the mere
+# presence of ONE stop_reason row flipped every row into field-aware mode,
+# where an ABSENT field reads as null and the row is discarded as a
+# streaming intermediate -- silently dropping every fieldless billable row
+# except whichever one happened to land last. A row with no stop_reason
+# field is finalized (its schema never emitted one) and must be counted.
+# =======================================================================
+T_MIXED="$SUITE_TMP/mixed-schema.jsonl"
+cat > "$T_MIXED" <<'EOF'
+{"message":{"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5"},"isSidechain":false,"timestamp":"2026-08-26T15:00:00.000Z"}
+{"message":{"usage":{"input_tokens":200,"output_tokens":20,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5"},"isSidechain":false,"timestamp":"2026-08-26T15:01:00.000Z"}
+{"message":{"usage":{"input_tokens":400,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-26T15:02:00.000Z"}
+{"message":{"usage":{"input_tokens":999,"output_tokens":999,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":null},"isSidechain":false,"timestamp":"2026-08-26T15:03:00.000Z"}
+{"message":{"usage":{"input_tokens":800,"output_tokens":80,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-26T15:04:00.000Z"}
+EOF
+OUT_MIXED="$SUITE_TMP/out-mixed/session.json"
+bash "$SCRIPT" "$T_MIXED" "$OUT_MIXED"
+# 100 + 200 (fieldless, finalized) + 400 + 800 (explicitly finalized); the
+# mid-file stop_reason:null row (999) is a streaming intermediate and stays out.
+[ "$(jq -r '.input' "$OUT_MIXED")" = "1500" ] \
+  || fail "mixed-schema: fieldless rows are finalized and must be counted: expected 100+200+400+800=1500, got $(jq -r '.input' "$OUT_MIXED")"
+[ "$(jq -r '.output' "$OUT_MIXED")" = "150" ] \
+  || fail "mixed-schema: expected 10+20+40+80=150, got $(jq -r '.output' "$OUT_MIXED")"
+
+# A fieldless row must still be counted when it is the file's LAST row and a
+# stop_reason-bearing row precedes it (the one case the old probe happened to
+# get right -- pinned so the per-row rule does not regress it).
+T_MIXED2="$SUITE_TMP/mixed-schema-trailing.jsonl"
+cat > "$T_MIXED2" <<'EOF'
+{"message":{"usage":{"input_tokens":400,"output_tokens":40,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-26T16:00:00.000Z"}
+{"message":{"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5"},"isSidechain":false,"timestamp":"2026-08-26T16:01:00.000Z"}
+EOF
+OUT_MIXED2="$SUITE_TMP/out-mixed2/session.json"
+bash "$SCRIPT" "$T_MIXED2" "$OUT_MIXED2"
+[ "$(jq -r '.input' "$OUT_MIXED2")" = "500" ] \
+  || fail "mixed-schema trailing: expected 400+100=500, got $(jq -r '.input' "$OUT_MIXED2")"
+
+# =======================================================================
 # isApiErrorMessage rows are skipped entirely, even with a huge usage
 # payload and a truthy stop_reason.
 # =======================================================================

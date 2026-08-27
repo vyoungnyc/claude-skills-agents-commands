@@ -243,4 +243,53 @@ expect_match "130 out"
 expect_match "266.6k cache-r"
 [ ! -f "$TH_HOME/.claude/.tokstats-$SESSION_ID.json" ] || fail "must not write the old flat .tokstats-<session>.json path"
 
+# =======================================================================
+# Regression: an install under an alternate CLAUDE_HOME must read ITS OWN
+# caches, not the default $HOME/.claude ones. The sync script deploys
+# statusline scripts FLAT into CLAUDE_HOME alongside settings.json, so the
+# script resolves its home from its own directory when a sibling
+# settings.json is present. Both homes get a usage-cache.json here with
+# DIFFERENT values, so the assertion proves which one was actually read
+# rather than merely that some cache was found.
+# =======================================================================
+ALT_DEPLOY=$(mktemp -d "$SUITE_TMP/alt-deploy.XXXXXX")
+cp "$SCRIPT" "$ALT_DEPLOY/statusline-command.sh"
+echo '{}' > "$ALT_DEPLOY/settings.json"   # the marker that says "deployed Claude home"
+cat > "$ALT_DEPLOY/usage-cache.json" <<'EOF'
+{"enabled": true, "used": 77.25, "limit": 200, "pct": 38, "resets": 9999999999}
+EOF
+ALTDEFAULT_HOME=$(fake_home)
+cat > "$ALTDEFAULT_HOME/.claude/usage-cache.json" <<'EOF'
+{"enabled": true, "used": 11.50, "limit": 50, "pct": 23, "resets": 9999999999}
+EOF
+ALT_OUT=$(printf '%s' '{"cwd":"/tmp","model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"/tmp"}}' \
+  | env HOME="$ALTDEFAULT_HOME" bash "$ALT_DEPLOY/statusline-command.sh" | sed 's/\x1b\[[0-9;]*m//g')
+printf '%s' "$ALT_OUT" | grep -Fq '$77.25 / $200.00 (38%)' \
+  || fail "an alternate-home install must read the usage cache beside itself, got: $ALT_OUT"
+printf '%s' "$ALT_OUT" | grep -Fq '$11.50' \
+  && fail "an alternate-home install must NOT read the default \$HOME/.claude cache, got: $ALT_OUT"
+
+# The same copied script with NO sibling settings.json is not a deployed
+# Claude home -- it must fall back to $HOME/.claude (this is the repo-checkout
+# case, and what every other test in this suite relies on).
+NOMARKER_DEPLOY=$(mktemp -d "$SUITE_TMP/nomarker.XXXXXX")
+cp "$SCRIPT" "$NOMARKER_DEPLOY/statusline-command.sh"
+cat > "$NOMARKER_DEPLOY/usage-cache.json" <<'EOF'
+{"enabled": true, "used": 77.25, "limit": 200, "pct": 38, "resets": 9999999999}
+EOF
+NOMARKER_OUT=$(printf '%s' '{"cwd":"/tmp","model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"/tmp"}}' \
+  | env HOME="$ALTDEFAULT_HOME" bash "$NOMARKER_DEPLOY/statusline-command.sh" | sed 's/\x1b\[[0-9;]*m//g')
+printf '%s' "$NOMARKER_OUT" | grep -Fq '$11.50 / $50.00 (23%)' \
+  || fail "without a sibling settings.json the script must fall back to \$HOME/.claude, got: $NOMARKER_OUT"
+
+# An explicit CLAUDE_HOME in the environment wins over both.
+ENVHOME_DEPLOY=$(mktemp -d "$SUITE_TMP/envhome.XXXXXX")
+cat > "$ENVHOME_DEPLOY/usage-cache.json" <<'EOF'
+{"enabled": true, "used": 5.00, "limit": 25, "pct": 20, "resets": 9999999999}
+EOF
+ENVHOME_OUT=$(printf '%s' '{"cwd":"/tmp","model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"/tmp"}}' \
+  | env HOME="$ALTDEFAULT_HOME" CLAUDE_HOME="$ENVHOME_DEPLOY" bash "$ALT_DEPLOY/statusline-command.sh" | sed 's/\x1b\[[0-9;]*m//g')
+printf '%s' "$ENVHOME_OUT" | grep -Fq '$5.00 / $25.00 (20%)' \
+  || fail "an explicit CLAUDE_HOME must win over both the script directory and \$HOME/.claude, got: $ENVHOME_OUT"
+
 echo "statusline-command.test.sh: all assertions passed"

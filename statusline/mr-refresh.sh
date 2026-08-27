@@ -9,8 +9,21 @@
 set -uo pipefail
 cwd="${1:-$PWD}"
 branch="${2:-}"
-CACHE="$HOME/.claude/.mr-cache.json"
-LOCK="$HOME/.claude/.mr-refresh.lock"
+# Which Claude home this script was DEPLOYED into, so an install under an
+# alternate CLAUDE_HOME keeps its cache/lock beside itself instead of in the
+# DEFAULT home. Same resolution order as statusline-command.sh: explicit
+# CLAUDE_HOME, else this script's own directory when a sibling settings.json
+# marks it as a deployed Claude home, else $HOME/.claude.
+resolve_claude_home() {
+    if [ -n "${CLAUDE_HOME:-}" ]; then printf '%s' "$CLAUDE_HOME"; return; fi
+    local d
+    d=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || d=""
+    if [ -n "$d" ] && [ -f "$d/settings.json" ]; then printf '%s' "$d"; return; fi
+    printf '%s' "$HOME/.claude"
+}
+CLAUDE_DIR=$(resolve_claude_home)
+CACHE="$CLAUDE_DIR/.mr-cache.json"
+LOCK="$CLAUDE_DIR/.mr-refresh.lock"
 MAX_AGE=600      # per-entry freshness window (seconds)
 PRUNE_AGE=86400  # entries older than this are dropped on write, to bound file growth
 command -v glab >/dev/null 2>&1 || exit 0
