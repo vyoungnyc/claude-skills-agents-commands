@@ -144,6 +144,33 @@ for st in 401 500 503; do
   [ ! -f "$ERR_HOME/.claude/usage-cache.json" ] || fail "$st must not write a cache file"
 done
 
+# A 200 whose BODY cannot be parsed or written must also record a cooldown.
+# The backoff used to be cleared as soon as the status was 200, before the
+# cache was actually written -- so a malformed body left the cache stale with
+# nothing to stop statusline-command.sh relaunching the refresh every render.
+# The last-good cache must survive, and no temp file may leak.
+BADBODY_HOME=$(fake_home 200 'this is not json at all')
+echo '{"enabled": true, "used": 9.99, "limit": 50, "pct": 20}' > "$BADBODY_HOME/.claude/usage-cache.json"
+env HOME="$BADBODY_HOME" bash "$SCRIPT" --force || true
+[ -f "$BADBODY_HOME/.claude/.usage-backoff" ] \
+  || fail "a 200 with an unparseable body must record a cooldown, or it is retried on every render"
+read -r BB_V BB_K < "$BADBODY_HOME/.claude/.usage-backoff" || true
+[ "$BB_K" = "error" ] || fail "an unparseable-body cooldown should be kind 'error', got '$BB_K'"
+[ "$BB_V" -gt "$(date +%s)" ] || fail "unparseable-body cooldown should be a future epoch, got $BB_V"
+[ "$(jq -r '.used' "$BADBODY_HOME/.claude/usage-cache.json")" = "9.99" ] \
+  || fail "the last-good cache must survive a 200 with an unparseable body"
+BB_LEFTOVER=$(find "$BADBODY_HOME/.claude" -name 'usage-cache.json.tmp*' 2>/dev/null)
+[ -z "$BB_LEFTOVER" ] || fail "a failed write left a temp file behind: $BB_LEFTOVER"
+
+# An existing cooldown is cleared only once the cache is actually written.
+CLEARED_HOME=$(fake_home 200 "$SUCCESS_BODY")
+printf '%s %s\n' "1" "error" > "$CLEARED_HOME/.claude/.usage-backoff"   # expired
+env HOME="$CLEARED_HOME" bash "$SCRIPT" --force
+[ ! -f "$CLEARED_HOME/.claude/.usage-backoff" ] \
+  || fail "a successful refresh should clear the cooldown once the cache is written"
+[ "$(jq -r '.enabled' "$CLEARED_HOME/.claude/usage-cache.json")" = "true" ] \
+  || fail "the successful refresh should have written the cache"
+
 # fetch-usage.sh exiting nonzero (no token, curl unusable) is the same
 # situation and must also record a cooldown rather than being retried forever.
 NOFETCH_HOME=$(fake_home 200 "$SUCCESS_BODY")

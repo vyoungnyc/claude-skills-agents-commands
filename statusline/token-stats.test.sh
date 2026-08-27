@@ -295,6 +295,49 @@ bash "$SCRIPT" "$TORN_SESSION/mysession.jsonl" "$TORN_AG_OUT"
   || fail "a torn row in a subagent transcript must not zero that subagent: expected 700, got $(jq -r '.agents.input' "$TORN_AG_OUT")"
 
 # =======================================================================
+# Regression: a malformed row MID-FILE must be skipped individually, not
+# truncate the tail. Resuming an interrupted session appends valid rows
+# AFTER the partial one, so the damaged row ends up in the middle -- a
+# whole-stream parse stops there and the session silently stops
+# accumulating from that point on, permanently. Only the bad row may be lost.
+# =======================================================================
+RESUMED="$SUITE_TMP/resumed.jsonl"
+cat > "$RESUMED" <<'EOF'
+{"message":{"usage":{"input_tokens":1000,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T10:00:00.000Z"}
+{"message":{"usage":{"input_tokens":2000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T10:01:00.000Z"}
+EOF
+# The row torn by the interruption, now followed by post-resume appends.
+printf '{"message":{"usage":{"input_tokens":9999,"outp\n' >> "$RESUMED"
+cat >> "$RESUMED" <<'EOF'
+{"message":{"usage":{"input_tokens":4000,"output_tokens":400,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T10:03:00.000Z"}
+{"message":{"usage":{"input_tokens":8000,"output_tokens":800,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T10:04:00.000Z"}
+EOF
+RESUMED_OUT="$SUITE_TMP/resumed-out/session.json"
+bash "$SCRIPT" "$RESUMED" "$RESUMED_OUT"
+[ "$(jq -r '.input' "$RESUMED_OUT")" = "15000" ] \
+  || fail "rows after a mid-file malformed row must still count: expected 1000+2000+4000+8000=15000, got $(jq -r '.input' "$RESUMED_OUT")"
+[ "$(jq -r '.output' "$RESUMED_OUT")" = "1500" ] \
+  || fail "expected output 100+200+400+800=1500, got $(jq -r '.output' "$RESUMED_OUT")"
+[ "$(jq -r '.context_length' "$RESUMED_OUT")" = "8000" ] \
+  || fail "context_length must come from the newest row AFTER the damaged one, got $(jq -r '.context_length' "$RESUMED_OUT")"
+# The malformed row's own numbers must not leak in.
+[ "$(jq -r '.input' "$RESUMED_OUT")" != "24999" ] || fail "the malformed row was somehow counted"
+
+# Same for a subagent transcript with a mid-file torn row.
+RES_SESSION="$SUITE_TMP/resumed-session"
+mkdir -p "$RES_SESSION/mysession/subagents"
+echo '{"message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T12:00:00.000Z"}' > "$RES_SESSION/mysession.jsonl"
+{
+  echo '{"message":{"usage":{"input_tokens":300,"output_tokens":30,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":true,"timestamp":"2026-08-27T12:01:00.000Z"}'
+  printf '{"message":{"usage":{"inp\n'
+  echo '{"message":{"usage":{"input_tokens":500,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":true,"timestamp":"2026-08-27T12:02:00.000Z"}'
+} > "$RES_SESSION/mysession/subagents/agent-1.jsonl"
+RES_AG_OUT="$SUITE_TMP/resumed-agent-out/session.json"
+bash "$SCRIPT" "$RES_SESSION/mysession.jsonl" "$RES_AG_OUT"
+[ "$(jq -r '.agents.input' "$RES_AG_OUT")" = "800" ] \
+  || fail "a subagent's rows after a mid-file malformed row must still count: expected 300+500=800, got $(jq -r '.agents.input' "$RES_AG_OUT")"
+
+# =======================================================================
 # A populated cache is never replaced with an all-zero one: a session's
 # cumulative totals only grow, so zeros mean the read failed, not that usage
 # really went to zero. Serving the last good figures beats silently

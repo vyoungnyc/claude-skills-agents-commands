@@ -168,7 +168,11 @@ if [ "$status" != "200" ]; then
     fi
     exit 1
 fi
-rm -f "$BACKOFF" 2>/dev/null
+# NOTE: the backoff is deliberately NOT cleared here. A 200 whose body cannot be
+# parsed or written still leaves the cache stale, and clearing the cooldown at
+# this point meant statusline-command.sh relaunched the refresh on every ~30s
+# render with nothing to stop it. The cooldown is cleared only after the cache
+# has actually been written, at the very bottom of this script.
 
 # credits reset on the 1st of next month (local time)
 resets=$(date -d "$(date +%Y-%m-01) +1 month" +%s 2>/dev/null) \
@@ -211,12 +215,12 @@ iso2epoch() {
 # 5h / 7d rate-limit windows come from the SAME endpoint (null unless on Max/Pro).
 # severity ("normal"/"warning"/"critical") lives in the limits[] array keyed by kind
 # (session == 5h, weekly_all == 7d); fall back to null when absent.
-five_util=$(printf '%s' "$body" | jq -r '.five_hour.utilization // empty')
-five_reset=$(iso2epoch "$(printf '%s' "$body" | jq -r '.five_hour.resets_at // empty')")
-five_sev=$(printf '%s' "$body" | jq -r '(.limits[]? | select(.kind=="session") | .severity) // empty' | head -1)
-seven_util=$(printf '%s' "$body" | jq -r '.seven_day.utilization // empty')
-seven_reset=$(iso2epoch "$(printf '%s' "$body" | jq -r '.seven_day.resets_at // empty')")
-seven_sev=$(printf '%s' "$body" | jq -r '(.limits[]? | select(.kind=="weekly_all") | .severity) // empty' | head -1)
+five_util=$(printf '%s' "$body" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
+five_reset=$(iso2epoch "$(printf '%s' "$body" | jq -r '.five_hour.resets_at // empty' 2>/dev/null)")
+five_sev=$(printf '%s' "$body" | jq -r '(.limits[]? | select(.kind=="session") | .severity) // empty' 2>/dev/null | head -1)
+seven_util=$(printf '%s' "$body" | jq -r '.seven_day.utilization // empty' 2>/dev/null)
+seven_reset=$(iso2epoch "$(printf '%s' "$body" | jq -r '.seven_day.resets_at // empty' 2>/dev/null)")
+seven_sev=$(printf '%s' "$body" | jq -r '(.limits[]? | select(.kind=="weekly_all") | .severity) // empty' 2>/dev/null | head -1)
 
 printf '%s' "$body" | jq \
     --arg resets "$resets" \
@@ -233,4 +237,20 @@ printf '%s' "$body" | jq \
         resets: num($resets),
         five:  (if $fu == "" then null else {util: ($fu | tonumber | floor), resets: num($fr), severity: str($fsev)} end),
         seven: (if $su == "" then null else {util: ($su | tonumber | floor), resets: num($sr), severity: str($ssev)} end)
-    }' >"$CACHE.tmp.$$" 2>/dev/null && mv "$CACHE.tmp.$$" "$CACHE"
+    }' >"$CACHE.tmp.$$" 2>/dev/null || {
+    # A 200 whose body is malformed, or an unexpected field that makes tonumber
+    # fail, lands here. Treat it as an error failure: record a cooldown so the
+    # status line stops relaunching us every render, drop the partial temp file,
+    # and leave the last-good cache in place.
+    rm -f "$CACHE.tmp.$$" 2>/dev/null
+    set_backoff "$BACKOFF_ERROR" error
+    exit 1
+}
+mv "$CACHE.tmp.$$" "$CACHE" 2>/dev/null || {
+    rm -f "$CACHE.tmp.$$" 2>/dev/null
+    set_backoff "$BACKOFF_ERROR" error
+    exit 1
+}
+# Cache written: only now is the endpoint known to be fully healthy, so clear
+# any cooldown.
+rm -f "$BACKOFF" 2>/dev/null

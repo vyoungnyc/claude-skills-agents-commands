@@ -137,13 +137,19 @@ SUM_FILTER='
       c: ([$f[] | ecost] | add // 0) }'
 
 # A transcript is appended to LIVE, so its final line is frequently a partially
-# written object. jq aborts the whole parse on that, and the zero fallback below
-# then replaced every valid row with zeros -- publishing a zeroed session to the
-# cache, which is worse than showing nothing. `jq -c .` emits each row that
-# parses and stops at the first that does not, so a torn trailing row costs only
-# itself. (A malformed row mid-file still truncates the tail, which is strictly
-# better than discarding everything.)
-rows() { jq -c . "$1" 2>/dev/null; }
+# written object. Feeding the file to jq directly aborts the WHOLE parse on that,
+# and the zero fallback below then replaced every valid row with zeros --
+# publishing a zeroed session to the cache, which is worse than showing nothing.
+#
+# `-R` reads each line as a raw string and `fromjson?` parses it, with the `?`
+# swallowing the error for a line that will not parse. So a malformed row is
+# skipped INDIVIDUALLY and every other row still counts. A whole-stream
+# `jq -c .` is not sufficient here: it stops at the first bad row and drops
+# everything after it, which is not just a torn-tail problem — resuming an
+# interrupted session appends valid rows AFTER the partial one, so the damaged
+# row sits mid-file and the session would silently stop accumulating from there
+# on, permanently. Still a single jq process over the file, so O(n).
+rows() { jq -Rc 'fromjson?' "$1" 2>/dev/null; }
 
 main=$(rows "$tp" | jq -n "$SUM_FILTER" 2>/dev/null)
 [ -z "$main" ] && main='{"i":0,"o":0,"r":0,"w":0,"c":0}'
