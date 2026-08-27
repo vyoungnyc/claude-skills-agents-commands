@@ -863,6 +863,45 @@ jq -e '.external == "settings"' "$SYMFILE_OUT/victim-settings.json" >/dev/null \
 [ -f "$SYMFILE_HOME/CLAUDE.md" ] || fail "CLAUDE.md should exist as a real file after the sync"
 
 # =======================================================================
+# Regression: a repo command MOVED between events must not keep its old
+# registration. The repo-owns-its-commands strip was scoped per-event, so
+# the stale event kept firing alongside the new one -- the same defect the
+# rule exists to prevent, one scope up.
+# =======================================================================
+MOVE_REPO=$(fake_repo)
+cat > "$MOVE_REPO/settings.json" <<'EOF'
+{"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "moved.sh"}]}]}}
+EOF
+MOVE_HOME=$(fake_home)
+cat > "$MOVE_HOME/settings.json" <<'EOF'
+{"hooks": {"PreToolUse": [
+  {"matcher": "Bash", "hooks": [
+    {"type": "command", "command": "moved.sh"},
+    {"type": "command", "command": "user-own.sh"}
+  ]}
+]}}
+EOF
+expect_exit 0 "$MOVE_REPO" "$MOVE_HOME" --apply
+MOVE_N=$(jq '[.hooks[][]?.hooks[]? | select(.command == "moved.sh")] | length' "$MOVE_HOME/settings.json")
+[ "$MOVE_N" -eq 1 ]   || fail "a repo command moved between events should be registered once, got $MOVE_N (stale event registration kept)"
+jq -e '[.hooks.PostToolUse[]?.hooks[]? | select(.command == "moved.sh")] | length == 1' "$MOVE_HOME/settings.json" >/dev/null   || fail "moved.sh should be registered under the repo's new event"
+jq -e '[.hooks.PreToolUse[]?.hooks[]? | select(.command == "moved.sh")] | length == 0' "$MOVE_HOME/settings.json" >/dev/null   || fail "moved.sh should no longer be registered under its old event"
+# A live-only command sharing that old event must survive.
+jq -e '[.hooks.PreToolUse[]?.hooks[]? | select(.command == "user-own.sh")] | length == 1' "$MOVE_HOME/settings.json" >/dev/null   || fail "a live-only hook in the vacated event must survive"
+
+# Stripping must not leave a bare empty event behind.
+EMPTYEV_REPO=$(fake_repo)
+cat > "$EMPTYEV_REPO/settings.json" <<'EOF'
+{"hooks": {"PostToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "solo.sh"}]}]}}
+EOF
+EMPTYEV_HOME=$(fake_home)
+cat > "$EMPTYEV_HOME/settings.json" <<'EOF'
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "solo.sh"}]}]}}
+EOF
+expect_exit 0 "$EMPTYEV_REPO" "$EMPTYEV_HOME" --apply
+jq -e '.hooks | has("PreToolUse") | not' "$EMPTYEV_HOME/settings.json" >/dev/null   || fail "an event left with no groups should be dropped, not left as an empty array"
+
+# =======================================================================
 # Coverage note: every branch this suite can reach without mocking a
 # missing `jq` binary has an assertion above. Exit codes exercised: 0, 10.
 # =======================================================================

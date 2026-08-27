@@ -320,22 +320,27 @@ if [ -f "$repo_settings" ]; then
       # repo-shipped hook loses it on sync. That matches how CLAUDE.md and
       # statusLine already deploy (repo wins), and the live file is backed up
       # first. A hook the user wrote themselves is unaffected.
-      (reduce ($repoHooks | keys_unsorted[]) as $ev ($liveHooks;
-        ($liveHooks[$ev] // []) as $liveGroups |
-        # Every command the repo defines for this event, post-rewrite.
-        ([$repoHooks[$ev][]? | (.hooks // [])[]? | .command]) as $repoCmds |
-        # Live groups minus the repo commands. `.hooks` may legitimately be
-        # absent on a hand-edited group, so iterate it optionally: doing that
-        # unguarded aborted the whole merge with "Cannot iterate over null",
-        # leaving a partial apply and a bare jq error with no backup pointer.
-        ([$liveGroups[]
+      # Repo-owned commands are collected across ALL events and stripped from
+      # ALL live events before the repo groups are appended. Scoping the strip
+      # per-event was not enough: a command the repo MOVED from one event to
+      # another kept its old live registration under the previous event while
+      # the new one was appended, so it fired on both triggers -- the same
+      # defect this rule exists to prevent, one scope up.
+      ([$repoHooks[]? | .[]? | (.hooks // [])[]? | .command]) as $ownedCmds |
+      (reduce ($liveHooks | keys_unsorted[]) as $ev ($liveHooks;
+        .[$ev] = ([$liveHooks[$ev][]?
           | .hooks = [((.hooks // [])[]?)
               | . as $lh
               | select((($lh.command // "") | rewriteHomeStr($rh)) as $rw
-                       | ([$rw] - $repoCmds) | length > 0)]
+                       | ([$rw] - $ownedCmds) | length > 0)]
           | select((.hooks | length) > 0)
-        ]) as $keptLive |
-        .[$ev] = ($keptLive + [$repoHooks[$ev][]?])
+        ])
+      )) as $strippedLive |
+      # Drop events left with no groups at all, so stripping does not leave a
+      # bare `"PreToolUse": []` behind in the user file.
+      ($strippedLive | with_entries(select((.value | length) > 0))) as $strippedLive |
+      (reduce ($repoHooks | keys_unsorted[]) as $ev ($strippedLive;
+        .[$ev] = (( .[$ev] // []) + [$repoHooks[$ev][]?])
       )) as $mergedHooks |
       # statusLine: repo wins when it defines one (full replace, like CLAUDE.md);
       # otherwise keep whatever live has (including having none — never introduce
