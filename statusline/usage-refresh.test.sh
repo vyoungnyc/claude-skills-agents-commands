@@ -101,6 +101,64 @@ env HOME="$FORCEBACKOFF_HOME" bash "$SCRIPT" --force || true
 fetch_called "$FORCEBACKOFF_HOME" \
   && fail "--force bypassed an active throttle backoff -- every new session would re-hammer a 429'd endpoint"
 
+# --force MAY bypass an `error`-kind cooldown. That split is deliberate: a 429
+# is the server instructing us to stop and must be honored no matter who asks,
+# whereas an error cooldown is our own rate limiting and a login is exactly the
+# event that fixes a 401 -- waiting it out would leave the status line stale
+# right after the user fixed the problem.
+ERRKIND_HOME=$(fake_home 200 "$SUCCESS_BODY")
+printf '%s %s' "9999999999" "error" > "$ERRKIND_HOME/.claude/.usage-backoff"
+env HOME="$ERRKIND_HOME" bash "$SCRIPT" --force
+fetch_called "$ERRKIND_HOME" \
+  || fail "--force should bypass an error-kind cooldown (a login is what fixes a 401)"
+# ...but a non-force run still honors it.
+ERRKIND2_HOME=$(fake_home 200 "$SUCCESS_BODY")
+printf '%s %s' "9999999999" "error" > "$ERRKIND2_HOME/.claude/.usage-backoff"
+env HOME="$ERRKIND2_HOME" bash "$SCRIPT" || true
+fetch_called "$ERRKIND2_HOME" && fail "a non-force run must honor an error-kind cooldown"
+
+# A kind-less backoff file (written by an older version) is read as `throttle`,
+# the conservative choice, so --force does NOT bypass it.
+LEGACYKIND_HOME=$(fake_home 200 "$SUCCESS_BODY")
+echo "9999999999" > "$LEGACYKIND_HOME/.claude/.usage-backoff"
+env HOME="$LEGACYKIND_HOME" bash "$SCRIPT" --force || true
+fetch_called "$LEGACYKIND_HOME" \
+  && fail "a kind-less (legacy) backoff file must be treated as throttle, which --force cannot bypass"
+
+# =======================================================================
+# Regression: a NON-429 failure must also record a cooldown. Previously
+# only a 429 did, so a persistent 401 or 5xx left the cache stale and the
+# backoff unset -- statusline-command.sh then relaunched this script on
+# every ~30s render, and each run drove fetch-usage.sh's full three-attempt
+# retry cycle against an already-failing endpoint, indefinitely.
+# =======================================================================
+for st in 401 500 503; do
+  ERR_HOME=$(fake_home "$st" '{"error":"nope"}')
+  env HOME="$ERR_HOME" bash "$SCRIPT" --force || true
+  [ -f "$ERR_HOME/.claude/.usage-backoff" ] \
+    || fail "a $st response must record a cooldown, or it is retried on every render"
+  read -r EV EK < "$ERR_HOME/.claude/.usage-backoff" || true
+  [ "$EV" -gt "$(date +%s)" ] || fail "$st cooldown should be a future epoch, got $EV"
+  [ "$EK" = "error" ] || fail "a $st cooldown should be kind 'error', not '$EK' (only a 429 is a throttle)"
+  # And the last-good cache must be left alone.
+  [ ! -f "$ERR_HOME/.claude/usage-cache.json" ] || fail "$st must not write a cache file"
+done
+
+# fetch-usage.sh exiting nonzero (no token, curl unusable) is the same
+# situation and must also record a cooldown rather than being retried forever.
+NOFETCH_HOME=$(fake_home 200 "$SUCCESS_BODY")
+cat > "$NOFETCH_HOME/.claude/fetch-usage.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "ERROR: no OAuth token found" >&2
+exit 1
+EOF
+chmod +x "$NOFETCH_HOME/.claude/fetch-usage.sh"
+env HOME="$NOFETCH_HOME" bash "$SCRIPT" --force || true
+[ -f "$NOFETCH_HOME/.claude/.usage-backoff" ] \
+  || fail "a failing fetch-usage.sh must record a cooldown, or it is respawned on every render"
+read -r NV NK < "$NOFETCH_HOME/.claude/.usage-backoff" || true
+[ "$NK" = "error" ] || fail "a fetch-usage.sh failure should be kind 'error', got '$NK'"
+
 # ...but --force still bypasses the FRESHNESS gate once the backoff has
 # EXPIRED, so the login-refresh behavior it exists for is intact.
 EXPIREDBACKOFF_HOME=$(fake_home 200 "$SUCCESS_BODY")
@@ -246,8 +304,10 @@ set -e
 [ "$THROTTLE_EXIT" -ne 0 ] || fail "a 429 response should exit non-zero"
 [ "$(cat "$THROTTLE_HOME/.claude/usage-cache.json")" = '{"used":"prior"}' ] || fail "a 429 must leave the last-good cache untouched"
 [ -f "$THROTTLE_HOME/.claude/.usage-backoff" ] || fail "a 429 should write a backoff cooldown"
-BACKOFF_VAL=$(cat "$THROTTLE_HOME/.claude/.usage-backoff")
+# The file is "<until_epoch> <kind>"; read the fields, not the whole line.
+read -r BACKOFF_VAL BACKOFF_KIND < "$THROTTLE_HOME/.claude/.usage-backoff" || true
 [ "$BACKOFF_VAL" -gt "$(date +%s)" ] || fail "backoff cooldown should be a future epoch, got $BACKOFF_VAL"
+[ "$BACKOFF_KIND" = "throttle" ] || fail "a 429 cooldown should be recorded as kind 'throttle', got '$BACKOFF_KIND'"
 
 # =======================================================================
 # Single-flight lock: a held (fresh) lock skips the refresh without error.
@@ -306,6 +366,58 @@ printf '%s' "$DEAD_PID" > "$DEADOWNER_LOCK/owner"
 env HOME="$DEADOWNER_HOME" bash "$SCRIPT" --force
 fetch_called "$DEADOWNER_HOME" || fail "a lock whose owner is dead must be reclaimed rather than deadlocking"
 [ ! -d "$DEADOWNER_LOCK" ] || fail "lock should be released after reclaiming from a dead owner"
+
+# =======================================================================
+# Regression: reclaiming an ABANDONED lock must be atomic. With `rm -rf` +
+# `mkdir`, two processes can both pass the owner/age checks, and the second
+# one's `rm -rf` then deletes the lock the FIRST has already acquired and
+# recreated -- both end up inside the critical section, racing the cache
+# write. `mv` is rename(2), so exactly one process can claim it.
+#
+# Driven deterministically rather than by hoping a real race lands: the
+# fetch stub for process A blocks on a fifo, so A is provably mid-critical-
+# section (holding its freshly-reclaimed lock) when B runs. B must not be
+# able to take the lock, and must not destroy A's.
+# =======================================================================
+# Several real processes are launched against ONE abandoned lock and each
+# records itself if it reaches the critical section. Exactly one may. Note
+# this asserts the invariant under genuine concurrency rather than forcing
+# the interleaving: with rename(2) the guarantee is unconditional, whereas
+# the old rm -rf + mkdir only sometimes loses the race, so this catches a
+# regression probabilistically -- though in practice the pre-fix forms lose
+# this reliably: both a plain rm -rf + mkdir and an atomic-rename reclaim
+# admitted 2-3 of 6 contenders on every run of this exact test.
+ATOMIC_HOME=$(fake_home 200 "$SUCCESS_BODY")
+ATOMIC_LOCK="$ATOMIC_HOME/.claude/.usage-refresh.lock"
+ATOMIC_WINNERS="$ATOMIC_HOME/winners"
+: > "$ATOMIC_WINNERS"
+cat > "$ATOMIC_HOME/.claude/fetch-usage.sh" <<EOF
+#!/usr/bin/env bash
+# Reaching here means this process is inside the critical section.
+echo "\$PPID" >> "$ATOMIC_WINNERS"
+cat <<'BODY'
+$SUCCESS_BODY
+BODY
+printf '__HTTP_STATUS__%s\n' 200
+EOF
+chmod +x "$ATOMIC_HOME/.claude/fetch-usage.sh"
+# Plant an abandoned lock: owner recorded but definitely dead, so every
+# contender's owner/age checks agree it is reclaimable.
+( : ) &
+GONE_PID=$!
+wait "$GONE_PID" 2>/dev/null || true
+mkdir "$ATOMIC_LOCK"
+printf '%s' "$GONE_PID" > "$ATOMIC_LOCK/owner"
+for _ in 1 2 3 4 5 6; do
+  env HOME="$ATOMIC_HOME" bash "$SCRIPT" --force >/dev/null 2>&1 &
+done
+wait
+ATOMIC_COUNT=$(wc -l < "$ATOMIC_WINNERS" | tr -d ' ')
+[ "$ATOMIC_COUNT" -eq 1 ] \
+  || fail "exactly one process may reclaim an abandoned lock and enter the critical section, got $ATOMIC_COUNT"
+[ ! -d "$ATOMIC_LOCK" ] || fail "the winning process should have released its lock on exit"
+STRAY=$(find "$ATOMIC_HOME/.claude" -maxdepth 1 -name '.usage-refresh.lock.reclaim' 2>/dev/null)
+[ -z "$STRAY" ] || fail "reclaim left its serialization lock behind: $STRAY"
 
 # =======================================================================
 # Regression, release side: if this process's lock gets taken over while it

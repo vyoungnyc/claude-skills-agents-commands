@@ -100,17 +100,41 @@ lock_acquire() {
         printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
         return 0
     fi
-    owner=$(lock_owner)
-    age=$(file_age "$LOCK")
-    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$age" -lt "$LOCK_HARD" ]; then
+    # Held. Deciding "this lock is abandoned" and acting on it must happen under
+    # mutual exclusion. Neither a plain `rm -rf` + `mkdir` nor an atomic rename
+    # is enough: the lock is identified by PATH, not identity, so a contender
+    # that decided "abandoned" a moment ago will happily tear down the BRAND-NEW
+    # lock a winner has since created at that same path — putting both inside
+    # the critical section. rename(2) only guarantees one rename of one
+    # directory instance wins, which does not stop that.
+    # So serialize the whole decide-and-reclaim on its own atomic mkdir, and
+    # re-read the owner UNDER it: a process that reclaimed while we waited has
+    # already recorded itself, so we then correctly see a LIVE owner and back off.
+    reclaim="$LOCK.reclaim"
+    if ! mkdir "$reclaim" 2>/dev/null; then
+        # Another process is reclaiming right now. It is held for only a few
+        # filesystem operations, so anything older was abandoned mid-reclaim;
+        # clear that and let the next run retry rather than race this one.
+        [ "$(file_age "$reclaim")" -gt 60 ] && rmdir "$reclaim" 2>/dev/null
         return 1
     fi
-    if [ -z "$owner" ] && [ "$age" -lt "$LOCK_GRACE" ]; then
+    owner=$(lock_owner)
+    age=$(file_age "$LOCK")
+    if { [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$age" -lt "$LOCK_HARD" ]; } \
+       || { [ -z "$owner" ] && [ "$age" -lt "$LOCK_GRACE" ]; }; then
+        rmdir "$reclaim" 2>/dev/null
         return 1
     fi
     rm -rf "$LOCK" 2>/dev/null
-    mkdir "$LOCK" 2>/dev/null || return 1
+    # A fast-path acquirer can slip in between the rm and this mkdir. If it did,
+    # our mkdir fails and it owns the lock -- we must NOT write our own owner
+    # over theirs.
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        rmdir "$reclaim" 2>/dev/null
+        return 1
+    fi
     printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
+    rmdir "$reclaim" 2>/dev/null
     return 0
 }
 lock_release() {

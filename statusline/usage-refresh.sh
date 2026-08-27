@@ -21,7 +21,11 @@ DIR=$(resolve_claude_home)
 CACHE="$DIR/usage-cache.json"
 BACKOFF="$DIR/.usage-backoff"
 LOCK="$DIR/.usage-refresh.lock"
-FRESH=600 # seconds; matches the status line's staleness gate
+FRESH=600            # seconds; matches the status line's staleness gate
+BACKOFF_THROTTLE=300 # 429: the server explicitly asked us to slow down
+BACKOFF_ERROR=120    # any other failure (401, 5xx, unreachable, no token) — our own
+                     # rate limiting, so kept short: bounded enough to stop a
+                     # per-render storm, brief enough to recover quickly once fixed
 # --force: bypass the FRESHNESS gate only — a login rotates the OAuth token and
 # may change plan, so the cached values can be wrong however recently they were
 # written. It deliberately does NOT bypass the throttle backoff. Those are two
@@ -61,21 +65,42 @@ lock_acquire() {
         printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
         return 0
     fi
+    # Held. Deciding "this lock is abandoned" and acting on it must happen under
+    # mutual exclusion. Neither a plain `rm -rf` + `mkdir` nor an atomic rename
+    # is enough: the lock is identified by PATH, not identity, so a contender
+    # that decided "abandoned" a moment ago will happily tear down the BRAND-NEW
+    # lock a winner has since created at that same path — putting both inside
+    # the critical section. rename(2) only guarantees one rename of one
+    # directory instance wins, which does not stop that.
+    # So serialize the whole decide-and-reclaim on its own atomic mkdir, and
+    # re-read the owner UNDER it: a process that reclaimed while we waited has
+    # already recorded itself, so we then correctly see a LIVE owner and back off.
+    local reclaim="$LOCK.reclaim"
+    if ! mkdir "$reclaim" 2>/dev/null; then
+        # Another process is reclaiming right now. It is held for only a few
+        # filesystem operations, so anything older was abandoned mid-reclaim;
+        # clear that and let the next run retry rather than race this one.
+        [ "$(file_age "$reclaim")" -gt 60 ] && rmdir "$reclaim" 2>/dev/null
+        return 1
+    fi
     local owner age
     owner=$(lock_owner)
     age=$(file_age "$LOCK")
-    # A live owner keeps the lock no matter how long it has been running.
-    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$age" -lt "$LOCK_HARD" ]; then
-        return 1
-    fi
-    # No owner recorded yet: only treat it as abandoned once past the grace
-    # window, so we never race a holder that has mkdir'd but not yet written.
-    if [ -z "$owner" ] && [ "$age" -lt "$LOCK_GRACE" ]; then
+    if { [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$age" -lt "$LOCK_HARD" ]; } \
+       || { [ -z "$owner" ] && [ "$age" -lt "$LOCK_GRACE" ]; }; then
+        rmdir "$reclaim" 2>/dev/null
         return 1
     fi
     rm -rf "$LOCK" 2>/dev/null
-    mkdir "$LOCK" 2>/dev/null || return 1
+    # A fast-path acquirer can slip in between the rm and this mkdir. If it did,
+    # our mkdir fails and it owns the lock -- we must NOT write our own owner
+    # over theirs.
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        rmdir "$reclaim" 2>/dev/null
+        return 1
+    fi
     printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
+    rmdir "$reclaim" 2>/dev/null
     return 0
 }
 lock_release() {
@@ -93,19 +118,53 @@ trap lock_release EXIT
 if [ "$FORCE" -eq 0 ]; then
     [ -f "$CACHE" ] && [ "$(file_age "$CACHE")" -lt "$FRESH" ] && exit 0
 fi
+# The backoff file is "<until_epoch> <kind>", kind being `throttle` (a 429 — the
+# server explicitly told us to slow down) or `error` (401/5xx/unreachable/no
+# token — our OWN rate limiting, not an instruction from the server). A file with
+# no kind was written by an older version; read it as `throttle`, the
+# conservative choice.
+#
+# --force may bypass an `error` cooldown but never a `throttle` one. That split
+# is the point: a 429 must be honored no matter who is asking, whereas a login
+# is precisely the event that fixes a 401, so making --force wait out an
+# error cooldown would leave the status line stale right after the user fixed
+# the underlying problem.
 if [ -f "$BACKOFF" ]; then
-    bo=$(cat "$BACKOFF" 2>/dev/null || echo 0)
-    [ "$(now_epoch)" -lt "${bo:-0}" ] 2>/dev/null && exit 0
+    read -r bo_until bo_kind < "$BACKOFF" 2>/dev/null || true
+    [ -z "${bo_kind:-}" ] && bo_kind="throttle"
+    if [ "$(now_epoch)" -lt "${bo_until:-0}" ] 2>/dev/null; then
+        if [ "$bo_kind" = "throttle" ] || [ "$FORCE" -eq 0 ]; then
+            exit 0
+        fi
+    fi
 fi
 
-raw=$("$DIR/fetch-usage.sh" 2>/dev/null) || exit 1
+# set_backoff <seconds> <kind> — plain arithmetic on the epoch rather than
+# `date -d "+5 min"` / `date -v+5M`, which needed a GNU/BSD fallback pair.
+set_backoff() {
+    printf '%s %s\n' "$(( $(now_epoch) + $1 ))" "$2" >"$BACKOFF" 2>/dev/null
+}
+
+# A failure must ALWAYS record a cooldown, not just a 429. Otherwise the cache
+# stays stale, statusline-command.sh sees it as stale and relaunches this script
+# on every ~30s render, and each run drives fetch-usage.sh's full three-attempt
+# retry cycle against an endpoint that is already failing. A persistent 401
+# (revoked token) or a 5xx outage would be hammered indefinitely.
+# fetch-usage.sh exiting nonzero (no token found, curl unusable) is the same
+# situation and gets the same treatment.
+if ! raw=$("$DIR/fetch-usage.sh" 2>/dev/null); then
+    set_backoff "$BACKOFF_ERROR" error
+    exit 1
+fi
 status=$(printf '%s' "$raw" | sed -n 's/^__HTTP_STATUS__//p')
 body=$(printf '%s' "$raw" | sed '/^__HTTP_STATUS__/d')
-# On failure keep the last-good cache and, if throttled, set a cooldown so the status
-# line stops re-triggering refreshes until it passes (avoids worsening the throttle).
+# On failure keep the last-good cache and set a cooldown so the status line stops
+# re-triggering refreshes until it passes.
 if [ "$status" != "200" ]; then
     if [ "$status" = "429" ]; then
-        date -d "+5 min" +%s 2>/dev/null >"$BACKOFF" || date -v+5M +%s 2>/dev/null >"$BACKOFF"
+        set_backoff "$BACKOFF_THROTTLE" throttle
+    else
+        set_backoff "$BACKOFF_ERROR" error
     fi
     exit 1
 fi
