@@ -68,18 +68,37 @@ resets=$(date -d "$(date +%Y-%m-01) +1 month" +%s 2>/dev/null) \
     || resets=$(date -v1d -v+1m -v0H -v0M -v0S +%s 2>/dev/null) \
     || resets=""
 
-# ISO-8601 -> epoch (GNU date first, BSD fallback stripping fractional seconds/zone).
-# BSD `date -j -f` requires an exact match against the fixed format below (no
-# timezone directive), so a trailing `Z` or numeric UTC offset left over after
-# stripping fractional seconds (e.g. "...T18:00:00Z" with no ".NNN" to trigger
-# the %%.* strip) must be stripped too, or the parse silently fails.
+# ISO-8601 -> epoch (GNU date first, BSD fallback).
+# BSD `date -j -f` requires an exact match against a fixed format, so the zone
+# suffix has to come off the string before parsing — but DELETING it is not
+# harmless: `date -j -f "%Y-%m-%dT%H:%M:%S"` then reads the remaining wall
+# clock in the machine's LOCAL timezone, so on any host outside UTC a
+# `...T18:00:00Z` reset lands off by the local UTC offset (4h out in EDT) and
+# the status line shows the wrong reset time. Split the zone off and parse it
+# explicitly instead: `Z` -> `-u` (read as UTC), a numeric offset -> a matching
+# `%z` directive, no zone at all -> local time, which is the correct reading of
+# a zone-less stamp. Fractional seconds are stripped only AFTER the zone is
+# removed — `${v%%.*}` cuts from the first dot to the END of the string, so
+# doing it first would swallow an offset that follows the fraction.
 iso2epoch() {
     [ -z "${1:-}" ] && return
     date -d "$1" +%s 2>/dev/null && return
-    clean="${1%%.*}"
-    clean="${clean%Z}"
-    clean="${clean%[+-][0-9][0-9]:[0-9][0-9]}"
-    date -jf "%Y-%m-%dT%H:%M:%S" "$clean" +%s 2>/dev/null
+    local raw="$1" zone="" utc=0
+    case "$raw" in
+    *Z)
+        raw="${raw%Z}"; utc=1 ;;
+    *[+-][0-9][0-9]:[0-9][0-9])
+        zone="${raw: -6}"; raw="${raw%??????}"
+        zone="${zone%:*}${zone#*:}" ;;  # +HH:MM -> +HHMM, which %z expects
+    esac
+    raw="${raw%%.*}"
+    if [ "$utc" -eq 1 ]; then
+        date -u -j -f "%Y-%m-%dT%H:%M:%S" "$raw" +%s 2>/dev/null && return
+    elif [ -n "$zone" ]; then
+        date -j -f "%Y-%m-%dT%H:%M:%S%z" "$raw$zone" +%s 2>/dev/null && return
+    else
+        date -j -f "%Y-%m-%dT%H:%M:%S" "$raw" +%s 2>/dev/null && return
+    fi
 }
 
 # 5h / 7d rate-limit windows come from the SAME endpoint (null unless on Max/Pro).

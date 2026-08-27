@@ -502,6 +502,121 @@ jq -e '[.hooks.PostToolUse[] | select(.matcher == "Write" and (.hooks[0].command
   || fail "shared.sh under matcher Write must be added -- command-only dedup would have wrongly treated it as already covered by the Edit-matcher group"
 
 # =======================================================================
+# Regression: the group-level `if` predicate is part of the trigger, so the
+# same command+matcher under a DIFFERENT `if` is not a duplicate. This
+# repo's own settings.json runs enforce-git-conventions.sh under
+# matcher "Bash" AND if "Bash(git *)", so a (command, matcher)-only key
+# would drop the repo hook and it would never run under its condition.
+# =======================================================================
+IF_REPO=$(fake_repo)
+cat > "$IF_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "if": "Bash(git *)", "hooks": [{"type": "command", "command": "guard.sh"}]}
+    ]
+  }
+}
+EOF
+IF_HOME=$(fake_home)
+cat > "$IF_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "if": "Bash(rm *)", "hooks": [{"type": "command", "command": "guard.sh"}]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$IF_REPO" "$IF_HOME" --apply
+jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(rm *)" and (.hooks[0].command == "guard.sh"))] | length == 1' "$IF_HOME/settings.json" >/dev/null \
+  || fail "the live group under a different \`if\` must survive intact"
+jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(git *)" and (.hooks[0].command == "guard.sh"))] | length == 1' "$IF_HOME/settings.json" >/dev/null \
+  || fail "guard.sh under the repo's own \`if\` must be added -- a (command, matcher)-only key wrongly treats it as already covered, so it never runs under that condition"
+
+# An identical group (same command, matcher AND if) is still deduped -- the
+# richer key must not turn every re-sync into an append.
+expect_exit 0 "$IF_REPO" "$IF_HOME" --apply
+IF_GIT_COUNT=$(jq '[.hooks.PreToolUse[] | select(.if == "Bash(git *)")] | length' "$IF_HOME/settings.json")
+[ "$IF_GIT_COUNT" -eq 1 ] || fail "re-syncing an already-present (command, matcher, if) group duplicated it (count=$IF_GIT_COUNT)"
+
+# An explicit empty matcher and an absent matcher mean the same thing and
+# must dedup against each other rather than reading as two triggers.
+EMPTYM_REPO=$(fake_repo)
+cat > "$EMPTYM_REPO/settings.json" <<'EOF'
+{
+  "hooks": {"UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "same.sh"}]}]}
+}
+EOF
+EMPTYM_HOME=$(fake_home)
+cat > "$EMPTYM_HOME/settings.json" <<'EOF'
+{
+  "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "same.sh"}]}]}
+}
+EOF
+expect_exit 0 "$EMPTYM_REPO" "$EMPTYM_HOME" --apply
+EMPTYM_COUNT=$(jq '[.hooks.UserPromptSubmit[].hooks[] | select(.command == "same.sh")] | length' "$EMPTYM_HOME/settings.json")
+[ "$EMPTYM_COUNT" -eq 1 ] || fail "an explicit empty matcher and an absent matcher must dedup as the same trigger (count=$EMPTYM_COUNT)"
+
+# =======================================================================
+# Regression: UPGRADING an existing alternate-CLAUDE_HOME install. Its live
+# settings.json still holds commands written before the path rewrite
+# existed -- the literal "$HOME"/.claude form -- while the repo side is now
+# rewritten to the alternate path. Those are the same hook, so without
+# normalizing the live side first the rewritten one gets appended and the
+# obsolete default-home one stays active: the command runs twice, once from
+# a path where nothing was ever deployed.
+# =======================================================================
+UPGRADE_REPO=$(fake_repo)
+cat > "$UPGRADE_REPO/settings.json" <<'EOF'
+{
+  "statusLine": {"type": "command", "command": "\"$HOME\"/.claude/statusline-command.sh"},
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"$HOME\"/.claude/hooks/some-hook.sh"}]}
+    ]
+  }
+}
+EOF
+UPGRADE_TARGET=$(mktemp -d "$SUITE_TMP/upgrade-target.XXXXXX")
+# Simulate the PRE-rewrite deployed state: the old literal "$HOME" form.
+cat > "$UPGRADE_TARGET/settings.json" <<'EOF'
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"$HOME\"/.claude/hooks/some-hook.sh"}]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$UPGRADE_REPO" "$UPGRADE_TARGET" --apply
+UPGRADE_TOTAL=$(jq '[.hooks.UserPromptSubmit[].hooks[]] | length' "$UPGRADE_TARGET/settings.json")
+[ "$UPGRADE_TOTAL" -eq 1 ] \
+  || fail "upgrading an alternate-home install duplicated the hook (count=$UPGRADE_TOTAL): the stale \"\$HOME\" copy was left active alongside the rewritten one"
+UPGRADE_CMD=$(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' "$UPGRADE_TARGET/settings.json")
+[ "$UPGRADE_CMD" = "'$UPGRADE_TARGET'/hooks/some-hook.sh" ] \
+  || fail "the surviving hook should be migrated to the alternate path, got: $UPGRADE_CMD"
+jq -e '[.. | strings | select(startswith("\"$HOME\"/.claude"))] | length == 0' "$UPGRADE_TARGET/settings.json" >/dev/null \
+  || fail "no obsolete \"\$HOME\"/.claude command should remain after an alternate-home upgrade"
+
+# A live-only hook the user pointed at their default home is NOT a
+# previously-deployed copy of a repo hook, so it must be left alone rather
+# than silently repointed into the alternate home.
+LIVEONLY_TARGET=$(mktemp -d "$SUITE_TMP/liveonly-target.XXXXXX")
+cat > "$LIVEONLY_TARGET/settings.json" <<'EOF'
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "\"$HOME\"/.claude/hooks/my-own-hook.sh"}]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$UPGRADE_REPO" "$LIVEONLY_TARGET" --apply
+jq -e '[.hooks.UserPromptSubmit[].hooks[] | select(.command == "\"$HOME\"/.claude/hooks/my-own-hook.sh")] | length == 1' "$LIVEONLY_TARGET/settings.json" >/dev/null \
+  || fail "a live-only hook with no repo counterpart must keep the path the user gave it"
+
+# =======================================================================
 # Regression: deploying to an explicit alternate CLAUDE_HOME rewrites the
 # literal "$HOME"/.claude prefix in repo-authored commands (hooks AND
 # statusLine) to the actual target -- otherwise the deployed config tells

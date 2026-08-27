@@ -109,14 +109,19 @@ RESETS=$(jq -r '.resets' "$CACHE")
 [ ! -f "$OK_HOME/.claude/.usage-backoff" ] || fail "a successful refresh should clear any existing backoff"
 
 # =======================================================================
-# iso2epoch on a real BSD date (no GNU `-d` support): a resets_at with a
-# trailing `Z` and no fractional seconds must still parse. This sandbox's
-# own `date` is GNU-compatible (so `date -d` always succeeds and the BSD
-# fallback path never runs for real), so a dedicated `date` stub forces
-# that fallback and enforces BSD's actual constraint: `date -j -f` fails on
-# any input with characters left over after the fixed format is consumed.
-# Without stripping a lone trailing `Z` (no `.` present to trigger the
-# existing fractional-seconds strip), this reproduces the real bug.
+# iso2epoch on a real BSD date (no GNU `-d` support). This sandbox's own
+# `date` is GNU-compatible (so `date -d` always succeeds and the BSD
+# fallback never runs for real), so a `date` stub forces that fallback and
+# enforces BSD's actual behavior:
+#   - `date -j -f` fails on any input with characters left over after the
+#     fixed format is consumed (so a trailing `Z` must be handled, not left
+#     in place), AND
+#   - a zone-less wall clock is read in the machine's LOCAL timezone unless
+#     `-u` is passed. The stub therefore honors `-u` rather than forcing it:
+#     forcing it (as this stub used to) hides a missing `-u` in the script.
+# The suite runs under a deliberately non-UTC TZ and asserts the exact
+# epoch, so a local-time misparse shows up as a concrete offset error
+# instead of merely "something non-null was parsed".
 # =======================================================================
 DATESTUB_HOME=$(fake_home 200 "$SUCCESS_BODY")
 DATESTUB_DIR=$(mktemp -d "$SUITE_TMP/datestub.XXXXXX")
@@ -128,32 +133,79 @@ REAL_DATE=$(command -v date)
 # the real binary by its captured absolute path instead.
 cat > "$DATESTUB_DIR/date" <<EOF
 #!/usr/bin/env bash
-# Minimal stand-in for BOTH GNU and real BSD date, dispatched by flag:
-#   date -d <val> <fmt>   -> always fail (real BSD date has no -d at all)
-#   date -jf <fmt> <val> +%s -> succeed ONLY if <val> exactly matches
-#     "%Y-%m-%dT%H:%M:%S" with nothing left over (BSD's real behavior)
-#   anything else (file_age's stat-less date calls, +%Y-%m-01 etc.) ->
-#     delegate to the real system date so the rest of the script still works
-case "\$1" in
-  -d) exit 1 ;;
-  -jf)
-    fmt="\$2"; val="\$3"
-    if [ "\$fmt" = "%Y-%m-%dT%H:%M:%S" ] && printf '%s' "\$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\$'; then
-      exec "$REAL_DATE" -u -d "\$val" +%s
-    else
-      echo "date: illegal time format" >&2
-      exit 1
-    fi
-    ;;
-  *) exec "$REAL_DATE" "\$@" ;;
-esac
+# Minimal stand-in for BOTH GNU and real BSD date:
+#   date -d <val> <fmt>          -> always fail (real BSD date has no -d)
+#   [-u] -j -f <fmt> <val> +%s   -> parse, mimicking BSD strptime strictness:
+#     succeeds only if <val> exactly matches <fmt>, and interprets a
+#     zone-less stamp as LOCAL time unless -u was given (BSD's real rule --
+#     NOT silently as UTC). "%...%z" consumes a trailing +HHMM offset.
+#   anything else (file_age's date calls, +%Y-%m-01 etc.) -> real date
+utc=0
+args=()
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -u) utc=1; shift ;;
+    -d) exit 1 ;;
+    -j) shift ;;
+    -jf) args+=(-f "\$2"); shift 2 ;;
+    -f) args+=(-f "\$2"); shift 2 ;;
+    *) args+=("\$1"); shift ;;
+  esac
+done
+# args is now: -f <fmt> <val> +%s   (or an unrelated real-date invocation)
+if [ "\${args[0]:-}" = "-f" ]; then
+  fmt="\${args[1]}"; val="\${args[2]}"
+  case "\$fmt" in
+    "%Y-%m-%dT%H:%M:%S")
+      printf '%s' "\$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\$' || {
+        echo "date: illegal time format" >&2; exit 1; }
+      if [ "\$utc" -eq 1 ]; then exec "$REAL_DATE" -u -d "\$val" +%s
+      else exec "$REAL_DATE" -d "\$val" +%s; fi ;;
+    "%Y-%m-%dT%H:%M:%S%z")
+      printf '%s' "\$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}\$' || {
+        echo "date: illegal time format" >&2; exit 1; }
+      exec "$REAL_DATE" -d "\$val" +%s ;;
+    *) echo "date: illegal time format" >&2; exit 1 ;;
+  esac
+fi
+exec "$REAL_DATE" "\${args[@]}"
 EOF
 chmod +x "$DATESTUB_DIR/date"
-env HOME="$DATESTUB_HOME" PATH="$DATESTUB_DIR:$PATH" bash "$SCRIPT" --force
+# A non-UTC TZ: under the bug (no -u), the Z-suffixed stamp parses as local
+# wall clock and the epoch comes out shifted by the UTC offset.
+export TZ="America/New_York"
+env HOME="$DATESTUB_HOME" PATH="$DATESTUB_DIR:$PATH" TZ="$TZ" bash "$SCRIPT" --force
 DATESTUB_CACHE="$DATESTUB_HOME/.claude/usage-cache.json"
 FIVE_RESETS=$(jq -r '.five.resets' "$DATESTUB_CACHE")
 [ -n "$FIVE_RESETS" ] && [ "$FIVE_RESETS" != "null" ] \
   || fail "a Z-suffixed, no-fractional-seconds resets_at should still parse under BSD date (got five.resets=$FIVE_RESETS)"
+# SUCCESS_BODY's five_hour.resets_at is 2026-08-26T18:00:00Z -- a UTC instant,
+# so the epoch must not depend on the machine's timezone at all.
+EXPECT_FIVE=$(date -u -d "2026-08-26T18:00:00" +%s 2>/dev/null || date -ju -f "%Y-%m-%dT%H:%M:%S" "2026-08-26T18:00:00" +%s)
+[ "$FIVE_RESETS" = "$EXPECT_FIVE" ] \
+  || fail "a Z-suffixed resets_at must be read as UTC, not local wall clock: expected $EXPECT_FIVE, got $FIVE_RESETS (off by $((FIVE_RESETS - EXPECT_FIVE))s = the local UTC offset)"
+SEVEN_RESETS=$(jq -r '.seven.resets' "$DATESTUB_CACHE")
+EXPECT_SEVEN=$(date -u -d "2026-08-31T18:00:00" +%s 2>/dev/null || date -ju -f "%Y-%m-%dT%H:%M:%S" "2026-08-31T18:00:00" +%s)
+[ "$SEVEN_RESETS" = "$EXPECT_SEVEN" ] \
+  || fail "seven_day resets_at must be read as UTC: expected $EXPECT_SEVEN, got $SEVEN_RESETS"
+unset TZ
+
+# A resets_at carrying a NUMERIC offset (not Z) must keep that offset's
+# meaning too, rather than being parsed as local wall clock.
+OFFSET_BODY='{
+  "spend": {"enabled": true, "used": {"amount_minor": 0, "exponent": 2}, "limit": {"amount_minor": 100, "exponent": 2}, "percent": 0, "severity": "normal"},
+  "five_hour": {"utilization": 20, "resets_at": "2026-08-26T20:00:00+02:00"},
+  "seven_day": {"utilization": 3, "resets_at": "2026-08-31T18:00:00Z"},
+  "limits": []
+}'
+OFFSET_HOME=$(fake_home 200 "$OFFSET_BODY")
+export TZ="America/New_York"
+env HOME="$OFFSET_HOME" PATH="$DATESTUB_DIR:$PATH" TZ="$TZ" bash "$SCRIPT" --force
+OFFSET_FIVE=$(jq -r '.five.resets' "$OFFSET_HOME/.claude/usage-cache.json")
+# 20:00+02:00 is the same instant as 18:00Z.
+[ "$OFFSET_FIVE" = "$EXPECT_FIVE" ] \
+  || fail "a numeric-offset resets_at must preserve its offset (20:00+02:00 == 18:00Z): expected $EXPECT_FIVE, got $OFFSET_FIVE"
+unset TZ
 
 # =======================================================================
 # Throttle (429): backoff file is written with a future epoch, and the run

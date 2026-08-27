@@ -259,13 +259,24 @@ rewrite_home=""
 # up against the unquoted "/.claude/..." suffix that follows -- adjacent
 # quoted+unquoted segments concatenate into a single shell word, same as the
 # original `"$HOME"/.claude` marker's own mixed quoting.
+# rewriteHomeStr rewrites ONE string; rewriteHome walks a whole document with
+# it. The scalar form is also applied to LIVE commands (see the merge below) to
+# recognize a previously-deployed copy of a repo hook that predates this
+# rewrite, so keep the two in lockstep.
 REWRITE_HOME_JQ='
-  def rewriteHome($rh):
+  def rewriteHomeStr($rh):
     ("\"$HOME\"/.claude") as $marker |
-    if $rh == "" then . else
-      ($rh | @sh) as $rhq |
-      walk(if type == "string" and startswith($marker) then $rhq + .[($marker | length):] else . end)
-    end;
+    if ($rh != "") and (type == "string") and startswith($marker)
+    then ($rh | @sh) + .[($marker | length):]
+    else . end;
+  def rewriteHome($rh):
+    if $rh == "" then . else walk(rewriteHomeStr($rh)) end;
+  # A hook group MINUS its command list: everything that defines WHEN the
+  # group fires (matcher, if, and any field Claude Code adds later). Empty and
+  # null values are dropped so an explicit `matcher: ""` and an absent matcher
+  # compare equal — both mean "no matcher" — instead of reading as two
+  # different triggers and duplicating the command on every sync.
+  def groupKey: del(.hooks) | with_entries(select(.value != null and .value != ""));
 '
 
 if [ -f "$repo_settings" ]; then
@@ -274,7 +285,7 @@ if [ -f "$repo_settings" ]; then
       .[0] as $live | (.[1] | rewriteHome($rh)) as $repo |
       ($live.hooks // {}) as $liveHooks |
       ($repo.hooks // {}) as $repoHooks |
-      # Dedup by individual hook (COMMAND, MATCHER) pair, not by whole-group
+      # Dedup by individual hook (COMMAND, TRIGGER) pair, not by whole-group
       # array equality or by command alone: a live group can bundle multiple
       # commands together (e.g. a hand-merged SessionStart group running both
       # a local hook and usage-refresh.sh in one entry) that a repo group
@@ -282,18 +293,39 @@ if [ -f "$repo_settings" ]; then
       # arrays for equality would treat those as unrelated and append the
       # repo group anyway, duplicating that command on every sync. But
       # command alone is too coarse: the SAME command under two DIFFERENT
-      # matchers (e.g. live already runs X under matcher "Edit", repo wants
-      # X under matcher "Write" too) are different triggers, not duplicates —
-      # keying on command alone would treat X-under-Write as already covered
-      # and drop it, so it would never run for Write. Per repo group: keep
-      # only the (command, matcher) pairs NOT already present anywhere in the
-      # live groups for that event, dropping the group if nothing is left.
+      # triggers is not a duplicate. The trigger is the WHOLE group metadata
+      # (`groupKey`), not just `.matcher` — this repo`s own settings.json runs
+      # enforce-git-conventions.sh under `matcher: "Bash"` AND
+      # `if: "Bash(git *)"`, so keying on matcher alone would treat the same
+      # command under a different `if` as already covered and silently drop
+      # it, and it would never run under the repo`s intended condition.
+      # Per repo group: keep only the (command, groupKey) pairs NOT already
+      # present in the live groups for that event, dropping an empty group.
       (reduce ($repoHooks | keys_unsorted[]) as $ev ($liveHooks;
         ($liveHooks[$ev] // []) as $liveGroups |
-        ([$liveGroups[] | . as $g | $g.hooks[]? | {command: .command, matcher: ($g.matcher // null)}]) as $liveKeys |
-        .[$ev] = ($liveGroups + ([$repoHooks[$ev][]
+        ([$repoHooks[$ev][] | . as $rg | $rg.hooks[]? | {command: .command, group: ($rg | groupKey)}]) as $repoKeys |
+        # Migrate before comparing. Upgrading an alternate-CLAUDE_HOME install
+        # means live still holds commands written BEFORE the path rewrite
+        # existed, i.e. the literal `"$HOME"/.claude/...` form, while the repo
+        # side is now rewritten to the alternate path. Those are the SAME hook,
+        # but they no longer compare equal, so the rewritten one gets appended
+        # and the obsolete default-home one stays active — the command runs
+        # twice, once from a path where nothing was ever deployed. Rewriting a
+        # live command only when its rewritten form matches a repo-authored
+        # (command, groupKey) pair means it IS that hook`s previously-deployed
+        # copy, so this is a migration in place, not a rewrite of unrelated
+        # live-only hooks (those keep whatever path the user gave them).
+        ([$liveGroups[] | . as $lg
+          | .hooks |= [.[]
+              | (.command | rewriteHomeStr($rh)) as $rw
+              | if ($rw != .command)
+                   and (([{command: $rw, group: ($lg | groupKey)}] - $repoKeys) | length) == 0
+                then .command = $rw else . end]
+        ]) as $migratedLive |
+        ([$migratedLive[] | . as $g | $g.hooks[]? | {command: .command, group: ($g | groupKey)}]) as $liveKeys |
+        .[$ev] = ($migratedLive + ([$repoHooks[$ev][]
           | . as $rg
-          | .hooks |= [.[] | select(([{command: .command, matcher: ($rg.matcher // null)}] - $liveKeys | length) > 0)]
+          | .hooks |= [.[] | select((([{command: .command, group: ($rg | groupKey)}] - $liveKeys) | length) > 0)]
           | select((.hooks | length) > 0)
         ]))
       )) as $mergedHooks |
