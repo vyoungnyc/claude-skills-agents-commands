@@ -10,8 +10,9 @@
 #
 # agents/, skills/, commands/, rules/, hooks/*.sh are overlay-copied — never
 # deleted, so a live-only file not present in the repo survives untouched.
-# Any file/dir about to be overwritten is backed up first, same as CLAUDE.md
-# and settings.json below.
+# Any directory about to be modified (agents/skills/commands/rules/hooks) is
+# snapshotted whole first, so a rollback is one recursive copy; CLAUDE.md and
+# settings.json are backed up per file, same as below.
 #
 # CLAUDE.md is fully overwritten (it's meant to be an exact mirror of the
 # repo's copy) but only when it differs, and only after backing up the live
@@ -60,7 +61,10 @@ USAGE
 done
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_DIR="$CLAUDE_HOME/backups/sync-$TIMESTAMP"
+# Per-process suffix so two applies within the same UTC second never share a
+# backup path (the per-category existence check would otherwise skip a needed
+# snapshot on the second run).
+BACKUP_DIR="$CLAUDE_HOME/backups/sync-$TIMESTAMP-$$-${RANDOM}"
 BACKED_UP=0
 
 backup_once() {
@@ -85,6 +89,23 @@ for name in agents skills commands rules; do
   dst="$CLAUDE_HOME/$name"
   [ -d "$src" ] || continue
 
+  # A symlinked category root would make the overlay write through the link
+  # into the external referent and leave the link in place. Record the link,
+  # replace it with a real directory, and deploy the repo contents there; the
+  # external referent is left untouched (rm drops the link, not its target).
+  if [ -L "$dst" ]; then
+    note "$name/ (replacing symlinked root)"
+    CHANGED=1
+    if [ "$APPLY" -eq 1 ]; then
+      backup_once
+      cp -P "$dst" "$BACKUP_DIR/$name.rootlink"
+      rm -f "$dst"
+      mkdir -p "$dst"
+      cp -R "$src/." "$dst/"
+    fi
+    continue
+  fi
+
   if [ -d "$dst" ]; then
     diff_out=$(diff -rq "$src" "$dst" 2>&1 || true)
   else
@@ -99,10 +120,17 @@ for name in agents skills commands rules; do
     if [ -d "$dst" ]; then
       backup_once
       mkdir -p "$BACKUP_DIR/$name"
-      cp -r "$dst/." "$BACKUP_DIR/$name/"
+      cp -R "$dst/." "$BACKUP_DIR/$name/"
     fi
     mkdir -p "$dst"
-    cp -r "$src/." "$dst/"
+    # Clear destination symlinks that collide with a repo path so the copy
+    # writes a real file/dir instead of following the link and overwriting its
+    # external target. The snapshot above already preserved them (as links).
+    ( cd "$src" && find . -print0 ) | while IFS= read -r -d '' rel; do
+      d="$dst/${rel#./}"
+      if [ -L "$d" ]; then rm -f "$d"; fi
+    done
+    cp -R "$src/." "$dst/"
   fi
 done
 
@@ -114,16 +142,21 @@ if [ -d "$src_hooks" ]; then
     [ -e "$f" ] || continue
     base="$(basename "$f")"
     dst_f="$dst_hooks/$base"
-    if [ ! -f "$dst_f" ] || ! cmp -s "$f" "$dst_f"; then
+    if [ -L "$dst_f" ] || [ ! -f "$dst_f" ] || ! cmp -s "$f" "$dst_f"; then
       note "hooks/$base -> $dst_f"
       CHANGED=1
       if [ "$APPLY" -eq 1 ]; then
-        if [ -f "$dst_f" ]; then
+        # Whole-directory snapshot of the live hooks dir, once, before the
+        # first change — same restore-with-one-copy model as the dirs above.
+        if [ -d "$dst_hooks" ] && [ ! -e "$BACKUP_DIR/hooks" ]; then
           backup_once
           mkdir -p "$BACKUP_DIR/hooks"
-          cp "$dst_f" "$BACKUP_DIR/hooks/$base"
+          cp -R "$dst_hooks/." "$BACKUP_DIR/hooks/"
         fi
         mkdir -p "$dst_hooks"
+        # Drop a destination symlink first so cp writes a real file instead of
+        # following the link and overwriting its external referent.
+        if [ -L "$dst_f" ]; then rm -f "$dst_f"; fi
         cp "$f" "$dst_f"
         chmod +x "$dst_f"
       fi

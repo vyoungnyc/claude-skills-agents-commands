@@ -200,6 +200,8 @@ COLLIDE_HOME=$(fake_home)
 mkdir -p "$COLLIDE_HOME/agents" "$COLLIDE_HOME/hooks"
 echo "live agent content, pre-sync" > "$COLLIDE_HOME/agents/example.md"
 printf '#!/bin/bash\necho live-pre-sync\n' > "$COLLIDE_HOME/hooks/example.sh"
+printf '#!/bin/bash\necho keep\n' > "$COLLIDE_HOME/hooks/keep.sh"  # live-only, not in repo
+ln -s example.sh "$COLLIDE_HOME/hooks/linked.sh"  # live-only symlink hook
 expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
 
 [ "$(cat "$COLLIDE_HOME/agents/example.md")" = "agent content" ] || fail "colliding agents/ file not overwritten with repo version"
@@ -214,6 +216,61 @@ COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>
 [ -n "$COLLIDE_HOOK_BACKUP" ] || fail "expected a backup of the overwritten hooks/example.sh"
 [ "$(cat "$COLLIDE_HOOK_BACKUP")" = "#!/bin/bash
 echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
+
+# Whole-directory snapshot: the live-only hook (never in the repo) is captured
+# in the hooks backup too, and survives in place after the overlay.
+COLLIDE_HOOK_LIVEONLY=$(find "$COLLIDE_HOME/backups" -path "*/hooks/keep.sh" 2>/dev/null | head -1)
+[ -n "$COLLIDE_HOOK_LIVEONLY" ] || fail "hooks backup is not a whole-directory snapshot (live-only keep.sh missing)"
+[ -f "$COLLIDE_HOME/hooks/keep.sh" ] || fail "overlay must not delete a live-only hook"
+
+# Symlink preservation: a live symlinked hook must be backed up AS a symlink
+# (cp -R, not -r, which follows links on BSD), so a restore recreates the link
+# rather than a dereferenced regular file.
+COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/dev/null | head -1)
+[ -L "$COLLIDE_HOOK_LINK" ] || fail "hooks backup dereferenced a symlink instead of preserving it"
+[ "$(readlink "$COLLIDE_HOOK_LINK")" = "example.sh" ] || fail "backed-up symlink target changed"
+
+# =======================================================================
+# --apply where a destination is a symlink to an external file: the sync
+# replaces the link with a real file and never follows it to overwrite the
+# external target — both the dir bulk copy and the hooks per-file copy.
+# =======================================================================
+SYM_REPO=$(fake_repo)
+SYM_HOME=$(fake_home)
+mkdir -p "$SYM_HOME/agents" "$SYM_HOME/hooks"
+EXT_A="$SUITE_TMP/ext-agent.txt"; echo "EXT-AGENT-KEEP" > "$EXT_A"
+EXT_H="$SUITE_TMP/ext-hook.txt"; printf '#!/bin/bash\necho ext-hook-keep\n' > "$EXT_H"
+ln -s "$EXT_A" "$SYM_HOME/agents/example.md"   # dst symlink where a repo file belongs
+ln -s "$EXT_H" "$SYM_HOME/hooks/example.sh"
+expect_exit 0 "$SYM_REPO" "$SYM_HOME" --apply
+[ -L "$SYM_HOME/agents/example.md" ] && fail "agents dst left as a symlink after apply"
+[ "$(cat "$SYM_HOME/agents/example.md")" = "agent content" ] || fail "agents symlink not replaced with the repo file"
+[ "$(cat "$EXT_A")" = "EXT-AGENT-KEEP" ] || fail "dir copy followed a symlink and overwrote the external agent target"
+[ -L "$SYM_HOME/hooks/example.sh" ] && fail "hooks dst left as a symlink after apply"
+[ "$(cat "$SYM_HOME/hooks/example.sh")" = "#!/bin/bash
+echo hi" ] || fail "hooks symlink not replaced with the repo file"
+[ "$(cat "$EXT_H")" = "#!/bin/bash
+echo ext-hook-keep" ] || fail "hooks copy followed a symlink and overwrote the external hook target"
+
+# =======================================================================
+# --apply where a category root itself is a symlink to an external dir: the
+# sync records the link, replaces the root with a real directory, deploys the
+# repo contents there, and leaves the external referent untouched.
+# =======================================================================
+ROOTSYM_REPO=$(fake_repo)
+ROOTSYM_HOME=$(fake_home)
+mkdir -p "$ROOTSYM_HOME"
+EXT_ROOT="$SUITE_TMP/ext-agents-root"; mkdir -p "$EXT_ROOT"; echo "EXTERNAL-ROOT-AGENT" > "$EXT_ROOT/outsider.md"
+ln -s "$EXT_ROOT" "$ROOTSYM_HOME/agents"
+expect_exit 0 "$ROOTSYM_REPO" "$ROOTSYM_HOME" --apply
+[ -L "$ROOTSYM_HOME/agents" ] && fail "category root left as a symlink after apply"
+[ -d "$ROOTSYM_HOME/agents" ] || fail "category root not a real directory after apply"
+[ "$(cat "$ROOTSYM_HOME/agents/example.md")" = "agent content" ] || fail "repo file not deployed into the real root"
+[ -f "$EXT_ROOT/outsider.md" ] || fail "external referent file removed"
+[ -e "$ROOTSYM_HOME/agents/outsider.md" ] && fail "overlay wrote into the external referent"
+ROOTLINK=$(find "$ROOTSYM_HOME/backups" -name "agents.rootlink" 2>/dev/null | head -1)
+[ -n "$ROOTLINK" ] || fail "symlinked category root not recorded in backup"
+[ -L "$ROOTLINK" ] || fail "recorded root backup is not a symlink"
 
 # =======================================================================
 # --apply on a differing CLAUDE.md: backs up the live version byte-for-byte
