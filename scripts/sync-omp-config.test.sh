@@ -270,4 +270,24 @@ grep -q '^BODY-CHECKER$' "$R9/omp/agent/agents/checker.md" || fail "(14) deploye
 SYM_OUT="$(run "$R9" 2>&1)"
 echo "$SYM_OUT" | grep -q "Already in sync" || fail "(14) symlink conflict not resolved: $SYM_OUT"
 
-echo "PASS: sync-omp-config.test.sh (14 cases)"
+# ============================================================ (15) symlinked root
+# A live category dir that is itself a symlink must be replaced by a real dir;
+# the overlay must write into the intended location, not the external referent,
+# which stays untouched, and the link must be recorded in the backup.
+R10="$(setup_repo)"
+run "$R10" --apply >/dev/null 2>&1 || fail "(15) initial apply failed"
+EXTDIR="$SUITE_TMP/ext-agents-dir"; mkdir -p "$EXTDIR"; echo "EXTERNAL-FILE" > "$EXTDIR/outsider.md"
+rm -rf "$R10/omp/agent/agents"
+ln -s "$EXTDIR" "$R10/omp/agent/agents"
+run "$R10" --apply >/dev/null 2>&1 || fail "(15) apply over a symlinked root failed"
+[ -L "$R10/omp/agent/agents" ] && fail "(15) category root left as a symlink"
+[ -d "$R10/omp/agent/agents" ] || fail "(15) category root not a real directory after apply"
+[ -f "$R10/omp/agent/agents/checker.md" ] || fail "(15) staged file not deployed into the real root"
+[ -f "$EXTDIR/outsider.md" ] || fail "(15) external referent file removed"
+[ -e "$R10/omp/agent/agents/outsider.md" ] && fail "(15) overlay wrote into the external referent"
+ROOTLINK_BK=$(find "$R10"/omp/backups -path "*/agent/agents" -type l 2>/dev/null | head -1)
+[ -n "$ROOTLINK_BK" ] || fail "(15) symlinked root not recorded in backup"
+SROOT_OUT="$(run "$R10" 2>&1)"
+echo "$SROOT_OUT" | grep -q "Already in sync" || fail "(15) symlinked root not resolved: $SROOT_OUT"
+
+echo "PASS: sync-omp-config.test.sh (15 cases)"

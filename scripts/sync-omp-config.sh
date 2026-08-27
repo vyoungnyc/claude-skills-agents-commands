@@ -453,8 +453,26 @@ fi
 # Snapshots the whole live directory (once) before its first change.
 overlay_tree() {
   # $1 = staged root, $2 = live root, $3 = label
-  local sroot="$1" lroot="$2" label="$3" f rel dst preexisted=0
+  local sroot="$1" lroot="$2" label="$3" f rel dst preexisted=0 rel_root dest_root
   [ -d "$sroot" ] || return 0
+  # A symlinked category root would make every staged file resolve inside the
+  # external referent — cp would overwrite files there and backup_dir_once
+  # would capture only the link. Treat it as a conflict: record the link, then
+  # replace it with a real directory so the overlay writes into the intended
+  # location. rm drops the link, never its referent, so external data stays
+  # intact and the recorded link keeps the layout restorable.
+  if [ -L "$lroot" ]; then
+    note "$label/ (replacing symlinked root)"
+    CHANGED=$((CHANGED + 1))
+    if [ "$APPLY" -eq 1 ]; then
+      rel_root="${lroot#"$OMP_HOME"/}"
+      dest_root="$BACKUP_DIR/$rel_root"
+      mkdir -p "$(dirname "$dest_root")"
+      cp -P "$lroot" "$dest_root"
+      BACKED_UP=1
+      rm -f "$lroot"
+    fi
+  fi
   # Snapshot only a dir that existed BEFORE this run — a first-ever deploy that
   # creates the dir has nothing to preserve, and the snapshot must capture the
   # pristine pre-run state (taken before the first overwrite below).
