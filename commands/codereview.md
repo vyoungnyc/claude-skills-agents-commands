@@ -96,7 +96,7 @@ Each sub-agent must return findings as a JSON array. Use this schema:
     "title": "Short title",
     "body": "What is wrong and why it matters.",
     "recommendation": "Concrete fix.",
-    "mr_comment": "Paste-ready comment for the MR/PR thread on this line: what is wrong, the supporting evidence, and the fix direction. 1-4 sentences, addressed to the author. Plain prose, no code fences."
+    "mr_comment": "Paste-ready comment for the MR/PR thread on this line: what is wrong, the supporting evidence, and the fix direction. Addressed to the author. GitLab/GitHub render Markdown — format for readability and actionability: a short, self-contained first sentence stating the problem (thread previews and notification emails show only the first line), then a blank line, then bullet points for evidence/mechanism and a bulleted or numbered list for the suggested fix steps when there is more than one. Use backticks for identifiers and `\\n` escapes for linebreaks inside the JSON string. No code fences — the proposed fix diff is presented separately."
   }
 ]
 ```
@@ -217,7 +217,7 @@ Before dedup, normalize Codex findings (#6 and #7) so they have the same `score`
 Spawn a **single haiku agent** with all normalized **scoped** findings (agents #1–#5, plus Codex findings that are NOT tagged `scope: "branch-wide"`).
 
 Instructions for the haiku agent:
-> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, mr_comment, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial). For mr_comment, merge the source comments into one clear paste-ready review comment (Codex findings have no mr_comment — synthesize one from the body/recommendation).
+> You are deduplicating a list of code review findings from independent reviewers. Group findings that describe the same issue — either referencing the same file and overlapping line range, or describing a semantically equivalent problem. For each group, produce one merged finding: combine the body text from all sources into one clear description, union all source labels into a `sources` array, keep the highest severity, keep the highest score. Return the deduplicated list as a JSON array. Each item must have: file, line_start, line_end, severity, title, body, recommendation, mr_comment, score (0-100), sources (array of source names from: claude-compliance, claude-bugs, claude-history, claude-pr-comments, claude-code-comments, codex, codex-adversarial). For mr_comment, merge the source comments into one clear paste-ready review comment (Codex findings have no mr_comment — synthesize one from the body/recommendation). Keep mr_comment Markdown-formatted per the finding schema: self-contained first sentence, blank line, bullets for evidence, list for fix steps — do not flatten merged comments into a single prose paragraph.
 
 **Branch-wide Codex findings** (tagged `scope: "branch-wide"` in Step 3) are excluded from dedup and the primary verdict. Present them in a separate section after the main findings (see Step 6).
 
@@ -228,7 +228,7 @@ Sort findings by `score` descending. **Show everything — do not filter.** The 
 Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do not wait for Codex background tasks to present initial results — show what you have. Codex findings will be added incrementally once background tasks complete (see Incremental Codex results below).
 
 **Per-finding output — every presented finding must include two paste-ready artifacts:**
-1. **MR comment** — the finding's `mr_comment` field, ready to drop on the MR/PR thread at the cited line.
+1. **MR comment** — the finding's `mr_comment` field, ready to drop on the MR/PR thread at the cited line. Render it as a fenced ```markdown block so the user can copy it verbatim with its formatting (linebreaks, bullets) intact; if a finding's mr_comment arrived as a single prose paragraph, reformat it to the schema's Markdown shape (self-contained first sentence, blank line, bulleted evidence/fix steps) before presenting.
 2. **Proposed fix (diff)** — a unified diff that resolves the finding. Generate this at presentation time, NOT from the agents: read the cited file at `line_start..line_end` **from the revision that was actually reviewed** and craft a real `diff` block with **accurate surrounding context lines** (correct `@@` hunk header, the actual unchanged lines, `-` for removed, `+` for added). Read from the side the diff actually reviewed: explicit `unstaged` scope → the working-tree file (`Read`); explicit `staged` scope → the index (`git show :<path>`); default branch scope (`$BASEREF...HEAD`) → the HEAD snapshot (`git show HEAD:<path>`), because uncommitted local edits were not part of the reviewed diff and would leak unreviewed context into the hunk — **except** when the default scope fell back to `git diff $BASEREF` because `HEAD` was already on `BASE`: that diff reviews index and working-tree changes, so read the working-tree file like `unstaged` scope; and **except** for findings that arose from the dirty-tree supplementary sections (Step 1's dirty-tree guard labels the appended `git diff` / `git diff --cached` / untracked-file sections — track which section each finding came from): read the working tree for unstaged-section AND untracked-file findings (an untracked path does not exist at `HEAD` at all — a `HEAD` read would produce no fix despite the content having been reviewed), and the index (`git show :<path>`) for staged-section findings, since a `HEAD` read would omit or contradict exactly the code those findings reviewed; explicit commit-ref scope (`<ref>...HEAD`, e.g. `HEAD~3`) → the **HEAD** snapshot (`git show HEAD:<path>`) — the proposed side of that diff is HEAD, and reading `<ref>` would source the OLD side, producing patches with obsolete context for newly added code; any other revision (`PR #N`/`MR #N` via the host API, a branch that was not checked out) → that revision (`git show <ref>:<path>`, or the PR-diff API response) — **except** when `PR #N`/`MR #N` fell back to the local `git diff $BASEREF...HEAD` path because neither `gh` nor `glab` was available: that reviewed exactly the default branch scope, so read the HEAD snapshot (`git show HEAD:<path>`) like rule (c); there is no PR-diff API response and no ref literally named "PR #N" to `git show`. If the reviewed revision cannot be read, **omit the diff** and write `_No diff — reviewed revision not readable locally_` rather than fabricating a patch against unrelated code. Do not invent context — read the reviewed revision first. Verify the change is lint-clean for the repo (e.g. run the formatter/linter mentally per any CLAUDE.md rule).
    - If the finding is resolved by a **non-code change** (a test/YAML addition, a doc/description rewrite), provide that snippet as the diff instead.
    - If the finding needs a **design decision before any fix** (e.g. NULL-vs-FALSE policy, grain change), write `_No diff — decision required:_` and state the options succinctly instead of a diff.
@@ -245,7 +245,10 @@ Present Claude agent findings (#1–#5) immediately after scoring and dedup. Do 
 [95] [critical] src/foo.ts:42–45 — Null dereference on empty response
 Sources: claude-bugs
 <What is wrong and why it matters.>
-**MR comment:** <paste-ready mr_comment>
+**MR comment:**
+​```markdown
+<paste-ready mr_comment: self-contained first sentence, blank line, bulleted evidence/fix steps>
+​```
 **Proposed fix:**
 ​```diff
 @@ -41,7 +41,7 @@
@@ -257,7 +260,10 @@ Sources: claude-bugs
 [67] [medium] src/bar.ts:12 — Deviates from error-handling pattern in CLAUDE.md
 Sources: claude-compliance · claude-history
 <What is wrong and why it matters.>
-**MR comment:** <paste-ready mr_comment>
+**MR comment:**
+​```markdown
+<paste-ready mr_comment>
+​```
 **Proposed fix:** _No diff — decision required:_ <options>.
 
 ### Branch-wide Codex findings (informational — excluded from verdict)
