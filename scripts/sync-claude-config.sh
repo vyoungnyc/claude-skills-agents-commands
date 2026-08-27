@@ -61,7 +61,10 @@ USAGE
 done
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_DIR="$CLAUDE_HOME/backups/sync-$TIMESTAMP"
+# Per-process suffix so two applies within the same UTC second never share a
+# backup path (the per-category existence check would otherwise skip a needed
+# snapshot on the second run).
+BACKUP_DIR="$CLAUDE_HOME/backups/sync-$TIMESTAMP-$$-${RANDOM}"
 BACKED_UP=0
 
 backup_once() {

@@ -90,14 +90,14 @@ done
 
 # jq and awk are checked AFTER argument parsing so --help and unknown-arg paths
 # never depend on them. awk is always required (agent frontmatter conversion).
-# The converter itself never calls jq; jq is only needed by the DEPLOYED hook
-# scripts at runtime, so require it only when hooks are being deployed — an
-# agents/skills/commands-only sync (--no-hooks) runs without jq present.
+# The converter itself never calls jq, and a dry run neither deploys nor runs
+# hooks, so jq is required only for an --apply that actually deploys hooks; a
+# dry run, or a --no-hooks sync, runs without jq present.
 command -v awk >/dev/null 2>&1 || {
   echo "sync-omp-config.sh: awk is required but was not found on PATH" >&2
   exit 1
 }
-if [ "$WITH_HOOKS" -eq 1 ]; then
+if [ "$WITH_HOOKS" -eq 1 ] && [ "$APPLY" -eq 1 ]; then
   command -v jq >/dev/null 2>&1 || {
     echo "sync-omp-config.sh: jq is required by the deployed hook scripts (pass --no-hooks to skip) but was not found on PATH" >&2
     exit 1
@@ -111,7 +111,10 @@ cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_DIR="$OMP_HOME/backups/omp-sync-$TIMESTAMP"
+# Per-process suffix ($$ + $RANDOM) so two applies within the same UTC second
+# never share a backup path — otherwise the second run's existence check would
+# mistake the first run's snapshot for its own and skip a needed backup.
+BACKUP_DIR="$OMP_HOME/backups/omp-sync-$TIMESTAMP-$$-${RANDOM}"
 BACKED_UP=0
 CHANGED=0
 

@@ -198,10 +198,45 @@ if command -v jq >/dev/null 2>&1 && ! PATH="$NOJQ_BIN" command -v jq >/dev/null 
   PATH="$NOJQ_BIN" OMP_HOME="$R5/omp" bash "$R5/scripts/sync-omp-config.sh" --apply --no-hooks >/dev/null 2>&1 \
     || fail "(11) --no-hooks sync must succeed without jq"
   [ -f "$R5/omp/agent/agents/checker.md" ] || fail "(11) --no-hooks --apply without jq did not deploy agents"
+  # A dry run previews only — it must succeed without jq even with hooks on.
+  R5b="$(setup_repo)"
+  PATH="$NOJQ_BIN" OMP_HOME="$R5b/omp" bash "$R5b/scripts/sync-omp-config.sh" >/dev/null 2>&1 \
+    || fail "(11) hooks dry run must succeed without jq"
+  [ -e "$R5b/omp" ] && fail "(11) dry run without jq wrote files"
   R6="$(setup_repo)"
   if PATH="$NOJQ_BIN" OMP_HOME="$R6/omp" bash "$R6/scripts/sync-omp-config.sh" --apply >/dev/null 2>&1; then
     fail "(11) hooks sync without jq must fail (jq needed for the deployed hook scripts)"
   fi
 fi
 
-echo "PASS: sync-omp-config.test.sh (11 cases)"
+# ============================================================ (12) unique backup path
+# Two applies in the SAME UTC second must not share a backup dir, else the
+# second run's per-category existence check mistakes the first run's snapshot
+# for its own and skips a needed backup. A `date` shim forces the collision;
+# the per-process suffix must still separate the two runs.
+DSHIM="$SUITE_TMP/date-shim-bin"; mkdir -p "$DSHIM"
+_oldifs="$IFS"; IFS=:
+for d in $PATH; do
+  [ -d "$d" ] || continue
+  for exe in "$d"/*; do
+    b="${exe##*/}"
+    [ "$b" = "date" ] && continue
+    [ -e "$DSHIM/$b" ] || ln -s "$exe" "$DSHIM/$b" 2>/dev/null || true
+  done
+done
+IFS="$_oldifs"
+printf '#!/bin/bash\necho FIXEDSTAMP\n' > "$DSHIM/date"; chmod +x "$DSHIM/date"
+if [ "$(PATH="$DSHIM" date -u +%Y 2>/dev/null)" = "FIXEDSTAMP" ]; then
+  R7="$(setup_repo)"
+  PATH="$DSHIM" OMP_HOME="$R7/omp" bash "$R7/scripts/sync-omp-config.sh" --apply >/dev/null 2>&1 || fail "(12) first apply failed"
+  echo tamperedA > "$R7/omp/agent/agents/checker.md"
+  PATH="$DSHIM" OMP_HOME="$R7/omp" bash "$R7/scripts/sync-omp-config.sh" --apply >/dev/null 2>&1 || fail "(12) second apply failed"
+  echo tamperedB > "$R7/omp/agent/agents/checker.md"
+  PATH="$DSHIM" OMP_HOME="$R7/omp" bash "$R7/scripts/sync-omp-config.sh" --apply >/dev/null 2>&1 || fail "(12) third apply failed"
+  NDIRS=$(ls -d "$R7"/omp/backups/*/ 2>/dev/null | grep -c . || true)
+  [ "$NDIRS" -ge 2 ] || fail "(12) same-second applies collided into one backup dir (got $NDIRS)"
+  grep -rhq tamperedA "$R7"/omp/backups/*/agent/agents/checker.md 2>/dev/null || fail "(12) first overwrite's pre-apply content missing from backups"
+  grep -rhq tamperedB "$R7"/omp/backups/*/agent/agents/checker.md 2>/dev/null || fail "(12) second overwrite's pre-apply content missing (collided backup)"
+fi
+
+echo "PASS: sync-omp-config.test.sh (12 cases)"
