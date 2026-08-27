@@ -42,35 +42,53 @@ get_token() {
 
 tok=$(get_token)
 if [ -z "${tok:-}" ] || [ "$tok" = "null" ]; then
-    echo "ERROR: no OAuth token found (checked ~/.claude/.credentials.json and Keychain)" >&2
+    echo "ERROR: no OAuth token found (checked $CLAUDE_DIR/.credentials.json, ~/.claude/.credentials.json, and Keychain)" >&2
     exit 1
 fi
 
 url="${1:-https://api.anthropic.com/api/oauth/usage}"
 
+# Response headers go to a private temp file rather than a predictable
+# `/tmp/.usage-hdrs.$$`: /tmp is world-writable and a PID-derived name is
+# guessable, so another user could pre-create that path as a symlink and have
+# curl clobber whatever it points at. mktemp creates the file mode 600, and the
+# EXIT trap removes it on every path — the old `rm -f` ran only on the success
+# path, so a retry that gave up, or any signal, left the file behind.
+hdrfile=$(mktemp "${TMPDIR:-/tmp}/usage-hdrs.XXXXXX") || exit 1
+trap 'rm -f "$hdrfile" 2>/dev/null' EXIT
+
 # Retry transient throttling/5xx a few times, honoring Retry-After. Emits the last
 # response body + __HTTP_STATUS__ line on stdout; caller decides whether to trust it.
+#
+# SECURITY: the bearer token is handed to curl on STDIN (`-H @-`), never as an
+# argv element. A process's command line is readable by other users on the host
+# (ps, /proc/<pid>/cmdline) and by any process-monitoring agent, so
+# `-H "Authorization: Bearer $tok"` would expose the token for the lifetime of
+# every request. `printf` here is a bash BUILTIN, so it runs inside this shell
+# and the secret never becomes another process's argv either, and the pipe is an
+# anonymous fd, so nothing touches disk. The non-secret headers stay on the
+# command line, where they still document the request.
 attempt=0
 max=3
 while :; do
     attempt=$((attempt + 1))
-    resp=$(curl -sS -D /tmp/.usage-hdrs.$$ -w '\n__HTTP_STATUS__%{http_code}\n' "$url" \
-        -H "Authorization: Bearer $tok" \
-        -H "anthropic-beta: oauth-2025-04-20" \
-        -H "Content-Type: application/json" \
-        -H "Accept: application/json, text/plain, */*" \
-        -H "User-Agent: claude-code/2.1.246")
+    resp=$(printf 'Authorization: Bearer %s\n' "$tok" \
+        | curl -sS -D "$hdrfile" -w '\n__HTTP_STATUS__%{http_code}\n' "$url" \
+            -H @- \
+            -H "anthropic-beta: oauth-2025-04-20" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/plain, */*" \
+            -H "User-Agent: claude-code/2.1.246")
     code=$(printf '%s' "$resp" | sed -n 's/^__HTTP_STATUS__//p')
     if [ "$code" = "429" ] || [ "$code" -ge 500 ] 2>/dev/null; then
         if [ "$attempt" -lt "$max" ]; then
-            ra=$(sed -n 's/^[Rr]etry-[Aa]fter:[[:space:]]*\([0-9]*\).*/\1/p' /tmp/.usage-hdrs.$$ 2>/dev/null | head -1)
+            ra=$(sed -n 's/^[Rr]etry-[Aa]fter:[[:space:]]*\([0-9]*\).*/\1/p' "$hdrfile" 2>/dev/null | head -1)
             [ -z "$ra" ] && ra=$((attempt * 2))
             [ "$ra" -gt 30 ] 2>/dev/null && ra=30
             sleep "$ra"
             continue
         fi
     fi
-    rm -f /tmp/.usage-hdrs.$$ 2>/dev/null
     printf '%s\n' "$resp"
     break
 done

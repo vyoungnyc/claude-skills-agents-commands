@@ -72,14 +72,27 @@ EOF
 #!/usr/bin/env bash
 STATE="$state"
 headerfile=""
+stdin_headers=0
 args=("\$@")
 for ((i=0; i<\${#args[@]}; i++)); do
   if [ "\${args[i]}" = "-D" ]; then
     headerfile="\${args[i+1]}"
   fi
+  # \`-H @-\` means real curl reads header lines from stdin; mirror that so the
+  # suite can assert WHERE the bearer token travelled (stdin, not argv).
+  if [ "\${args[i]}" = "-H" ] && [ "\${args[i+1]}" = "@-" ]; then
+    stdin_headers=1
+  fi
 done
 n=\$(( \$(wc -l < "\$STATE/calls" 2>/dev/null || echo 0) + 1 ))
 echo "\$n" >> "\$STATE/calls"
+# Record argv and (when -H @- was passed) stdin, separately, per call.
+printf '%s\0' "\${args[@]}" > "\$STATE/argv.\$n"
+if [ "\$stdin_headers" -eq 1 ]; then
+  cat > "\$STATE/stdin.\$n"
+else
+  : > "\$STATE/stdin.\$n"
+fi
 plan_line=\$(sed -n "\${n}p" "\$STATE/plan")
 [ -n "\$plan_line" ] || plan_line=\$(tail -1 "\$STATE/plan")
 status=\$(printf '%s' "\$plan_line" | cut -d: -f1)
@@ -198,5 +211,74 @@ STUBDIR=$(fake_bindir "$MAXOUT_STATE")
 OUT=$(env HOME="$MAXOUT_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT")
 printf '%s' "$OUT" | grep -q '__HTTP_STATUS__429' || fail "expected the final (still-429) response to be surfaced after exhausting retries"
 [ "$(call_count "$MAXOUT_STATE")" -eq 3 ] || fail "expected exactly 3 curl calls (max retry attempts), got $(call_count "$MAXOUT_STATE")"
+
+# =======================================================================
+# SECURITY regression: the bearer token must never appear in curl's argv --
+# a process command line is readable by other users (ps, /proc/<pid>/
+# cmdline) and by monitoring agents, so a token there is exposed for the
+# lifetime of every request. It must travel on stdin via `-H @-` instead.
+# Asserted on BOTH sides so the test cannot pass by the header silently
+# not being sent at all: absent from argv AND present on stdin.
+# =======================================================================
+ARGV_HOME=$(fake_home_with_token)   # accessToken: fake-token-123
+ARGV_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf '200::{"ok":true}\n' > "$ARGV_STATE/plan"
+STUBDIR=$(fake_bindir "$ARGV_STATE")
+OUT=$(env HOME="$ARGV_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT")
+printf '%s' "$OUT" | grep -q '__HTTP_STATUS__200' || fail "argv test setup: expected a successful call, got: $OUT"
+# argv is NUL-separated; translate for grepping.
+ARGV_TEXT=$(tr '\0' '\n' < "$ARGV_STATE/argv.1")
+printf '%s' "$ARGV_TEXT" | grep -q 'fake-token-123' \
+  && fail "the bearer token appeared in curl's argv -- it is exposed to other users on the host via ps//proc"
+printf '%s' "$ARGV_TEXT" | grep -qx -- '-H' \
+  || fail "argv test setup: expected -H flags in the recorded argv"
+printf '%s' "$ARGV_TEXT" | grep -qx -- '@-' \
+  || fail "expected curl to be told to read the auth header from stdin (-H @-)"
+# ...and the token really is sent, on stdin.
+grep -q '^Authorization: Bearer fake-token-123$' "$ARGV_STATE/stdin.1" \
+  || fail "the Authorization header must still reach curl on stdin, got: $(cat "$ARGV_STATE/stdin.1")"
+# Non-secret headers stay on the command line where they document the request.
+printf '%s' "$ARGV_TEXT" | grep -q 'anthropic-beta: oauth-2025-04-20' \
+  || fail "non-secret headers should remain in argv"
+
+# Every retry attempt must also keep the token off argv, not just the first.
+RETRYARGV_HOME=$(fake_home_with_token)
+RETRYARGV_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf '429::{"error":"throttled"}\n200::{"ok":true}\n' > "$RETRYARGV_STATE/plan"
+STUBDIR=$(fake_bindir "$RETRYARGV_STATE")
+OUT=$(env HOME="$RETRYARGV_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT")
+[ "$(call_count "$RETRYARGV_STATE")" -eq 2 ] || fail "retry-argv test setup: expected 2 calls"
+for n in 1 2; do
+  tr '\0' '\n' < "$RETRYARGV_STATE/argv.$n" | grep -q 'fake-token-123' \
+    && fail "the bearer token appeared in curl's argv on attempt $n"
+  grep -q '^Authorization: Bearer fake-token-123$' "$RETRYARGV_STATE/stdin.$n" \
+    || fail "attempt $n did not receive the auth header on stdin"
+done
+
+# =======================================================================
+# The response-header temp file must not be a predictable /tmp path (a
+# world-writable directory + a guessable PID-derived name is a symlink-
+# clobber target), and must not be left behind after the run.
+# =======================================================================
+HDR_HOME=$(fake_home_with_token)
+HDR_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf '200::{"ok":true}\n' > "$HDR_STATE/plan"
+STUBDIR=$(fake_bindir "$HDR_STATE")
+env HOME="$HDR_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" >/dev/null
+HDR_ARG=$(tr '\0' '\n' < "$HDR_STATE/argv.1" | grep -A1 -x -- '-D' | tail -1)
+printf '%s' "$HDR_ARG" | grep -q '\.usage-hdrs\.[0-9]*$' \
+  && fail "the header file is still a predictable PID-derived /tmp path: $HDR_ARG"
+[ -n "$HDR_ARG" ] || fail "expected a -D header file argument in curl's argv"
+[ ! -e "$HDR_ARG" ] || fail "the response-header temp file was left behind after the run: $HDR_ARG"
+
+# Left behind even when retries are exhausted (the old cleanup only ran on
+# the success path, so a give-up or a signal leaked the file).
+EXHAUST_HOME=$(fake_home_with_token)
+EXHAUST_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf '429::{"error":"throttled"}\n' > "$EXHAUST_STATE/plan"
+STUBDIR=$(fake_bindir "$EXHAUST_STATE")
+env HOME="$EXHAUST_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" >/dev/null
+EXHAUST_HDR=$(tr '\0' '\n' < "$EXHAUST_STATE/argv.1" | grep -A1 -x -- '-D' | tail -1)
+[ ! -e "$EXHAUST_HDR" ] || fail "the header temp file leaked after retries were exhausted: $EXHAUST_HDR"
 
 echo "fetch-usage.test.sh: all assertions passed"
