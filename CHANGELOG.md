@@ -2,6 +2,17 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.13.0] - 2026-08-27
+
+### `sync-omp-config.sh`: Convert + Deploy Claude Config to oh-my-pi (omp)
+
+- **New `scripts/sync-omp-config.sh` (+ `sync-omp-config.test.sh`, 10 cases):** converts this repo's Claude config to oh-my-pi (omp) format and syncs it into `~/.omp/agent/` (or `$OMP_HOME`). Conversion is **ephemeral** — it runs into a temp staging dir on every invocation and nothing converted is committed; the repo stays Claude-only, the script is the single source of the translation.
+- **agents/** require real conversion — omp deliberately skips `~/.claude/agents` (schema mismatch). The script rewrites frontmatter to the omp task-agent contract: `name`/`description` kept, Claude tool names translated to omp names (`Read`→`read`, `Task`/`Agent`→`task`, `AskUserQuestion`→`ask`, `TaskList`→`todo`, `SendMessage`→`hub`, …), `LS`/`mcp__*`/unknown dropped, and Claude-only keys (`model`, `memory`, `maxTurns`, `isolation`, `permissionMode`) stripped. A translated list containing `task` lets omp auto-enable sub-spawning. `--map-models` optionally emits `@good`/`@fast` role aliases (opus/haiku) instead of dropping `model`.
+- **skills/** and **commands/** carry over verbatim (already omp-compatible; omp ignores the extra command `model`/`args` keys).
+- **hooks/** are bridged by a generated `claude-compat.ts` adapter that maps the mappable Claude hook events to omp events (`UserPromptSubmit`→`before_agent_start`, `PostCompact`→`session.compacting`, `PreToolUse` Bash→`tool_call`, `PostToolUse`→`tool_result`) and shells out to the original `.sh`. `PermissionRequest` (`auto-approve-safe-ops.sh`) has no omp event and is intentionally not wired. Skip the whole category with `--no-hooks`.
+- Dry run by default (prints planned changes, touches nothing); `--apply` writes with overlay copy (never deletes live-only files) and backs up every overwritten file under `<OMP_HOME>/backups/omp-sync-<timestamp>/`. bash 3.2 compatible.
+- **Version note:** cut from `main` (2.11.3) alongside the in-flight statusline branch that also claims 2.12.0; took 2.13.0 to avoid the collision. Whichever of the two lands second must re-verify its bump per the `## Git` squash-merge rule.
+
 ## [2.11.3] - 2026-08-20
 
 ### `/codereview`: `--no-codex-adversarial` Flag

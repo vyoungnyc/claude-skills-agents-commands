@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.11.3
+**Version:** 2.13.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -106,7 +106,7 @@ Or if you already have a PRD:
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (6)
+### Scripts (7)
 
 | Script | Platform | Purpose |
 |---|---|---|
@@ -115,6 +115,7 @@ Or if you already have a PRD:
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
 | sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env` are merged in, idempotently, preserving every other live-only key. |
+| sync-omp-config.sh | Any | Convert this repo's Claude config to oh-my-pi (omp) format and sync it into `~/.omp/agent/` (or `$OMP_HOME`). Agents get their frontmatter rewritten to the omp task-agent schema (tools translated to omp names, Claude-only keys dropped); skills/commands copy verbatim; hooks are bridged by a generated `claude-compat.ts` adapter that shells out to the original `.sh`. Conversion is ephemeral — nothing converted is committed. Dry run by default; `--apply` writes with backups. Flags: `--map-models`, `--no-hooks`. |
 | run-tests.sh | Any | Discovers and runs every `*.test.sh` suite in the repo (no hardcoded list); prints per-suite PASS/FAIL plus a final summary; exits 0 only if every suite passes. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
@@ -133,6 +134,13 @@ scripts/sync-claude-config.sh --apply
 
 # Sync to an alternate target instead of $HOME/.claude
 CLAUDE_HOME=/path/to/.claude scripts/sync-claude-config.sh --apply
+
+# Convert + deploy this repo's config to ~/.omp (oh-my-pi) — dry run, then apply
+scripts/sync-omp-config.sh
+scripts/sync-omp-config.sh --apply
+
+# Sync to an alternate omp target instead of $HOME/.omp
+OMP_HOME=/path/to/.omp scripts/sync-omp-config.sh --apply
 ```
 
 ### Testing
@@ -327,6 +335,8 @@ scripts/
   create-local-issues.test.sh   # Test suite for create-local-issues.sh
   sync-claude-config.sh      # Deploy agents/skills/commands/rules/hooks/CLAUDE.md to ~/.claude
   sync-claude-config.test.sh    # Test suite for sync-claude-config.sh
+  sync-omp-config.sh         # Convert Claude config to omp format + deploy to ~/.omp
+  sync-omp-config.test.sh       # Test suite for sync-omp-config.sh
   run-tests.sh                # Discovers and runs every *.test.sh suite in the repo
 rules/
   typescript.md              # Path-scoped: TS/React standards (loads only for *.ts/*.tsx)
