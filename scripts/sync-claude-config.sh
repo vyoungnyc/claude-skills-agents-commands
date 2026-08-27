@@ -106,6 +106,13 @@ for name in agents skills commands rules; do
       cp -R "$dst/." "$BACKUP_DIR/$name/"
     fi
     mkdir -p "$dst"
+    # Clear destination symlinks that collide with a repo path so the copy
+    # writes a real file/dir instead of following the link and overwriting its
+    # external target. The snapshot above already preserved them (as links).
+    ( cd "$src" && find . -print0 ) | while IFS= read -r -d '' rel; do
+      d="$dst/${rel#./}"
+      if [ -L "$d" ]; then rm -f "$d"; fi
+    done
     cp -R "$src/." "$dst/"
   fi
 done
@@ -118,7 +125,7 @@ if [ -d "$src_hooks" ]; then
     [ -e "$f" ] || continue
     base="$(basename "$f")"
     dst_f="$dst_hooks/$base"
-    if [ ! -f "$dst_f" ] || ! cmp -s "$f" "$dst_f"; then
+    if [ -L "$dst_f" ] || [ ! -f "$dst_f" ] || ! cmp -s "$f" "$dst_f"; then
       note "hooks/$base -> $dst_f"
       CHANGED=1
       if [ "$APPLY" -eq 1 ]; then
@@ -130,6 +137,9 @@ if [ -d "$src_hooks" ]; then
           cp -R "$dst_hooks/." "$BACKUP_DIR/hooks/"
         fi
         mkdir -p "$dst_hooks"
+        # Drop a destination symlink first so cp writes a real file instead of
+        # following the link and overwriting its external referent.
+        if [ -L "$dst_f" ]; then rm -f "$dst_f"; fi
         cp "$f" "$dst_f"
         chmod +x "$dst_f"
       fi

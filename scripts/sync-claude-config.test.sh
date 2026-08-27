@@ -231,6 +231,28 @@ COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/de
 [ "$(readlink "$COLLIDE_HOOK_LINK")" = "example.sh" ] || fail "backed-up symlink target changed"
 
 # =======================================================================
+# --apply where a destination is a symlink to an external file: the sync
+# replaces the link with a real file and never follows it to overwrite the
+# external target — both the dir bulk copy and the hooks per-file copy.
+# =======================================================================
+SYM_REPO=$(fake_repo)
+SYM_HOME=$(fake_home)
+mkdir -p "$SYM_HOME/agents" "$SYM_HOME/hooks"
+EXT_A="$SUITE_TMP/ext-agent.txt"; echo "EXT-AGENT-KEEP" > "$EXT_A"
+EXT_H="$SUITE_TMP/ext-hook.txt"; printf '#!/bin/bash\necho ext-hook-keep\n' > "$EXT_H"
+ln -s "$EXT_A" "$SYM_HOME/agents/example.md"   # dst symlink where a repo file belongs
+ln -s "$EXT_H" "$SYM_HOME/hooks/example.sh"
+expect_exit 0 "$SYM_REPO" "$SYM_HOME" --apply
+[ -L "$SYM_HOME/agents/example.md" ] && fail "agents dst left as a symlink after apply"
+[ "$(cat "$SYM_HOME/agents/example.md")" = "agent content" ] || fail "agents symlink not replaced with the repo file"
+[ "$(cat "$EXT_A")" = "EXT-AGENT-KEEP" ] || fail "dir copy followed a symlink and overwrote the external agent target"
+[ -L "$SYM_HOME/hooks/example.sh" ] && fail "hooks dst left as a symlink after apply"
+[ "$(cat "$SYM_HOME/hooks/example.sh")" = "#!/bin/bash
+echo hi" ] || fail "hooks symlink not replaced with the repo file"
+[ "$(cat "$EXT_H")" = "#!/bin/bash
+echo ext-hook-keep" ] || fail "hooks copy followed a symlink and overwrote the external hook target"
+
+# =======================================================================
 # --apply on a differing CLAUDE.md: backs up the live version byte-for-byte
 # before overwriting it with the repo version.
 # =======================================================================

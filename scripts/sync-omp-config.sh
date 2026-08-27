@@ -462,18 +462,19 @@ overlay_tree() {
   while IFS= read -r -d '' f; do
     rel="${f#"$sroot"/}"
     dst="$lroot/$rel"
-    if [ ! -f "$dst" ] || ! cmp -s "$f" "$dst"; then
+    if [ -L "$dst" ] || [ ! -f "$dst" ] || ! cmp -s "$f" "$dst"; then
       note "$label/$rel"
       CHANGED=$((CHANGED + 1))
       if [ "$APPLY" -eq 1 ]; then
         [ "$preexisted" -eq 1 ] && backup_dir_once "$lroot"
         mkdir -p "$(dirname "$dst")"
-        # A live directory (or other non-regular entry) where a staged file
-        # belongs is a conflict: plain cp would nest the file inside it
-        # (reviewer.md/reviewer.md), leaving the agent unfindable and every
-        # later sync re-reporting the change. The whole-dir snapshot above
-        # already preserved it, so replace it with the staged file.
-        if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+        # A destination that is not a plain regular file is a conflict: a
+        # directory would make cp nest the file (reviewer.md/reviewer.md), and
+        # a symlink would make cp follow it and overwrite the EXTERNAL referent
+        # while the snapshot captured only the link. Remove it first (the
+        # whole-dir snapshot above already preserved it); rm on a symlink drops
+        # the link itself, never what it points at.
+        if [ -L "$dst" ] || { [ -e "$dst" ] && [ ! -f "$dst" ]; }; then
           rm -rf "$dst"
         fi
         cp "$f" "$dst"

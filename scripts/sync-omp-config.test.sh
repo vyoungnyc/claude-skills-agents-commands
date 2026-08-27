@@ -254,4 +254,20 @@ grep -q '^BODY-CHECKER$' "$R8/omp/agent/agents/checker.md" || fail "(13) deploye
 CONFLICT_OUT="$(run "$R8" 2>&1)"
 echo "$CONFLICT_OUT" | grep -q "Already in sync" || fail "(13) conflict not resolved — still reporting changes: $CONFLICT_OUT"
 
-echo "PASS: sync-omp-config.test.sh (13 cases)"
+# ============================================================ (14) destination symlink
+# A live symlink where a staged file belongs must be replaced by a real file,
+# and cp must NOT follow it and overwrite the external referent.
+R9="$(setup_repo)"
+run "$R9" --apply >/dev/null 2>&1 || fail "(14) initial apply failed"
+EXT="$SUITE_TMP/ext-target-omp.txt"; echo "EXTERNAL-UNTOUCHED" > "$EXT"
+rm -f "$R9/omp/agent/agents/checker.md"
+ln -s "$EXT" "$R9/omp/agent/agents/checker.md"
+run "$R9" --apply >/dev/null 2>&1 || fail "(14) apply over a symlink failed"
+[ -L "$R9/omp/agent/agents/checker.md" ] && fail "(14) destination left as a symlink"
+[ -f "$R9/omp/agent/agents/checker.md" ] || fail "(14) staged file not deployed as a regular file over a symlink"
+grep -q '^BODY-CHECKER$' "$R9/omp/agent/agents/checker.md" || fail "(14) deployed content wrong after symlink"
+[ "$(cat "$EXT")" = "EXTERNAL-UNTOUCHED" ] || fail "(14) cp followed the symlink and overwrote the external target"
+SYM_OUT="$(run "$R9" 2>&1)"
+echo "$SYM_OUT" | grep -q "Already in sync" || fail "(14) symlink conflict not resolved: $SYM_OUT"
+
+echo "PASS: sync-omp-config.test.sh (14 cases)"
