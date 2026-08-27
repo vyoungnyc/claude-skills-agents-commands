@@ -85,6 +85,14 @@ EOF
 echo test
 EOF
 
+  # auto-test-runner.sh resolves its shell-suite runner as a run-tests.sh
+  # sibling in hooks/scripts/; it lives in scripts/, so the converter must
+  # copy it explicitly. Seed it here so case (4) can assert the deploy.
+  cat > "$dir/scripts/run-tests.sh" <<'EOF'
+#!/bin/bash
+echo "0 passed, 0 failed"
+EOF
+
   echo "$dir"
 }
 
@@ -125,6 +133,8 @@ TS="$R/omp/agent/hooks/pre/claude-compat.ts"
 grep -q 'export default function' "$TS" || fail "(4) adapter missing default export"
 [ -f "$R/omp/agent/hooks/scripts/echoer.sh" ] || fail "(4) hook script not copied"
 [ -f "$R/omp/agent/hooks/scripts/echoer.test.sh" ] && fail "(4) *.test.sh must not deploy"
+[ -f "$R/omp/agent/hooks/scripts/run-tests.sh" ] \
+  || fail "(4) run-tests.sh not deployed at auto-test-runner's resolved sibling path"
 
 # ============================================================ (5) idempotent
 OUT="$(run "$R" --apply 2>&1)"

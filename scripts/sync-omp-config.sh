@@ -266,6 +266,18 @@ if [ "$WITH_HOOKS" -eq 1 ] && [ -d "$REPO_ROOT/hooks" ]; then
     esac
     cp "$src" "$STAGE/hooks/scripts/$(basename "$src")"
   done
+  # auto-test-runner.sh's shell-suite branch resolves its runner as
+  # $(dirname "$BASH_SOURCE")/../scripts/run-tests.sh — i.e. a run-tests.sh
+  # sibling INSIDE hooks/scripts/ once deployed (the hook lands at
+  # <OMP_HOME>/agent/hooks/scripts/auto-test-runner.sh, so its REPO_ROOT is
+  # .../hooks and RUN_TESTS is .../hooks/scripts/run-tests.sh). It is the one
+  # runtime dependency that lives outside hooks/ (in scripts/), so the hooks
+  # *.sh loop above never picks it up. Copy it explicitly; without it every
+  # *.sh edit hits `[ -f "$RUN_TESTS" ] || exit 0` and the advertised shell
+  # test hook silently no-ops on a clean deploy.
+  if [ -f "$REPO_ROOT/scripts/run-tests.sh" ]; then
+    cp "$REPO_ROOT/scripts/run-tests.sh" "$STAGE/hooks/scripts/run-tests.sh"
+  fi
   # The adapter is written here, not tracked in the repo. Its layout
   # assumption: it sits at <hooks>/pre/claude-compat.ts and the scripts sit at
   # <hooks>/scripts/*.sh (i.e. ../scripts relative to itself).
