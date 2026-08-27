@@ -253,6 +253,26 @@ echo hi" ] || fail "hooks symlink not replaced with the repo file"
 echo ext-hook-keep" ] || fail "hooks copy followed a symlink and overwrote the external hook target"
 
 # =======================================================================
+# --apply where a category root itself is a symlink to an external dir: the
+# sync records the link, replaces the root with a real directory, deploys the
+# repo contents there, and leaves the external referent untouched.
+# =======================================================================
+ROOTSYM_REPO=$(fake_repo)
+ROOTSYM_HOME=$(fake_home)
+mkdir -p "$ROOTSYM_HOME"
+EXT_ROOT="$SUITE_TMP/ext-agents-root"; mkdir -p "$EXT_ROOT"; echo "EXTERNAL-ROOT-AGENT" > "$EXT_ROOT/outsider.md"
+ln -s "$EXT_ROOT" "$ROOTSYM_HOME/agents"
+expect_exit 0 "$ROOTSYM_REPO" "$ROOTSYM_HOME" --apply
+[ -L "$ROOTSYM_HOME/agents" ] && fail "category root left as a symlink after apply"
+[ -d "$ROOTSYM_HOME/agents" ] || fail "category root not a real directory after apply"
+[ "$(cat "$ROOTSYM_HOME/agents/example.md")" = "agent content" ] || fail "repo file not deployed into the real root"
+[ -f "$EXT_ROOT/outsider.md" ] || fail "external referent file removed"
+[ -e "$ROOTSYM_HOME/agents/outsider.md" ] && fail "overlay wrote into the external referent"
+ROOTLINK=$(find "$ROOTSYM_HOME/backups" -name "agents.rootlink" 2>/dev/null | head -1)
+[ -n "$ROOTLINK" ] || fail "symlinked category root not recorded in backup"
+[ -L "$ROOTLINK" ] || fail "recorded root backup is not a symlink"
+
+# =======================================================================
 # --apply on a differing CLAUDE.md: backs up the live version byte-for-byte
 # before overwriting it with the repo version.
 # =======================================================================

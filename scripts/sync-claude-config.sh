@@ -89,6 +89,23 @@ for name in agents skills commands rules; do
   dst="$CLAUDE_HOME/$name"
   [ -d "$src" ] || continue
 
+  # A symlinked category root would make the overlay write through the link
+  # into the external referent and leave the link in place. Record the link,
+  # replace it with a real directory, and deploy the repo contents there; the
+  # external referent is left untouched (rm drops the link, not its target).
+  if [ -L "$dst" ]; then
+    note "$name/ (replacing symlinked root)"
+    CHANGED=1
+    if [ "$APPLY" -eq 1 ]; then
+      backup_once
+      cp -P "$dst" "$BACKUP_DIR/$name.rootlink"
+      rm -f "$dst"
+      mkdir -p "$dst"
+      cp -R "$src/." "$dst/"
+    fi
+    continue
+  fi
+
   if [ -d "$dst" ]; then
     diff_out=$(diff -rq "$src" "$dst" 2>&1 || true)
   else

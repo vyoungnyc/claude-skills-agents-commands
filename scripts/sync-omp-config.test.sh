@@ -290,4 +290,21 @@ ROOTLINK_BK=$(find "$R10"/omp/backups -path "*/agent/agents" -type l 2>/dev/null
 SROOT_OUT="$(run "$R10" 2>&1)"
 echo "$SROOT_OUT" | grep -q "Already in sync" || fail "(15) symlinked root not resolved: $SROOT_OUT"
 
-echo "PASS: sync-omp-config.test.sh (15 cases)"
+# ============================================================ (16) nested symlink ancestor
+# A symlink at a nested path component (a skill dir) must be replaced by a real
+# dir; the overlay must write the staged file into it, not through the link
+# into the external referent, which stays untouched.
+R11="$(setup_repo)"
+run "$R11" --apply >/dev/null 2>&1 || fail "(16) initial apply failed"
+EXTSK="$SUITE_TMP/ext-skill-dir"; mkdir -p "$EXTSK"; echo "EXTERNAL-SKILL" > "$EXTSK/SKILL.md"
+rm -rf "$R11/omp/agent/skills/demo-skill"
+ln -s "$EXTSK" "$R11/omp/agent/skills/demo-skill"
+run "$R11" --apply >/dev/null 2>&1 || fail "(16) apply over a symlinked nested dir failed"
+[ -L "$R11/omp/agent/skills/demo-skill" ] && fail "(16) nested dir left as a symlink"
+[ -d "$R11/omp/agent/skills/demo-skill" ] || fail "(16) nested dir not a real directory after apply"
+diff -q "$R11/skills/demo-skill/SKILL.md" "$R11/omp/agent/skills/demo-skill/SKILL.md" >/dev/null || fail "(16) SKILL.md not deployed into the real nested dir"
+[ "$(cat "$EXTSK/SKILL.md")" = "EXTERNAL-SKILL" ] || fail "(16) overlay wrote through the link and overwrote the external SKILL.md"
+NEST_OUT="$(run "$R11" 2>&1)"
+echo "$NEST_OUT" | grep -q "Already in sync" || fail "(16) nested symlink not resolved: $NEST_OUT"
+
+echo "PASS: sync-omp-config.test.sh (16 cases)"

@@ -449,6 +449,24 @@ fi
 
 # ============================ SYNC (overlay onto target) =====================
 
+# Replace any symlinked ancestor directory of a staged file (the path
+# components of $2 between $1 and the leaf). A symlink at an intermediate
+# component such as skills/demo-skill would make cp write into the external
+# referent; rm drops the link, never its referent, and the whole-dir snapshot
+# taken beforehand already preserved it.
+clear_symlink_ancestors() {
+  local base="$1" rel="$2" dirpart walk comp rest
+  dirpart="${rel%/*}"
+  if [ "$dirpart" = "$rel" ]; then return 0; fi   # no '/', leaf only
+  walk="$base"
+  rest="$dirpart"
+  while [ -n "$rest" ]; do
+    comp="${rest%%/*}"
+    walk="$walk/$comp"
+    if [ -L "$walk" ]; then rm -rf "$walk"; fi
+    if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+  done
+}
 # Overlay one staged tree onto a live tree: add/update only, never delete.
 # Snapshots the whole live directory (once) before its first change.
 overlay_tree() {
@@ -485,6 +503,7 @@ overlay_tree() {
       CHANGED=$((CHANGED + 1))
       if [ "$APPLY" -eq 1 ]; then
         [ "$preexisted" -eq 1 ] && backup_dir_once "$lroot"
+        clear_symlink_ancestors "$lroot" "$rel"
         mkdir -p "$(dirname "$dst")"
         # A destination that is not a plain regular file is a conflict: a
         # directory would make cp nest the file (reviewer.md/reviewer.md), and
