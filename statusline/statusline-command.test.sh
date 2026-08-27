@@ -377,4 +377,72 @@ RES=$(mr_relaunch_probe "$((NOW_EPOCH - 300))" 0)
 [ "$RES" = "suppressed" ] \
   || fail "a successful entry within the 600s window must not trigger a relaunch (got: $RES)"
 
+# =======================================================================
+# Regression: the .usage-backoff file is "<until_epoch> <kind>". This reader
+# used to `cat` the whole line into `-ge`, which is an integer-expression
+# error -- so the condition never fired and the automatic refresh stayed
+# suppressed permanently once any cooldown had ever been written, including
+# long after it expired. The EXPIRED case is the one that was broken.
+#
+# The backoff file here is produced by the REAL usage-refresh.sh (via a 429)
+# rather than hand-written, so this asserts the two scripts agree on the
+# format instead of pinning a literal that could drift from the writer.
+# =======================================================================
+usage_relaunch_probe() {
+  # <backoff_file_contents...> -> "launched" | "suppressed"
+  local home probe
+  home=$(fake_home)
+  probe="$home/.claude/usage-refresh.sh"
+  cat > "$probe" <<EOF
+#!/usr/bin/env bash
+touch "$home/usage-refresh-launched"
+EOF
+  chmod +x "$probe"
+  # A stale cache, so only the backoff gate can suppress the relaunch.
+  echo '{"enabled": false, "used": 0, "limit": 0, "pct": 0}' > "$home/.claude/usage-cache.json"
+  local stamp
+  stamp=$(date -d "@$(( $(date +%s) - 4000 ))" "+%Y%m%d%H%M.%S" 2>/dev/null) \
+    || stamp=$(date -r "$(( $(date +%s) - 4000 ))" "+%Y%m%d%H%M.%S" 2>/dev/null)
+  touch -t "$stamp" "$home/.claude/usage-cache.json"
+  printf '%s\n' "$1" > "$home/.claude/.usage-backoff"
+  run_statusline "$home" '{"cwd":"/tmp","model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"/tmp"}}'
+  local i=0
+  while [ "$i" -lt 20 ] && [ ! -f "$home/usage-refresh-launched" ]; do i=$((i+1)); /bin/sleep 0.05; done
+  [ -f "$home/usage-refresh-launched" ] && printf 'launched' || printf 'suppressed'
+}
+
+# Derive a real backoff line from the actual writer, so the format under test
+# is whatever usage-refresh.sh currently produces.
+BOGEN_HOME=$(mktemp -d "$SUITE_TMP/bogen.XXXXXX")
+mkdir -p "$BOGEN_HOME/.claude"
+cat > "$BOGEN_HOME/.claude/fetch-usage.sh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"error":"throttled"}'
+printf '__HTTP_STATUS__429\n'
+EOF
+chmod +x "$BOGEN_HOME/.claude/fetch-usage.sh"
+env HOME="$BOGEN_HOME" bash "$SCRIPT_DIR/usage-refresh.sh" --force >/dev/null 2>&1 || true
+[ -f "$BOGEN_HOME/.claude/.usage-backoff" ] || fail "backoff-format setup: usage-refresh.sh wrote no backoff file"
+REAL_BACKOFF_LINE=$(cat "$BOGEN_HOME/.claude/.usage-backoff")
+# Sanity: it really is the multi-field shape this test exists to handle.
+case "$REAL_BACKOFF_LINE" in
+  *' '*) : ;;
+  *) fail "expected usage-refresh.sh to write a '<epoch> <kind>' backoff line, got: $REAL_BACKOFF_LINE" ;;
+esac
+
+# Active cooldown (as written by the real script): refresh suppressed.
+RES=$(usage_relaunch_probe "$REAL_BACKOFF_LINE")
+[ "$RES" = "suppressed" ] \
+  || fail "an active typed cooldown must suppress the refresh (got: $RES)"
+# EXPIRED cooldown in the same format: refresh MUST run. This is the case the
+# unparsed comparison broke -- it failed as an integer error and suppressed
+# the refresh forever.
+EXPIRED_KIND=${REAL_BACKOFF_LINE#* }
+RES=$(usage_relaunch_probe "1 $EXPIRED_KIND")
+[ "$RES" = "launched" ] \
+  || fail "an EXPIRED typed cooldown must not suppress the refresh -- the cache would stay stale indefinitely (got: $RES)"
+# No backoff file at all: refresh runs.
+RES=$(usage_relaunch_probe "0")
+[ "$RES" = "launched" ] || fail "with no active cooldown the refresh should run (got: $RES)"
+
 echo "statusline-command.test.sh: all assertions passed"

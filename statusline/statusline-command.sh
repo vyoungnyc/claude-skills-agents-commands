@@ -364,9 +364,15 @@ fi
 # Trigger a background refresh when the cache is >10 min old — unless a throttle backoff
 # window is still active (don't hammer a rate-limited endpoint).
 if [ -x "$REFRESH" ]; then
+    # The backoff file is "<until_epoch> <kind>" (see usage-refresh.sh). Read
+    # ONLY the epoch field: `cat`ing the whole line here fed "<epoch> <kind>"
+    # into `-ge`, which is an integer-expression error, so the condition never
+    # fired and the automatic refresh stayed suppressed for good once any
+    # cooldown had ever been written -- including long after it expired.
     bo=0
-    [ -f "$BACKOFF" ] && bo=$(cat "$BACKOFF" 2>/dev/null || echo 0)
-    if { [ -z "$cache_age" ] || [ "$cache_age" -ge 600 ]; } && [ "$now" -ge "${bo:-0}" ] 2>/dev/null; then
+    [ -f "$BACKOFF" ] && { read -r bo _ < "$BACKOFF" 2>/dev/null || true; }
+    case "$bo" in ''|*[!0-9]*) bo=0 ;; esac
+    if { [ -z "$cache_age" ] || [ "$cache_age" -ge 600 ]; } && [ "$now" -ge "$bo" ]; then
         ("$REFRESH" >/dev/null 2>&1 &)
     fi
 fi
