@@ -292,4 +292,43 @@ ENVHOME_OUT=$(printf '%s' '{"cwd":"/tmp","model":{"display_name":"Opus 4.8"},"wo
 printf '%s' "$ENVHOME_OUT" | grep -Fq '$5.00 / $25.00 (20%)' \
   || fail "an explicit CLAUDE_HOME must win over both the script directory and \$HOME/.claude, got: $ENVHOME_OUT"
 
+# =======================================================================
+# SECURITY round-trip across BOTH scripts: mr-refresh.sh writes the cache
+# key and statusline-command.sh looks it up, so they must sanitize a
+# credential-bearing origin URL identically -- otherwise either the token
+# gets persisted, or the identities diverge and every lookup silently
+# misses (no MR link, and a refresh fired on every single render). Runs the
+# real mr-refresh.sh against a repo whose origin embeds a token.
+# =======================================================================
+CRED_REPO="$SUITE_TMP/credrepo"
+mkdir -p "$CRED_REPO"
+git init -q "$CRED_REPO"
+git -C "$CRED_REPO" config user.email "test@example.com"
+git -C "$CRED_REPO" config user.name "Test"
+git -C "$CRED_REPO" commit -q --allow-empty -m init
+git -C "$CRED_REPO" checkout -q -b feature/tokenized
+git -C "$CRED_REPO" remote add origin "https://glpat-ROUNDTRIP999@gitlab.example.com/group/proj.git"
+
+RT_HOME=$(fake_home)
+RT_BIN=$(mktemp -d "$SUITE_TMP/rtbin.XXXXXX")
+cat > "$RT_BIN/glab" <<'EOF'
+#!/usr/bin/env bash
+echo '[{"iid": 88, "web_url": "https://gitlab.example.com/group/proj/-/merge_requests/88"}]'
+EOF
+chmod +x "$RT_BIN/glab"
+cp "$SCRIPT_DIR/mr-refresh.sh" "$RT_HOME/.claude/mr-refresh.sh"
+chmod +x "$RT_HOME/.claude/mr-refresh.sh"
+# Writer: populate the cache from the credential-bearing remote.
+env HOME="$RT_HOME" PATH="$RT_BIN:$PATH" bash "$RT_HOME/.claude/mr-refresh.sh" "$CRED_REPO" "feature/tokenized"
+RT_CACHE="$RT_HOME/.claude/.mr-cache.json"
+[ -f "$RT_CACHE" ] || fail "round-trip setup: mr-refresh.sh wrote no cache"
+grep -q 'glpat-ROUNDTRIP999' "$RT_CACHE" \
+  && fail "the token was persisted into the cache by mr-refresh.sh"
+# Reader: statusline-command.sh must find that entry and render the MR link.
+run_statusline "$RT_HOME" "$(jq -n --arg cwd "$CRED_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')" "$RT_BIN"
+expect_match "(#88)"
+# And the token must not leak into the rendered status line either.
+printf '%s' "$LAST_OUT_PLAIN" | grep -q 'glpat-ROUNDTRIP999' \
+  && fail "the token leaked into the rendered status line"
+
 echo "statusline-command.test.sh: all assertions passed"

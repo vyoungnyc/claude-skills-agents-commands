@@ -183,6 +183,64 @@ KEY=$(mr_key "" "feature/x")
   || fail "a legacy flat-format cache should be discarded and replaced with the new keyed entry, not break the write"
 
 # =======================================================================
+# SECURITY regression: a credential-bearing origin URL must never be
+# persisted into the cache. `https://TOKEN@host/...` remotes are common
+# (PATs, CI tokens), and the raw value used to be written as BOTH the JSON
+# key and the `repo` field -- copying the token into a long-lived,
+# predictably-named file. The stored identity must be the sanitized URL.
+# =======================================================================
+CREDS_REPO="$SUITE_TMP/creds-repo"
+mkdir -p "$CREDS_REPO"
+git init -q "$CREDS_REPO"
+git -C "$CREDS_REPO" remote add origin "https://glpat-SECRETTOKEN123@gitlab.example.com/group/repo.git"
+CREDS_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$CREDS_HOME" "$FOUND_JSON")
+env HOME="$CREDS_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$CREDS_REPO" "feature/x"
+CREDS_CACHE="$CREDS_HOME/.claude/.mr-cache.json"
+[ -f "$CREDS_CACHE" ] || fail "credential test setup: expected a cache file"
+grep -q 'glpat-SECRETTOKEN123' "$CREDS_CACHE" \
+  && fail "the origin URL's credential was persisted into the MR cache: $(cat "$CREDS_CACHE")"
+SANITIZED_KEY=$(printf '%s\t%s' "https://gitlab.example.com/group/repo.git" "feature/x")
+[ "$(jq -r --arg k "$SANITIZED_KEY" '.[$k].number' "$CREDS_CACHE")" = "42" ] \
+  || fail "the entry should be keyed by the sanitized URL, got keys: $(jq -r 'keys[]' "$CREDS_CACHE")"
+[ "$(jq -r --arg k "$SANITIZED_KEY" '.[$k].repo' "$CREDS_CACHE")" = "https://gitlab.example.com/group/repo.git" ] \
+  || fail "the stored repo field should be the sanitized URL"
+
+# The cache must be owner-only, not whatever the ambient umask yields.
+CREDS_MODE=$(stat -c %a "$CREDS_CACHE" 2>/dev/null || stat -f %Lp "$CREDS_CACHE" 2>/dev/null)
+[ "$CREDS_MODE" = "600" ] || fail "the MR cache should be mode 600, got $CREDS_MODE"
+
+# An `@` inside the PATH is legitimate and must NOT be treated as userinfo.
+ATPATH_REPO="$SUITE_TMP/atpath-repo"
+mkdir -p "$ATPATH_REPO"
+git init -q "$ATPATH_REPO"
+git -C "$ATPATH_REPO" remote add origin "https://gitlab.example.com/group/we@ird.git"
+ATPATH_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$ATPATH_HOME" "$FOUND_JSON")
+env HOME="$ATPATH_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$ATPATH_REPO" "feature/x"
+ATPATH_KEY=$(printf '%s\t%s' "https://gitlab.example.com/group/we@ird.git" "feature/x")
+[ "$(jq -r --arg k "$ATPATH_KEY" '.[$k].number' "$ATPATH_HOME/.claude/.mr-cache.json")" = "42" ] \
+  || fail "an @ in the URL path must be preserved, not cut as userinfo; got keys: $(jq -r 'keys[]' "$ATPATH_HOME/.claude/.mr-cache.json")"
+
+# A credential-bearing entry left by an EARLIER version is purged on the next
+# write, rather than lingering until the age-based prune.
+LEGACYCRED_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$LEGACYCRED_HOME" "$FOUND_JSON")
+LEGACYCRED_KEY=$(printf '%s\t%s' "https://glpat-OLDTOKEN@gitlab.example.com/group/other.git" "some-branch")
+SCP_KEY=$(printf '%s\t%s' "git@gitlab.example.com:group/third.git" "scp-branch")
+jq -n --arg k "$LEGACYCRED_KEY" --arg s "$SCP_KEY" --argjson now "$(date +%s)" \
+  '{($k): {repo:"https://glpat-OLDTOKEN@gitlab.example.com/group/other.git", branch:"some-branch", number:"7", url:"https://e/7", ts:$now},
+    ($s): {repo:"git@gitlab.example.com:group/third.git", branch:"scp-branch", number:"8", url:"https://e/8", ts:$now}}' \
+  > "$LEGACYCRED_HOME/.claude/.mr-cache.json"
+env HOME="$LEGACYCRED_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$CREDS_REPO" "feature/x"
+grep -q 'glpat-OLDTOKEN' "$LEGACYCRED_HOME/.claude/.mr-cache.json" \
+  && fail "a credential-bearing entry from an earlier version should be purged, not carried forward"
+# The scp-like `git@host:path` form carries a username, not a secret, but it is
+# still not what the sanitizer now produces, so it is dropped as stale too.
+[ "$(jq -r --arg s "$SCP_KEY" 'has($s)' "$LEGACYCRED_HOME/.claude/.mr-cache.json")" = "false" ] \
+  || fail "an unsanitized scp-form key should be dropped as stale-by-construction"
+
+# =======================================================================
 # Single-flight lock: a held (fresh) lock skips the lookup.
 # =======================================================================
 LOCK_HOME=$(fake_home)

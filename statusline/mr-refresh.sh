@@ -29,6 +29,38 @@ PRUNE_AGE=86400  # entries older than this are dropped on write, to bound file g
 command -v glab >/dev/null 2>&1 || exit 0
 [ -n "$branch" ] || exit 0
 
+# SECURITY: strip any userinfo from a remote URL before it becomes a cache
+# identity. Credential-bearing HTTPS remotes are common (a PAT or CI token, e.g.
+# https://TOKEN@gitlab.com/group/repo.git), and this value is persisted to disk
+# as BOTH the JSON key and the `repo` field — writing the raw URL copies the
+# token into a long-lived, predictably-named cache file. The `@` is only removed
+# from the AUTHORITY component: an `@` can legitimately appear in a path, and
+# cutting there would mangle unrelated identities. Reader and writer must derive
+# this identically or every lookup misses, so statusline-command.sh carries the
+# same function.
+sanitize_repo_id() {
+    case "$1" in
+    *://*)
+        # scheme://[user[:pass]@]host[:port]/path
+        local scheme rest authority path
+        scheme=${1%%://*}
+        rest=${1#*://}
+        authority=${rest%%/*}
+        path=${rest#"$authority"}
+        authority=${authority##*@}   # longest match, so user:pa@ss@host -> host
+        printf '%s://%s%s' "$scheme" "$authority" "$path" ;;
+    *@*:*)
+        # scp-like [user@]host:path — userinfo sits before the first ':'
+        local pre post
+        pre=${1%%:*}
+        post=${1#*:}
+        pre=${pre##*@}
+        printf '%s:%s' "$pre" "$post" ;;
+    *)
+        printf '%s' "$1" ;;
+    esac
+}
+
 # Repo identity: the cache is a single file shared by every project, so two
 # different repos with the same branch name must not be treated as the same
 # entry. Prefer the origin remote URL (stable across worktrees / clone paths
@@ -36,6 +68,13 @@ command -v glab >/dev/null 2>&1 || exit 0
 # remote configured.
 repo_id=$(git -C "$cwd" --no-optional-locks remote get-url origin 2>/dev/null)
 [ -z "$repo_id" ] && repo_id=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+repo_id=$(sanitize_repo_id "$repo_id")
+
+# The cache can carry repo identities and MR URLs; keep it owner-only rather
+# than whatever the ambient umask yields (observed 0644). Applies to the lock
+# directory and the temp file below too, and `mv` carries the temp file's mode
+# onto the cache, so an existing 0644 file is replaced by a 0600 one.
+umask 077
 
 key="$repo_id"$'\t'"$branch"
 now=$(date +%s)
@@ -113,6 +152,18 @@ if [ -f "$CACHE" ]; then
 fi
 jq -n --argjson existing "$existing" --arg k "$key" --arg r "$repo_id" --arg b "$branch" \
     --arg n "$num" --arg u "$url" --argjson now "$now" --argjson prune "$PRUNE_AGE" '
-    ($existing | with_entries(select((.value.ts // 0) as $t | ($now - $t) < $prune))) as $pruned |
+    # Actively drop entries whose identity carries URL userinfo. Versions before
+    # the sanitization above stored the raw remote, so an existing cache can
+    # already hold a token; age-based pruning alone would leave it readable for
+    # up to PRUNE_AGE. A sanitized identity never contains userinfo, so any
+    # entry that does is stale-by-construction and safe to discard.
+    def credentialBearing:
+      test("^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*@")   # scheme://user@host/...
+      or test("^[^/:]*@[^/]*:");                  # scp-like user@host:path
+    ($existing
+      | with_entries(select(
+          ((.key | credentialBearing) | not)
+          and (((.value.repo // "") | credentialBearing) | not)
+          and ((.value.ts // 0) as $t | ($now - $t) < $prune)))) as $pruned |
     $pruned + {($k): {repo:$r, branch:$b, number:(if $n=="" then null else $n end), url:(if $u=="" then null else $u end), ts:$now}}
 ' >"$CACHE.tmp.$$" 2>/dev/null && mv "$CACHE.tmp.$$" "$CACHE"

@@ -38,6 +38,32 @@ resolve_claude_home() {
 }
 CLAUDE_DIR=$(resolve_claude_home)
 
+# Strip any userinfo from a git remote URL before using it as an MR-cache
+# identity. Must stay byte-for-byte equivalent to mr-refresh.sh's copy: that
+# script writes the cache key, this one looks it up, so any divergence turns
+# every lookup into a miss. Only the authority component is cut, because an
+# `@` can legitimately appear in a URL path.
+sanitize_repo_id() {
+    case "$1" in
+    *://*)
+        local scheme rest authority path
+        scheme=${1%%://*}
+        rest=${1#*://}
+        authority=${rest%%/*}
+        path=${rest#"$authority"}
+        authority=${authority##*@}
+        printf '%s://%s%s' "$scheme" "$authority" "$path" ;;
+    *@*:*)
+        local pre post
+        pre=${1%%:*}
+        post=${1#*:}
+        pre=${pre##*@}
+        printf '%s:%s' "$pre" "$post" ;;
+    *)
+        printf '%s' "$1" ;;
+    esac
+}
+
 input=$(cat)
 now=$(date +%s)
 model=$(echo "$input" | jq -r '.model.display_name')
@@ -176,6 +202,12 @@ if [ -n "$branch" ]; then
         # and can't mark this one fresh, stale, or overwrite it.
         mr_repo_id=$(git -C "$cwd" --no-optional-locks remote get-url origin 2>/dev/null)
         [ -z "$mr_repo_id" ] && mr_repo_id=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+        # Strip URL userinfo, exactly as mr-refresh.sh does when it writes the
+        # key: a credential-bearing remote (https://TOKEN@host/...) must not be
+        # persisted into the cache, and reader and writer have to derive the
+        # same identity or every lookup misses. The `@` is only cut from the
+        # authority component, since an `@` can legitimately appear in a path.
+        mr_repo_id=$(sanitize_repo_id "$mr_repo_id")
         if [ -n "$mr_repo_id" ]; then
             mr_key="$mr_repo_id"$'\t'"$branch"
             if [ -x "$MRREFRESH" ]; then
