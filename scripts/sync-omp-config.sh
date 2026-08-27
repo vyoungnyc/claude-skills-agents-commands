@@ -468,6 +468,14 @@ overlay_tree() {
       if [ "$APPLY" -eq 1 ]; then
         [ "$preexisted" -eq 1 ] && backup_dir_once "$lroot"
         mkdir -p "$(dirname "$dst")"
+        # A live directory (or other non-regular entry) where a staged file
+        # belongs is a conflict: plain cp would nest the file inside it
+        # (reviewer.md/reviewer.md), leaving the agent unfindable and every
+        # later sync re-reporting the change. The whole-dir snapshot above
+        # already preserved it, so replace it with the staged file.
+        if [ -e "$dst" ] && [ ! -f "$dst" ]; then
+          rm -rf "$dst"
+        fi
         cp "$f" "$dst"
       fi
     fi

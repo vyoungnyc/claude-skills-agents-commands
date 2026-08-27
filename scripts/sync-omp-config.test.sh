@@ -239,4 +239,19 @@ if [ "$(PATH="$DSHIM" date -u +%Y 2>/dev/null)" = "FIXEDSTAMP" ]; then
   grep -rhq tamperedB "$R7"/omp/backups/*/agent/agents/checker.md 2>/dev/null || fail "(12) second overwrite's pre-apply content missing (collided backup)"
 fi
 
-echo "PASS: sync-omp-config.test.sh (12 cases)"
+# ============================================================ (13) file/dir conflict
+# A live directory where a staged file belongs must be replaced by the file,
+# not have the file nested inside it (checker.md/checker.md). Otherwise the
+# apply "succeeds" but omp can't find the agent and every later sync re-reports.
+R8="$(setup_repo)"
+run "$R8" --apply >/dev/null 2>&1 || fail "(13) initial apply failed"
+rm -f "$R8/omp/agent/agents/checker.md"
+mkdir -p "$R8/omp/agent/agents/checker.md"
+echo stale > "$R8/omp/agent/agents/checker.md/nested"
+run "$R8" --apply >/dev/null 2>&1 || fail "(13) apply over a dir conflict failed"
+[ -f "$R8/omp/agent/agents/checker.md" ] || fail "(13) staged file not deployed as a regular file over a conflicting dir"
+grep -q '^BODY-CHECKER$' "$R8/omp/agent/agents/checker.md" || fail "(13) deployed checker.md content wrong after conflict"
+CONFLICT_OUT="$(run "$R8" 2>&1)"
+echo "$CONFLICT_OUT" | grep -q "Already in sync" || fail "(13) conflict not resolved — still reporting changes: $CONFLICT_OUT"
+
+echo "PASS: sync-omp-config.test.sh (13 cases)"
