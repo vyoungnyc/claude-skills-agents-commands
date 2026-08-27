@@ -177,7 +177,7 @@ A two-line Claude Code status line under `statusline/`: model + reasoning effort
 
 **Prerequisites:** `jq` and `curl` (required); `glab` (optional, only for the GitLab MR number/link — `brew install glab && glab auth login`). An OSC 8-capable terminal (iTerm2, kitty, WezTerm, Ghostty) for clickable links; unsupported terminals just show plain text.
 
-**Install:** `scripts/sync-claude-config.sh --apply` flat-copies `statusline/*.sh` into `~/.claude/` and merges the `statusLine` key plus a `SessionStart` hook (forces a usage-cache refresh on login, since login rotates the OAuth token) into `~/.claude/settings.json` — same mechanism as everything else this script deploys. Then prime the cache once: `~/.claude/usage-refresh.sh && cat ~/.claude/usage-cache.json`.
+**Install:** `scripts/sync-claude-config.sh --apply` flat-copies `statusline/*.sh` into `~/.claude/` and merges the `statusLine` key plus a `SessionStart` hook (refreshes the usage cache regardless of its age, since a login rotates the OAuth token and may change plan; a throttle backoff is still honored) into `~/.claude/settings.json` — same mechanism as everything else this script deploys. Then prime the cache once: `~/.claude/usage-refresh.sh && cat ~/.claude/usage-cache.json`.
 
 Per-session token counts are cached at `~/.claude/token_history/<project-slug>/<session_id>.json` — one subdirectory per project (named after Claude Code's own transcript directory slug, so no separate repo lookup is needed), refreshed in the background and pruned after 7 days of inactivity.
 
@@ -225,7 +225,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 **v2.12.0** — Rich status line, deployed via `sync-claude-config.sh`:
 - New `statusline/` directory (5 scripts): model/effort/repo/branch/context/cache-hit-rate on line 1, session cost on line 2, and — on Max/Pro or API billing — 5h/7d rate limits or credit spend pulled from the same endpoint `/usage` uses
 - `sync-claude-config.sh` flat-copies `statusline/*.sh` into `~/.claude/` (same level as everything else there, since the scripts reference each other by `$HOME/.claude/*.sh` path) and now also merges a `statusLine` settings key (full replace when the repo defines one, like `CLAUDE.md`) alongside the existing `hooks`/`env` merge
-- Root `settings.json` gains the `statusLine` key and a `SessionStart` hook that force-refreshes the usage cache on login
+- Root `settings.json` gains the `statusLine` key and a `SessionStart` hook that refreshes the usage cache regardless of its age (a throttle backoff is still honored)
 - Per-session token stats move from a flat `~/.claude/.tokstats-<session_id>.json` to `~/.claude/token_history/<project-slug>/<session_id>.json` — one subdirectory per project, named from Claude Code's own transcript directory slug
 - Every overwrite this script performs is now backed up first, including `agents/`/`skills`/`commands`/`rules`/`hooks`/`statusline` files that already exist and differ (previously only `CLAUDE.md` and `settings.json` were)
 - Script/hook counts unchanged (statusline scripts live in their own top-level directory, not `scripts/`)

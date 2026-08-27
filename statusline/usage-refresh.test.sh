@@ -87,6 +87,32 @@ env HOME="$BACKOFF_HOME" bash "$SCRIPT" || true
 fetch_called "$BACKOFF_HOME" && fail "an active backoff window should have skipped the refresh"
 
 # =======================================================================
+# Regression: --force must NOT bypass the throttle backoff. The
+# SessionStart hook runs this with --force, and SessionStart fires on every
+# session start/resume/clear -- not only on an OAuth login -- so if --force
+# skipped the backoff, each staggered session would immediately drive
+# another full retry cycle against an endpoint that just returned 429.
+# --force exists to bypass the FRESHNESS gate (a login rotates the token
+# and may change plan); the two gates are not the same thing.
+# =======================================================================
+FORCEBACKOFF_HOME=$(fake_home 200 "$SUCCESS_BODY")
+echo "9999999999" > "$FORCEBACKOFF_HOME/.claude/.usage-backoff"
+env HOME="$FORCEBACKOFF_HOME" bash "$SCRIPT" --force || true
+fetch_called "$FORCEBACKOFF_HOME" \
+  && fail "--force bypassed an active throttle backoff -- every new session would re-hammer a 429'd endpoint"
+
+# ...but --force still bypasses the FRESHNESS gate once the backoff has
+# EXPIRED, so the login-refresh behavior it exists for is intact.
+EXPIREDBACKOFF_HOME=$(fake_home 200 "$SUCCESS_BODY")
+echo "1" > "$EXPIREDBACKOFF_HOME/.claude/.usage-backoff"   # epoch 1 = long past
+echo '{"used":1}' > "$EXPIREDBACKOFF_HOME/.claude/usage-cache.json"   # and a fresh cache
+env HOME="$EXPIREDBACKOFF_HOME" bash "$SCRIPT" --force
+fetch_called "$EXPIREDBACKOFF_HOME" \
+  || fail "--force should still bypass the freshness gate when the backoff window has expired"
+[ "$(jq -r '.enabled' "$EXPIREDBACKOFF_HOME/.claude/usage-cache.json")" = "true" ] \
+  || fail "the expired-backoff --force run should have written the new cache"
+
+# =======================================================================
 # Success path: cache is populated correctly from a 200 response --
 # spend (enabled/used/limit/pct), five/seven windows with severity, and a
 # computed monthly reset.

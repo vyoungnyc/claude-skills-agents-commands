@@ -22,8 +22,15 @@ CACHE="$DIR/usage-cache.json"
 BACKOFF="$DIR/.usage-backoff"
 LOCK="$DIR/.usage-refresh.lock"
 FRESH=600 # seconds; matches the status line's staleness gate
-# --force (used on login): bypass the freshness gate and backoff, since login rotates
-# the OAuth token / may change plan. Still single-flight via the lock.
+# --force: bypass the FRESHNESS gate only — a login rotates the OAuth token and
+# may change plan, so the cached values can be wrong however recently they were
+# written. It deliberately does NOT bypass the throttle backoff. Those are two
+# different things and conflating them was a real bug: the SessionStart hook
+# runs this with --force, and SessionStart fires on every start/resume/clear,
+# not just on an OAuth login, so during a 429 cooldown each staggered session
+# would immediately drive another full retry cycle against the endpoint that
+# just asked us to back off — precisely what the backoff exists to prevent.
+# Still single-flight via the lock.
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
@@ -78,15 +85,17 @@ lock_release() {
 lock_acquire || exit 0
 trap lock_release EXIT
 
-# Re-check under the lock: another session may have just refreshed, or a throttle backoff
-# may be active — in either case do nothing (avoids N sessions each hitting the endpoint).
-# --force skips both gates (login), but still honors the lock's single-flight.
+# Re-check under the lock: another session may have just refreshed (freshness gate),
+# or the endpoint may have throttled us (backoff gate). Either way, do nothing —
+# this is what stops N sessions from each hitting the endpoint.
+# --force skips only the freshness gate; see the note on FORCE above for why the
+# backoff gate is NOT skippable.
 if [ "$FORCE" -eq 0 ]; then
     [ -f "$CACHE" ] && [ "$(file_age "$CACHE")" -lt "$FRESH" ] && exit 0
-    if [ -f "$BACKOFF" ]; then
-        bo=$(cat "$BACKOFF" 2>/dev/null || echo 0)
-        [ "$(now_epoch)" -lt "${bo:-0}" ] 2>/dev/null && exit 0
-    fi
+fi
+if [ -f "$BACKOFF" ]; then
+    bo=$(cat "$BACKOFF" 2>/dev/null || echo 0)
+    [ "$(now_epoch)" -lt "${bo:-0}" ] 2>/dev/null && exit 0
 fi
 
 raw=$("$DIR/fetch-usage.sh" 2>/dev/null) || exit 1
