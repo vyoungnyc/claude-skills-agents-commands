@@ -520,10 +520,34 @@ cat > "$ALT_REPO/settings.json" <<'EOF'
 EOF
 ALT_TARGET=$(mktemp -d "$SUITE_TMP/alt-target.XXXXXX")
 expect_exit 0 "$ALT_REPO" "$ALT_TARGET" --apply
-jq -e --arg t "$ALT_TARGET" '.statusLine.command == ($t + "/statusline-command.sh")' "$ALT_TARGET/settings.json" >/dev/null \
-  || fail "statusLine.command should be rewritten to the alternate CLAUDE_HOME, got: $(jq -r '.statusLine.command' "$ALT_TARGET/settings.json")"
-jq -e --arg t "$ALT_TARGET" '.hooks.UserPromptSubmit[0].hooks[0].command == ($t + "/hooks/some-hook.sh")' "$ALT_TARGET/settings.json" >/dev/null \
-  || fail "hook command should also be rewritten to the alternate CLAUDE_HOME, got: $(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' "$ALT_TARGET/settings.json")"
+# Rewritten path is shell-quoted (single-quoted via jq's @sh), not spliced in
+# raw -- see the space-in-CLAUDE_HOME regression below for why.
+expected_status_cmd="'$ALT_TARGET'/statusline-command.sh"
+expected_hook_cmd="'$ALT_TARGET'/hooks/some-hook.sh"
+jq -e --arg c "$expected_status_cmd" '.statusLine.command == $c' "$ALT_TARGET/settings.json" >/dev/null \
+  || fail "statusLine.command should be rewritten (quoted) to the alternate CLAUDE_HOME, got: $(jq -r '.statusLine.command' "$ALT_TARGET/settings.json")"
+jq -e --arg c "$expected_hook_cmd" '.hooks.UserPromptSubmit[0].hooks[0].command == $c' "$ALT_TARGET/settings.json" >/dev/null \
+  || fail "hook command should also be rewritten (quoted) to the alternate CLAUDE_HOME, got: $(jq -r '.hooks.UserPromptSubmit[0].hooks[0].command' "$ALT_TARGET/settings.json")"
+
+# =======================================================================
+# Regression: a CLAUDE_HOME containing a space must still work when its
+# rewritten command is later invoked through a shell (Claude Code runs
+# hook/statusLine commands via the shell) -- an unquoted rewrite would let
+# the space split the path into two argv words and fail to execute.
+# =======================================================================
+SPACE_REPO=$(fake_repo)
+cat > "$SPACE_REPO/settings.json" <<'EOF'
+{
+  "statusLine": {"type": "command", "command": "\"$HOME\"/.claude/statusline-command.sh"}
+}
+EOF
+SPACE_TARGET=$(mktemp -d "$SUITE_TMP/alt target with spaces.XXXXXX")
+expect_exit 0 "$SPACE_REPO" "$SPACE_TARGET" --apply
+printf '#!/usr/bin/env bash\necho ran-ok\n' > "$SPACE_TARGET/statusline-command.sh"
+chmod +x "$SPACE_TARGET/statusline-command.sh"
+rewritten_cmd=$(jq -r '.statusLine.command' "$SPACE_TARGET/settings.json")
+[ "$(bash -c "$rewritten_cmd")" = "ran-ok" ] \
+  || fail "rewritten command with a space in CLAUDE_HOME must execute as one path when run through a shell, got command: $rewritten_cmd"
 
 # =======================================================================
 # Coverage note: every branch this suite can reach without mocking a

@@ -251,11 +251,20 @@ rewrite_home=""
 # expansion. Inside JQ's own string literal, \" is an escaped literal quote,
 # so $marker's jq-string VALUE is `"$HOME"/.claude` (real quote characters) —
 # exactly what a decoded JSON command string looks like once parsed.
+#
+# $rh is shell-quoted via jq's @sh (not spliced in raw) before replacing the
+# marker: these rewritten commands are later invoked through a shell, so a
+# CLAUDE_HOME containing a space or other shell metacharacter must stay one
+# word. @sh wraps it in single quotes (escaping any embedded ones), matching
+# up against the unquoted "/.claude/..." suffix that follows -- adjacent
+# quoted+unquoted segments concatenate into a single shell word, same as the
+# original `"$HOME"/.claude` marker's own mixed quoting.
 REWRITE_HOME_JQ='
   def rewriteHome($rh):
     ("\"$HOME\"/.claude") as $marker |
     if $rh == "" then . else
-      walk(if type == "string" and startswith($marker) then $rh + .[($marker | length):] else . end)
+      ($rh | @sh) as $rhq |
+      walk(if type == "string" and startswith($marker) then $rhq + .[($marker | length):] else . end)
     end;
 '
 

@@ -146,31 +146,30 @@ if [ -n "$branch" ]; then
     elif command -v glab >/dev/null 2>&1; then
         MRCACHE="$HOME/.claude/.mr-cache.json"
         MRREFRESH="$HOME/.claude/mr-refresh.sh"
-        # Repo identity, same derivation as mr-refresh.sh: the cache is a single
-        # global file, so a fresh entry for the same branch name in a DIFFERENT
-        # repo must not be treated as fresh (or shown) for this one.
+        # Repo identity, same derivation as mr-refresh.sh. The cache is one
+        # file shared by every session, keyed by "<repo>\t<branch>" so this
+        # session only ever reads/triggers-refresh-for its own entry -- a
+        # concurrent session on a different repo or branch has its own slot
+        # and can't mark this one fresh, stale, or overwrite it.
         mr_repo_id=$(git -C "$cwd" --no-optional-locks remote get-url origin 2>/dev/null)
         [ -z "$mr_repo_id" ] && mr_repo_id=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
-        if [ -x "$MRREFRESH" ]; then
-            mrstale=1
-            if [ -f "$MRCACHE" ]; then
-                mmt=$(stat -c %Y "$MRCACHE" 2>/dev/null || stat -f %m "$MRCACHE" 2>/dev/null || echo 0)
-                cached_branch=$(jq -r '.branch // empty' "$MRCACHE" 2>/dev/null)
-                cached_repo=$(jq -r '.repo // empty' "$MRCACHE" 2>/dev/null)
-                # A fresh cache for a DIFFERENT branch (or repo) is not fresh
-                # FOR THIS branch — refresh now instead of waiting out the
-                # other branch's 10-minute window with no MR link shown here.
-                if [ $((now - mmt)) -lt 600 ] && [ "$cached_branch" = "$branch" ] && [ "$cached_repo" = "$mr_repo_id" ]; then
-                    mrstale=0
+        if [ -n "$mr_repo_id" ]; then
+            mr_key="$mr_repo_id"$'\t'"$branch"
+            if [ -x "$MRREFRESH" ]; then
+                mrstale=1
+                if [ -f "$MRCACHE" ]; then
+                    # Freshness is this entry's own "ts" field, not file mtime
+                    # -- another session's write to a different key also
+                    # bumps mtime without making THIS entry any fresher.
+                    entry_ts=$(jq -r --arg k "$mr_key" '.[$k].ts // empty' "$MRCACHE" 2>/dev/null)
+                    [ -n "$entry_ts" ] && [ $((now - entry_ts)) -lt 600 ] && mrstale=0
                 fi
+                [ "$mrstale" -eq 1 ] && ("$MRREFRESH" "$cwd" "$branch" >/dev/null 2>&1 &)
             fi
-            [ "$mrstale" -eq 1 ] && ("$MRREFRESH" "$cwd" "$branch" >/dev/null 2>&1 &)
-        fi
-        if [ -f "$MRCACHE" ] \
-            && [ "$(jq -r '.branch // empty' "$MRCACHE" 2>/dev/null)" = "$branch" ] \
-            && [ "$(jq -r '.repo // empty' "$MRCACHE" 2>/dev/null)" = "$mr_repo_id" ]; then
-            num=$(jq -r '.number // empty' "$MRCACHE" 2>/dev/null)
-            nurl=$(jq -r '.url // empty' "$MRCACHE" 2>/dev/null)
+            if [ -f "$MRCACHE" ]; then
+                num=$(jq -r --arg k "$mr_key" '.[$k].number // empty' "$MRCACHE" 2>/dev/null)
+                nurl=$(jq -r --arg k "$mr_key" '.[$k].url // empty' "$MRCACHE" 2>/dev/null)
+            fi
         fi
     fi
     if [ -n "$num" ]; then

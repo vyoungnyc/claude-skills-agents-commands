@@ -117,7 +117,9 @@ expect_match "🌿 feature/widget"
 GLAB_STUB=$(fake_glab_stubdir)
 MRSCOPE_HOME=$(fake_home)
 mkdir -p "$MRSCOPE_HOME/.claude"
-jq -n '{branch:"feature/widget", repo:"/some/other/repo-not-this-one", number: "55", url: "https://example.com/mr/55"}' \
+MRSCOPE_KEY=$(printf '%s\t%s' "/some/other/repo-not-this-one" "feature/widget")
+jq -n --arg k "$MRSCOPE_KEY" --argjson now "$(date +%s)" \
+  '{($k): {branch:"feature/widget", repo:"/some/other/repo-not-this-one", number: "55", url: "https://example.com/mr/55", ts: $now}}' \
   > "$MRSCOPE_HOME/.claude/.mr-cache.json"
 run_statusline "$MRSCOPE_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')" "$GLAB_STUB"
 expect_match "🌿 feature/widget"
@@ -129,7 +131,9 @@ expect_not_match "(#55)"
 # =======================================================================
 MRMATCH_HOME=$(fake_home)
 mkdir -p "$MRMATCH_HOME/.claude"
-jq -n --arg repo "$GIT_REPO" '{branch:"feature/widget", repo:$repo, number: "77", url: "https://example.com/mr/77"}' \
+MRMATCH_KEY=$(printf '%s\t%s' "$GIT_REPO" "feature/widget")
+jq -n --arg k "$MRMATCH_KEY" --arg repo "$GIT_REPO" --argjson now "$(date +%s)" \
+  '{($k): {branch:"feature/widget", repo:$repo, number: "77", url: "https://example.com/mr/77", ts: $now}}' \
   > "$MRMATCH_HOME/.claude/.mr-cache.json"
 run_statusline "$MRMATCH_HOME" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')" "$GLAB_STUB"
 expect_match "(#77)"

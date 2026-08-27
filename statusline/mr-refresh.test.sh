@@ -56,6 +56,10 @@ EOF
 
 glab_called() { [ -f "$1/glab-called" ]; }
 
+# mr_key <repo_id> <branch> — the cache's per-entry object key, matching the
+# script's own "<repo_id>\t<branch>" derivation.
+mr_key() { printf '%s\t%s' "$1" "$2"; }
+
 FOUND_JSON='[{"iid": 42, "web_url": "https://gitlab.example.com/group/proj/-/merge_requests/42"}]'
 NONE_JSON='[]'
 
@@ -75,16 +79,17 @@ env HOME="$NOBRANCH_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" ""
 glab_called "$NOBRANCH_HOME" && fail "an empty branch should short-circuit before calling glab"
 
 # =======================================================================
-# MR found: cache written with branch, iid, and web_url.
+# MR found: cache written keyed by repo+branch, with branch, iid, web_url.
 # =======================================================================
 FOUND_HOME=$(fake_home)
 STUBDIR=$(fake_glab_stubdir "$FOUND_HOME" "$FOUND_JSON")
 env HOME="$FOUND_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
 CACHE="$FOUND_HOME/.claude/.mr-cache.json"
 [ -f "$CACHE" ] || fail "expected .mr-cache.json to be written"
-[ "$(jq -r '.branch' "$CACHE")" = "feature/x" ] || fail "cached branch mismatch"
-[ "$(jq -r '.number' "$CACHE")" = "42" ] || fail "cached MR number mismatch"
-[ "$(jq -r '.url' "$CACHE")" = "https://gitlab.example.com/group/proj/-/merge_requests/42" ] || fail "cached MR url mismatch"
+KEY=$(mr_key "" "feature/x")
+[ "$(jq -r --arg k "$KEY" '.[$k].branch' "$CACHE")" = "feature/x" ] || fail "cached branch mismatch"
+[ "$(jq -r --arg k "$KEY" '.[$k].number' "$CACHE")" = "42" ] || fail "cached MR number mismatch"
+[ "$(jq -r --arg k "$KEY" '.[$k].url' "$CACHE")" = "https://gitlab.example.com/group/proj/-/merge_requests/42" ] || fail "cached MR url mismatch"
 
 # =======================================================================
 # No MR for the branch: cache still records the branch (so the status line
@@ -94,36 +99,49 @@ NONE_HOME=$(fake_home)
 STUBDIR=$(fake_glab_stubdir "$NONE_HOME" "$NONE_JSON")
 env HOME="$NONE_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "no-mr-branch"
 CACHE="$NONE_HOME/.claude/.mr-cache.json"
-[ "$(jq -r '.branch' "$CACHE")" = "no-mr-branch" ] || fail "cached branch mismatch (no-MR case)"
-[ "$(jq -r '.number' "$CACHE")" = "null" ] || fail "expected null MR number when no MR exists"
-[ "$(jq -r '.url' "$CACHE")" = "null" ] || fail "expected null MR url when no MR exists"
+KEY=$(mr_key "" "no-mr-branch")
+[ "$(jq -r --arg k "$KEY" '.[$k].branch' "$CACHE")" = "no-mr-branch" ] || fail "cached branch mismatch (no-MR case)"
+[ "$(jq -r --arg k "$KEY" '.[$k].number' "$CACHE")" = "null" ] || fail "expected null MR number when no MR exists"
+[ "$(jq -r --arg k "$KEY" '.[$k].url' "$CACHE")" = "null" ] || fail "expected null MR url when no MR exists"
 
 # =======================================================================
-# Fresh cache for the SAME branch already exists: skip re-querying glab.
+# Fresh entry for the SAME repo+branch already exists: skip re-querying glab.
 # =======================================================================
 SKIP_HOME=$(fake_home)
 STUBDIR=$(fake_glab_stubdir "$SKIP_HOME" "$FOUND_JSON")
 mkdir -p "$SKIP_HOME/.claude"
-jq -n '{branch:"feature/x", number: "7", url: "https://example.com/mr/7"}' > "$SKIP_HOME/.claude/.mr-cache.json"
+KEY=$(mr_key "" "feature/x")
+jq -n --arg k "$KEY" --argjson now "$(date +%s)" \
+  '{($k): {branch:"feature/x", repo:"", number: "7", url: "https://example.com/mr/7", ts: $now}}' \
+  > "$SKIP_HOME/.claude/.mr-cache.json"
 env HOME="$SKIP_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
-glab_called "$SKIP_HOME" && fail "a fresh cache for the same branch should skip the glab lookup"
-[ "$(jq -r '.number' "$SKIP_HOME/.claude/.mr-cache.json")" = "7" ] || fail "fresh same-branch cache should not have been overwritten"
+glab_called "$SKIP_HOME" && fail "a fresh entry for the same repo+branch should skip the glab lookup"
+[ "$(jq -r --arg k "$KEY" '.[$k].number' "$SKIP_HOME/.claude/.mr-cache.json")" = "7" ] || fail "fresh entry should not have been overwritten"
 
 # =======================================================================
-# Cache exists but for a DIFFERENT branch: still re-queries glab.
+# Cache has an entry for a DIFFERENT branch (same repo): still re-queries
+# glab, and the other branch's own entry survives the write untouched (a
+# per-key merge, not a whole-file replace).
 # =======================================================================
 DIFFBRANCH_HOME=$(fake_home)
 STUBDIR=$(fake_glab_stubdir "$DIFFBRANCH_HOME" "$FOUND_JSON")
 mkdir -p "$DIFFBRANCH_HOME/.claude"
-jq -n '{branch:"other-branch", number: "7", url: "https://example.com/mr/7"}' > "$DIFFBRANCH_HOME/.claude/.mr-cache.json"
+KEY_OTHER=$(mr_key "" "other-branch")
+jq -n --arg k "$KEY_OTHER" --argjson now "$(date +%s)" \
+  '{($k): {branch:"other-branch", repo:"", number: "7", url: "https://example.com/mr/7", ts: $now}}' \
+  > "$DIFFBRANCH_HOME/.claude/.mr-cache.json"
 env HOME="$DIFFBRANCH_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
-glab_called "$DIFFBRANCH_HOME" || fail "a cache for a different branch should trigger a fresh glab lookup"
-[ "$(jq -r '.branch' "$DIFFBRANCH_HOME/.claude/.mr-cache.json")" = "feature/x" ] || fail "cache should now reflect the requested branch"
+glab_called "$DIFFBRANCH_HOME" || fail "a cache with no entry for this branch should trigger a fresh glab lookup"
+KEY_NEW=$(mr_key "" "feature/x")
+[ "$(jq -r --arg k "$KEY_NEW" '.[$k].branch' "$DIFFBRANCH_HOME/.claude/.mr-cache.json")" = "feature/x" ] || fail "cache should now have an entry for the requested branch"
+[ "$(jq -r --arg k "$KEY_OTHER" '.[$k].branch' "$DIFFBRANCH_HOME/.claude/.mr-cache.json")" = "other-branch" ] \
+  || fail "the other branch's existing entry must survive the merge, not be replaced"
 
 # =======================================================================
 # Regression: cache is scoped to the repo, not just the branch name. Two
 # different repos sharing a branch name must not reuse each other's fresh
-# cache entry (the global .mr-cache.json is not per-repo on disk).
+# cache entry, and refreshing one repo's entry must not clobber the other's
+# (each repo+branch owns its own key in the same shared file).
 # =======================================================================
 REPO_A="$SUITE_TMP/repo-a"
 REPO_B="$SUITE_TMP/repo-b"
@@ -136,14 +154,33 @@ git -C "$REPO_B" remote add origin "https://gitlab.example.com/group/repo-b.git"
 REPOSCOPE_HOME=$(fake_home)
 STUBDIR=$(fake_glab_stubdir "$REPOSCOPE_HOME" "$FOUND_JSON")
 mkdir -p "$REPOSCOPE_HOME/.claude"
-jq -n '{branch:"feature/x", repo:"https://gitlab.example.com/group/repo-a.git", number: "99", url: "https://example.com/mr/99"}' \
+KEY_A=$(mr_key "https://gitlab.example.com/group/repo-a.git" "feature/x")
+jq -n --arg k "$KEY_A" --argjson now "$(date +%s)" \
+  '{($k): {branch:"feature/x", repo:"https://gitlab.example.com/group/repo-a.git", number: "99", url: "https://example.com/mr/99", ts: $now}}' \
   > "$REPOSCOPE_HOME/.claude/.mr-cache.json"
 
 # Same branch name, but requested from repo-b: must NOT be treated as fresh.
 env HOME="$REPOSCOPE_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$REPO_B" "feature/x"
-glab_called "$REPOSCOPE_HOME" || fail "a fresh cache from a DIFFERENT repo with the same branch name should not block a fresh lookup"
-[ "$(jq -r '.repo' "$REPOSCOPE_HOME/.claude/.mr-cache.json")" = "https://gitlab.example.com/group/repo-b.git" ] \
-  || fail "cache should now record repo-b's identity, not repo-a's"
+glab_called "$REPOSCOPE_HOME" || fail "a fresh entry from a DIFFERENT repo with the same branch name should not block a fresh lookup"
+KEY_B=$(mr_key "https://gitlab.example.com/group/repo-b.git" "feature/x")
+[ "$(jq -r --arg k "$KEY_B" '.[$k].repo' "$REPOSCOPE_HOME/.claude/.mr-cache.json")" = "https://gitlab.example.com/group/repo-b.git" ] \
+  || fail "cache should now have repo-b's own entry"
+[ "$(jq -r --arg k "$KEY_A" '.[$k].number' "$REPOSCOPE_HOME/.claude/.mr-cache.json")" = "99" ] \
+  || fail "repo-a's entry must survive untouched -- concurrent sessions on different repos must not clobber each other's cache entry"
+
+# =======================================================================
+# Backward compatibility: a pre-upgrade flat-format cache (a single
+# unkeyed {branch,repo,number,url} object, no per-entry "ts") is discarded
+# rather than crashing the jq merge or corrupting the write.
+# =======================================================================
+LEGACY_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$LEGACY_HOME" "$FOUND_JSON")
+mkdir -p "$LEGACY_HOME/.claude"
+jq -n '{branch:"feature/x", repo:"", number: "7", url: "https://example.com/mr/7"}' > "$LEGACY_HOME/.claude/.mr-cache.json"
+env HOME="$LEGACY_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+KEY=$(mr_key "" "feature/x")
+[ "$(jq -r --arg k "$KEY" '.[$k].number' "$LEGACY_HOME/.claude/.mr-cache.json")" = "42" ] \
+  || fail "a legacy flat-format cache should be discarded and replaced with the new keyed entry, not break the write"
 
 # =======================================================================
 # Single-flight lock: a held (fresh) lock skips the lookup.
