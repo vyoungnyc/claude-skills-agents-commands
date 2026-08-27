@@ -166,8 +166,8 @@ run "$R3" --apply --no-hooks >/dev/null 2>&1 || fail "(8) --no-hooks exited nonz
 # ============================================================ (9) --map-models
 R4="$(setup_repo)"
 run "$R4" --apply --map-models >/dev/null 2>&1 || fail "(9) --map-models exited nonzero"
-grep -q '^model: @good$' "$R4/omp/agent/agents/checker.md" \
-  || fail "(9) opus not mapped to @good: $(grep '^model:' "$R4/omp/agent/agents/checker.md")"
+grep -q '^model: "@good"$' "$R4/omp/agent/agents/checker.md" \
+  || fail "(9) opus not mapped to quoted @good (unquoted @ is invalid YAML): $(grep '^model:' "$R4/omp/agent/agents/checker.md")"
 grep -q '^model:' "$R4/omp/agent/agents/boss.md" \
   && fail "(9) sonnet should stay inherited (no model line)"
 
@@ -176,4 +176,32 @@ if run "$R" --bogus >/dev/null 2>&1; then
   fail "(10) unknown arg did not exit nonzero"
 fi
 
-echo "PASS: sync-omp-config.test.sh (10 cases)"
+# ============================================================ (11) jq gating
+# The converter never calls jq; only the deployed hook scripts need it. So a
+# --no-hooks sync must work without jq, while a hooks sync must fail fast when
+# jq is absent. Build a PATH mirroring the real one MINUS jq; skip if jq can't
+# be hidden (e.g. shadowed by a builtin).
+NOJQ_BIN="$SUITE_TMP/nojq-bin"
+mkdir -p "$NOJQ_BIN"
+_oldifs="$IFS"; IFS=:
+for d in $PATH; do
+  [ -d "$d" ] || continue
+  for exe in "$d"/*; do
+    b="${exe##*/}"
+    [ "$b" = "jq" ] && continue
+    [ -e "$NOJQ_BIN/$b" ] || ln -s "$exe" "$NOJQ_BIN/$b" 2>/dev/null || true
+  done
+done
+IFS="$_oldifs"
+if command -v jq >/dev/null 2>&1 && ! PATH="$NOJQ_BIN" command -v jq >/dev/null 2>&1; then
+  R5="$(setup_repo)"
+  PATH="$NOJQ_BIN" OMP_HOME="$R5/omp" bash "$R5/scripts/sync-omp-config.sh" --apply --no-hooks >/dev/null 2>&1 \
+    || fail "(11) --no-hooks sync must succeed without jq"
+  [ -f "$R5/omp/agent/agents/checker.md" ] || fail "(11) --no-hooks --apply without jq did not deploy agents"
+  R6="$(setup_repo)"
+  if PATH="$NOJQ_BIN" OMP_HOME="$R6/omp" bash "$R6/scripts/sync-omp-config.sh" --apply >/dev/null 2>&1; then
+    fail "(11) hooks sync without jq must fail (jq needed for the deployed hook scripts)"
+  fi
+fi
+
+echo "PASS: sync-omp-config.test.sh (11 cases)"

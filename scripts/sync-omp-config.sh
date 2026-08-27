@@ -65,15 +65,6 @@
 
 set -euo pipefail
 
-command -v jq >/dev/null 2>&1 || {
-  echo "sync-omp-config.sh: jq is required but was not found on PATH" >&2
-  exit 1
-}
-command -v awk >/dev/null 2>&1 || {
-  echo "sync-omp-config.sh: awk is required but was not found on PATH" >&2
-  exit 1
-}
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OMP_HOME="${OMP_HOME:-$HOME/.omp}"
 OMP_AGENT="$OMP_HOME/agent"
@@ -96,6 +87,22 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+# jq and awk are checked AFTER argument parsing so --help and unknown-arg paths
+# never depend on them. awk is always required (agent frontmatter conversion).
+# The converter itself never calls jq; jq is only needed by the DEPLOYED hook
+# scripts at runtime, so require it only when hooks are being deployed — an
+# agents/skills/commands-only sync (--no-hooks) runs without jq present.
+command -v awk >/dev/null 2>&1 || {
+  echo "sync-omp-config.sh: awk is required but was not found on PATH" >&2
+  exit 1
+}
+if [ "$WITH_HOOKS" -eq 1 ]; then
+  command -v jq >/dev/null 2>&1 || {
+    echo "sync-omp-config.sh: jq is required by the deployed hook scripts (pass --no-hooks to skip) but was not found on PATH" >&2
+    exit 1
+  }
+fi
 
 # Ephemeral staging tree; always cleaned up. Everything the converter produces
 # lives here until (and only if) --apply overlays it onto the target.
@@ -215,7 +222,7 @@ convert_agent() {
         }
         print line
       }
-      if (model_out != "") print "model: " model_out
+      if (model_out != "") print "model: \"" model_out "\""
       print "---"
       printf "%s", body
     }
