@@ -496,32 +496,32 @@ bash "$SCRIPT" "$T1" "$RSER_OUT" >/dev/null 2>&1
 [ -f "$RSER_OUT" ] || fail "an abandoned lock with no in-flight reclaim should be reclaimed"
 
 # Release side: a process whose lock is taken over mid-run must NOT delete
-# the new owner's lock on exit -- doing so admits a third process. A `jq`
-# wrapper holds the critical section open (jq is only invoked after the lock
-# is taken) so the owner can be swapped underneath it.
+# the new owner's lock on exit -- doing so admits a third process.
+#
+# The takeover is performed BY the jq wrapper, i.e. from inside the run while
+# it holds the lock, rather than by this suite polling for the lock and
+# swapping the owner from outside. The external version is a race: under load
+# the run can finish before the poll lands, and the test then fails for a
+# reason that has nothing to do with the invariant.
+TAKEOVER_OUT="$SUITE_TMP/tstakeover/session.json"
+mkdir -p "$SUITE_TMP/tstakeover"
+TS_OTHER_PID=$$   # a live pid that is never the script's own
 LOCKBIN=$(mktemp -d "$SUITE_TMP/lockbin.XXXXXX")
 REAL_JQ=$(command -v jq)
 cat > "$LOCKBIN/jq" <<EOF
 #!/usr/bin/env bash
-if [ ! -f "$SUITE_TMP/ts-held" ]; then
-  : > "$SUITE_TMP/ts-held"
-  sleep 1
+# jq is only invoked after the lock is taken, so the first call is inside the
+# critical section: swap the owner there, deterministically.
+if [ ! -f "$SUITE_TMP/ts-took" ] && [ -d "$TAKEOVER_OUT.lock" ]; then
+  : > "$SUITE_TMP/ts-took"
+  printf '%s' "$TS_OTHER_PID" > "$TAKEOVER_OUT.lock/owner"
 fi
 exec "$REAL_JQ" "\$@"
 EOF
 chmod +x "$LOCKBIN/jq"
-rm -f "$SUITE_TMP/ts-held"
-TAKEOVER_OUT="$SUITE_TMP/tstakeover/session.json"
-mkdir -p "$SUITE_TMP/tstakeover"
-TS_OTHER_PID=$$   # a live pid that is never the script's own
-env PATH="$LOCKBIN:$PATH" bash "$SCRIPT" "$T1" "$TAKEOVER_OUT" >/dev/null 2>&1 &
-TS_PID=$!
-i=0
-while [ "$i" -lt 300 ] && [ ! -d "$TAKEOVER_OUT.lock" ]; do i=$((i+1)); /bin/sleep 0.01; done
-[ -d "$TAKEOVER_OUT.lock" ] || fail "takeover setup: the run never took its lock"
-printf '%s' "$TS_OTHER_PID" > "$TAKEOVER_OUT.lock/owner"
-wait "$TS_PID" 2>/dev/null || true
-rm -f "$SUITE_TMP/ts-held"
+rm -f "$SUITE_TMP/ts-took"
+env PATH="$LOCKBIN:$PATH" bash "$SCRIPT" "$T1" "$TAKEOVER_OUT" >/dev/null 2>&1
+[ -f "$SUITE_TMP/ts-took" ] || fail "takeover setup: the jq wrapper never ran inside the critical section"
 [ -d "$TAKEOVER_OUT.lock" ] \
   || fail "the EXIT trap deleted a lock this process no longer owned -- that lets a third process in"
 [ "$(cat "$TAKEOVER_OUT.lock/owner" 2>/dev/null)" = "$TS_OTHER_PID" ] \
