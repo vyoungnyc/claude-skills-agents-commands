@@ -10,8 +10,9 @@
 #
 # agents/, skills/, commands/, rules/, hooks/*.sh are overlay-copied — never
 # deleted, so a live-only file not present in the repo survives untouched.
-# Any file/dir about to be overwritten is backed up first, same as CLAUDE.md
-# and settings.json below.
+# Any directory about to be modified (agents/skills/commands/rules/hooks) is
+# snapshotted whole first, so a rollback is one recursive copy; CLAUDE.md and
+# settings.json are backed up per file, same as below.
 #
 # CLAUDE.md is fully overwritten (it's meant to be an exact mirror of the
 # repo's copy) but only when it differs, and only after backing up the live
@@ -118,10 +119,12 @@ if [ -d "$src_hooks" ]; then
       note "hooks/$base -> $dst_f"
       CHANGED=1
       if [ "$APPLY" -eq 1 ]; then
-        if [ -f "$dst_f" ]; then
+        # Whole-directory snapshot of the live hooks dir, once, before the
+        # first change — same restore-with-one-copy model as the dirs above.
+        if [ -d "$dst_hooks" ] && [ ! -e "$BACKUP_DIR/hooks" ]; then
           backup_once
           mkdir -p "$BACKUP_DIR/hooks"
-          cp "$dst_f" "$BACKUP_DIR/hooks/$base"
+          cp -r "$dst_hooks/." "$BACKUP_DIR/hooks/"
         fi
         mkdir -p "$dst_hooks"
         cp "$f" "$dst_f"

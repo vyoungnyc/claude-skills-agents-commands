@@ -99,6 +99,9 @@ R="$(setup_repo)"
 run "$R" --apply >/dev/null 2>&1 || fail "(1) --apply exited nonzero"
 AG="$R/omp/agent/agents/checker.md"
 [ -f "$AG" ] || fail "(1) checker.md not deployed"
+# First-ever deploy created the dirs from nothing — there is no prior state,
+# so no backup snapshot must be produced (mirrors the whole-dir contract).
+[ ! -d "$R/omp/backups" ] || fail "(1) first-ever deploy must not create a backup"
 grep -q '^tools: read, grep, glob, bash$' "$AG" \
   || fail "(1) checker tools not translated to 'read, grep, glob, bash': $(grep '^tools:' "$AG")"
 grep -q 'LS\|mcp__\|write\|edit' "$AG" \
@@ -125,6 +128,16 @@ TS="$R/omp/agent/hooks/pre/claude-compat.ts"
 grep -q 'export default function' "$TS" || fail "(4) adapter missing default export"
 [ -f "$R/omp/agent/hooks/scripts/echoer.sh" ] || fail "(4) hook script not copied"
 [ -f "$R/omp/agent/hooks/scripts/echoer.test.sh" ] && fail "(4) *.test.sh must not deploy"
+# The adapter deploys at user/global scope, so it must mirror the GLOBAL
+# settings.json hook set. pr-merge-sync-reminder.sh is project-scoped only
+# (hooks/settings.json, Bash(gh *)) and must NOT be wired — a global wiring
+# would fire an invalid sync prompt after squash merges in unrelated repos.
+grep -q 'runScript("pr-merge-sync-reminder' "$TS" \
+  && fail "(4) project-scoped pr-merge-sync-reminder must not be invoked by the global adapter"
+# Positive controls: global-scope hooks stay wired (match the invocation, not
+# the doc comments, which mention several script names).
+grep -q 'runScript("enforce-git-conventions' "$TS" || fail "(4) enforce-git-conventions not wired"
+grep -q '"auto-test-runner.sh"' "$TS" || fail "(4) auto-test-runner not wired"
 
 # ============================================================ (5) idempotent
 OUT="$(run "$R" --apply 2>&1)"
@@ -138,9 +151,11 @@ run "$R2" >/dev/null 2>&1 || fail "(6) dry run exited nonzero"
 # ============================================================ (7) backup on overwrite
 echo "tampered" > "$AG"
 OUT="$(run "$R" --apply 2>&1)"
-echo "$OUT" | grep -q "Backups of overwritten files" || fail "(7) no backup reported on overwrite"
-ls "$R"/omp/backups/*/agent/agents/checker.md >/dev/null 2>&1 \
-  || fail "(7) overwritten file not backed up"
+echo "$OUT" | grep -q "Backup (full snapshot" || fail "(7) no backup snapshot reported on overwrite"
+BK="$(ls -d "$R"/omp/backups/*/agent/agents 2>/dev/null | head -1)"
+[ -n "$BK" ] || fail "(7) no directory snapshot created"
+grep -q tampered "$BK/checker.md" || fail "(7) overwritten file's pre-apply content missing from snapshot"
+[ -f "$BK/boss.md" ] || fail "(7) snapshot is not a full-directory copy (unchanged sibling boss.md absent)"
 
 # ============================================================ (8) --no-hooks
 R3="$(setup_repo)"

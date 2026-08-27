@@ -10,9 +10,10 @@
 # source of the omp-format translation.
 #
 # Dry run by default: prints what would change and exits 0 without touching
-# anything. Pass --apply to actually write. Every live file this script
-# overwrites is backed up first under <OMP_HOME>/backups/omp-sync-<timestamp>/,
-# so an unwanted apply is always recoverable.
+# anything. Pass --apply to actually write. Before modifying a live target
+# directory, this script snapshots the WHOLE directory under
+# <OMP_HOME>/backups/omp-sync-<timestamp>/ — a full-directory backup, so an
+# unwanted apply rolls back with a single recursive copy.
 #
 # WHY a converter is needed (per-artifact):
 #
@@ -116,14 +117,20 @@ note() {
   fi
 }
 
-backup_one() {
-  # $1 = absolute path of a live file about to be overwritten. Mirrors its
-  # path under BACKUP_DIR relative to OMP_HOME.
-  local live="$1" rel dest
-  rel="${live#"$OMP_HOME"/}"
+backup_dir_once() {
+  # $1 = absolute path of a live category directory about to be modified.
+  # Snapshots the ENTIRE directory (changed, unchanged, and live-only files)
+  # once per run, mirroring its path under BACKUP_DIR relative to OMP_HOME, so
+  # rolling back an unwanted apply is a single recursive restore. No-op if the
+  # directory does not exist yet (a first-ever deploy has nothing to preserve)
+  # or was already snapshotted this run.
+  local lroot="$1" rel dest
+  [ -d "$lroot" ] || return 0
+  rel="${lroot#"$OMP_HOME"/}"
   dest="$BACKUP_DIR/$rel"
+  [ -e "$dest" ] && return 0
   mkdir -p "$(dirname "$dest")"
-  cp "$live" "$dest"
+  cp -R "$lroot" "$dest"
   BACKED_UP=1
 }
 
@@ -280,7 +287,6 @@ if [ "$WITH_HOOKS" -eq 1 ] && [ -d "$REPO_ROOT/hooks" ]; then
 //   UserPromptSubmit  response-style.sh          -> before_agent_start
 //   PostCompact       plan-context.sh            -> session.compacting
 //   PreToolUse Bash   enforce-git-conventions.sh -> tool_call (bash)
-//   PostToolUse Bash  pr-merge-sync-reminder.sh  -> tool_result (bash)
 //   PostToolUse Edit/Write auto-format.sh,
 //                          auto-test-runner.sh   -> tool_result (write/edit)
 //
@@ -288,6 +294,13 @@ if [ "$WITH_HOOKS" -eq 1 ] && [ -d "$REPO_ROOT/hooks" ]; then
 //   - PermissionRequest (auto-approve-safe-ops.sh) has NO omp hook event and
 //     is intentionally NOT wired. Express that policy through omp's approval /
 //     allowlist settings instead.
+//   - pr-merge-sync-reminder.sh is wired ONLY in the project-scoped
+//     hooks/settings.json (PostToolUse Bash(gh *)), never the global
+//     settings.json: it is meaningful only inside this repo (it points the
+//     user at this repo's sync-claude-config.sh after a squash merge). This
+//     adapter deploys at omp USER scope, so it mirrors the GLOBAL hook set and
+//     intentionally does NOT wire it — a global wiring would emit an invalid
+//     sync prompt after squash merges in unrelated projects.
 //   - The shell scripts consume Claude's hook stdin schema
 //     ({tool_input:{command|file_path}}) and CLAUDE_PROJECT_DIR; this adapter
 //     reconstructs that shape from omp event data.
@@ -384,19 +397,9 @@ export default function claudeCompat(pi: HookAPI): void {
     }
   });
 
-  // PostToolUse Bash(gh *) + Edit|Write -> reminders / format / tests.
+  // PostToolUse Edit|Write -> auto-format + fire-and-forget test runner.
   pi.on("tool_result", async (event, ctx) => {
     const notes: string[] = [];
-
-    if (event.toolName === "bash") {
-      const command = String(event.input.command ?? "");
-      const stdin = JSON.stringify({ tool_name: "Bash", tool_input: { command } });
-      const { json } = parseHookStdout(
-        runScript("pr-merge-sync-reminder.sh", stdin, ctx.cwd).stdout,
-      );
-      const msg = json?.hookSpecificOutput?.systemMessage;
-      if (msg) notes.push(String(msg));
-    }
 
     if (event.toolName === "write" || event.toolName === "edit") {
       const filePath = firstEditPath(event.input);
@@ -437,11 +440,15 @@ fi
 # ============================ SYNC (overlay onto target) =====================
 
 # Overlay one staged tree onto a live tree: add/update only, never delete.
-# Backs up any live file about to change before writing it.
+# Snapshots the whole live directory (once) before its first change.
 overlay_tree() {
   # $1 = staged root, $2 = live root, $3 = label
-  local sroot="$1" lroot="$2" label="$3" f rel dst
+  local sroot="$1" lroot="$2" label="$3" f rel dst preexisted=0
   [ -d "$sroot" ] || return 0
+  # Snapshot only a dir that existed BEFORE this run — a first-ever deploy that
+  # creates the dir has nothing to preserve, and the snapshot must capture the
+  # pristine pre-run state (taken before the first overwrite below).
+  [ -d "$lroot" ] && preexisted=1
   while IFS= read -r -d '' f; do
     rel="${f#"$sroot"/}"
     dst="$lroot/$rel"
@@ -449,7 +456,7 @@ overlay_tree() {
       note "$label/$rel"
       CHANGED=$((CHANGED + 1))
       if [ "$APPLY" -eq 1 ]; then
-        [ -f "$dst" ] && backup_one "$dst"
+        [ "$preexisted" -eq 1 ] && backup_dir_once "$lroot"
         mkdir -p "$(dirname "$dst")"
         cp "$f" "$dst"
       fi
@@ -476,7 +483,7 @@ fi
 
 if [ "$APPLY" -eq 1 ]; then
   echo "Applied $CHANGED change(s) to $OMP_AGENT."
-  [ "$BACKED_UP" -eq 1 ] && echo "Backups of overwritten files: $BACKUP_DIR"
+  [ "$BACKED_UP" -eq 1 ] && echo "Backup (full snapshot of modified dirs): $BACKUP_DIR"
   if [ "$WITH_HOOKS" -eq 1 ]; then
     echo
     echo "HOOKS: wrote $OMP_AGENT/hooks/pre/claude-compat.ts + scripts/. If omp"

@@ -200,6 +200,7 @@ COLLIDE_HOME=$(fake_home)
 mkdir -p "$COLLIDE_HOME/agents" "$COLLIDE_HOME/hooks"
 echo "live agent content, pre-sync" > "$COLLIDE_HOME/agents/example.md"
 printf '#!/bin/bash\necho live-pre-sync\n' > "$COLLIDE_HOME/hooks/example.sh"
+printf '#!/bin/bash\necho keep\n' > "$COLLIDE_HOME/hooks/keep.sh"  # live-only, not in repo
 expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
 
 [ "$(cat "$COLLIDE_HOME/agents/example.md")" = "agent content" ] || fail "colliding agents/ file not overwritten with repo version"
@@ -214,6 +215,12 @@ COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>
 [ -n "$COLLIDE_HOOK_BACKUP" ] || fail "expected a backup of the overwritten hooks/example.sh"
 [ "$(cat "$COLLIDE_HOOK_BACKUP")" = "#!/bin/bash
 echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
+
+# Whole-directory snapshot: the live-only hook (never in the repo) is captured
+# in the hooks backup too, and survives in place after the overlay.
+COLLIDE_HOOK_LIVEONLY=$(find "$COLLIDE_HOME/backups" -path "*/hooks/keep.sh" 2>/dev/null | head -1)
+[ -n "$COLLIDE_HOOK_LIVEONLY" ] || fail "hooks backup is not a whole-directory snapshot (live-only keep.sh missing)"
+[ -f "$COLLIDE_HOME/hooks/keep.sh" ] || fail "overlay must not delete a live-only hook"
 
 # =======================================================================
 # --apply on a differing CLAUDE.md: backs up the live version byte-for-byte
