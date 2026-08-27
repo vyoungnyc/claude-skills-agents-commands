@@ -201,6 +201,7 @@ mkdir -p "$COLLIDE_HOME/agents" "$COLLIDE_HOME/hooks"
 echo "live agent content, pre-sync" > "$COLLIDE_HOME/agents/example.md"
 printf '#!/bin/bash\necho live-pre-sync\n' > "$COLLIDE_HOME/hooks/example.sh"
 printf '#!/bin/bash\necho keep\n' > "$COLLIDE_HOME/hooks/keep.sh"  # live-only, not in repo
+ln -s example.sh "$COLLIDE_HOME/hooks/linked.sh"  # live-only symlink hook
 expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
 
 [ "$(cat "$COLLIDE_HOME/agents/example.md")" = "agent content" ] || fail "colliding agents/ file not overwritten with repo version"
@@ -221,6 +222,13 @@ echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-syn
 COLLIDE_HOOK_LIVEONLY=$(find "$COLLIDE_HOME/backups" -path "*/hooks/keep.sh" 2>/dev/null | head -1)
 [ -n "$COLLIDE_HOOK_LIVEONLY" ] || fail "hooks backup is not a whole-directory snapshot (live-only keep.sh missing)"
 [ -f "$COLLIDE_HOME/hooks/keep.sh" ] || fail "overlay must not delete a live-only hook"
+
+# Symlink preservation: a live symlinked hook must be backed up AS a symlink
+# (cp -R, not -r, which follows links on BSD), so a restore recreates the link
+# rather than a dereferenced regular file.
+COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/dev/null | head -1)
+[ -L "$COLLIDE_HOOK_LINK" ] || fail "hooks backup dereferenced a symlink instead of preserving it"
+[ "$(readlink "$COLLIDE_HOOK_LINK")" = "example.sh" ] || fail "backed-up symlink target changed"
 
 # =======================================================================
 # --apply on a differing CLAUDE.md: backs up the live version byte-for-byte

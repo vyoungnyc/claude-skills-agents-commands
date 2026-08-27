@@ -103,10 +103,10 @@ for name in agents skills commands rules; do
     if [ -d "$dst" ]; then
       backup_once
       mkdir -p "$BACKUP_DIR/$name"
-      cp -r "$dst/." "$BACKUP_DIR/$name/"
+      cp -R "$dst/." "$BACKUP_DIR/$name/"
     fi
     mkdir -p "$dst"
-    cp -r "$src/." "$dst/"
+    cp -R "$src/." "$dst/"
   fi
 done
 
@@ -127,7 +127,7 @@ if [ -d "$src_hooks" ]; then
         if [ -d "$dst_hooks" ] && [ ! -e "$BACKUP_DIR/hooks" ]; then
           backup_once
           mkdir -p "$BACKUP_DIR/hooks"
-          cp -r "$dst_hooks/." "$BACKUP_DIR/hooks/"
+          cp -R "$dst_hooks/." "$BACKUP_DIR/hooks/"
         fi
         mkdir -p "$dst_hooks"
         cp "$f" "$dst_f"
