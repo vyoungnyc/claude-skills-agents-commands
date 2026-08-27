@@ -67,7 +67,6 @@ sanitize_repo_id() {
 input=$(cat)
 now=$(date +%s)
 model=$(echo "$input" | jq -r '.model.display_name')
-model_id=$(echo "$input" | jq -r '.model.id // empty')
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 transcript=$(echo "$input" | jq -r '.transcript_path // empty')
 effort=$(echo "$input" | jq -r '.effort.level // empty')
@@ -100,7 +99,6 @@ branch=""
 if git -C "$cwd" --no-optional-locks rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     branch=$(git -C "$cwd" --no-optional-locks branch --show-current 2>/dev/null)
 fi
-pr=$(echo "$input" | jq -r '.pr.number // empty')
 
 ctx=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 ctxused=$(echo "$input" | jq -r '.context_window.total_input_tokens // empty')
@@ -123,12 +121,41 @@ _dfmt() {
     printf '%s' "$o" | sed -e 's/  */ /g' -e 's/^ //' -e 's/AM/am/g' -e 's/PM/pm/g'
 }
 
+# Coerce a value to a non-negative integer, else 0. Every arithmetic sink in this
+# file reads from a JSON cache or the stdin payload, and bash `$(( ))` evaluates
+# the VALUE as an arithmetic expression -- so a non-numeric value is not merely
+# wrong, it is executable: `x[$(cmd)]` runs `cmd` via the array-subscript rule.
+# Also stops "value too great for base" / "invalid number" errors leaking to the
+# terminal and stops a bare word silently evaluating to 0 ("resets in 0m" lie).
+# Leading zeros are stripped because bash reads them as OCTAL inside $(( )):
+# `$((08))` is "value too great for base", the same stderr noise this guard
+# exists to prevent. `10#` prefixing would work too but does not survive being
+# passed around as a plain value.
+int_or0() {
+    case "${1:-}" in ''|*[!0-9]*) printf '0'; return ;; esac
+    _v="${1#"${1%%[!0]*}"}"   # drop leading zeros
+    printf '%s' "${_v:-0}"
+}
+
+# mtime in epoch seconds, or 0. Validates that the output is NUMERIC instead of
+# trusting exit status: GNU `stat -f` means --file-system, so with GNU coreutils
+# ahead of /usr/bin (common on macOS via Homebrew) the fallback exits ZERO and
+# prints a multi-line filesystem report on stdout, meaning `|| echo 0` never
+# fires and the caller does arithmetic on junk.
+mtime_or0() {
+    _m=$(stat -c %Y "$1" 2>/dev/null)
+    case "$_m" in ''|*[!0-9]*) _m=$(stat -f %m "$1" 2>/dev/null) ;; esac
+    case "$_m" in ''|*[!0-9]*) _m=0 ;; esac
+    printf '%s' "$_m"
+}
+
 # Unified reset formatter, granularity by distance from now:
 #   <24h  -> relative   "in 2h02m" / "in 45m"
 #   <7d   -> weekday+clock "Sat 6:00pm"
 #   else  -> date       "Tue Sep 1"
 fmt_reset() {
-    epoch=$1
+    epoch=$(int_or0 "$1")
+    [ "$epoch" -eq 0 ] && { printf 'unknown'; return; }
     d=$((epoch - now))
     [ "$d" -lt 0 ] && d=0
     if [ "$d" -lt 86400 ]; then
@@ -185,14 +212,26 @@ dtext=$(printf "\e[01;34m%s\e[00m" "$dir")
 [ -n "$repo_url" ] && dtext=$(hlink "$repo_url" "$dtext")
 out="$out  $(printf "📁 %s" "$dtext")"
 
-# | 🌿 branch [(#PR/MR)] [🌲worktree] — branch is plain; PR/MR number links out
+# (#N), hyperlinked when a URL is known. Used both beside a branch name and
+# standalone when no branch is available.
+pr_badge() {
+    _t=$(printf "\e[01;33m(#%s)\e[00m" "$1")
+    [ -n "${2:-}" ] && _t=$(hlink "$2" "$_t")
+    printf '%s' "$_t"
+}
+
+# | 🌿 branch [(#PR/MR)] [🌲worktree] — branch is plain; PR/MR number links out.
+# The PR/MR number is resolved OUTSIDE the branch guard: `.pr.number` comes from
+# the stdin JSON and needs no git, so a detached HEAD, a mid-rebase checkout or a
+# non-repo cwd must not silently discard it. Only the branch NAME depends on git.
+num=""; nurl=""
+if [ -n "$pr" ]; then
+    num="$pr"; nurl="$pr_url"
+fi
 if [ -n "$branch" ]; then
     bseg=$(printf "\e[01;33m%s\e[00m" "$branch")
-    # PR from JSON (GitHub). MR from cached glab lookup (GitLab) when no PR and glab exists.
-    num=""; nurl=""
-    if [ -n "$pr" ]; then
-        num="$pr"; nurl="$pr_url"
-    elif command -v glab >/dev/null 2>&1; then
+    # MR lookup is legitimately branch-scoped: the cache is keyed by branch.
+    if [ -z "$num" ] && command -v glab >/dev/null 2>&1; then
         MRCACHE="$CLAUDE_DIR/.mr-cache.json"
         MRREFRESH="$CLAUDE_DIR/mr-refresh.sh"
         # Repo identity, same derivation as mr-refresh.sh. The cache is one
@@ -223,7 +262,7 @@ if [ -n "$branch" ]; then
                     # MR long after a transient failure cleared. Both windows
                     # must match mr-refresh.sh's MAX_AGE / FAIL_COOLDOWN.
                     mr_entry=$(jq -r --arg k "$mr_key" '(.[$k] // {}) | "\(.ts // "")\t\(if .failed then 1 else 0 end)"' "$MRCACHE" 2>/dev/null)
-                    entry_ts=${mr_entry%%$'\t'*}
+                    entry_ts=$(int_or0 "${mr_entry%%$'\t'*}")
                     entry_failed=${mr_entry##*$'\t'}
                     mr_window=600
                     [ "$entry_failed" = "1" ] && mr_window=120
@@ -238,11 +277,13 @@ if [ -n "$branch" ]; then
         fi
     fi
     if [ -n "$num" ]; then
-        ntext=$(printf "\e[01;33m(#%s)\e[00m" "$num")
-        [ -n "$nurl" ] && ntext=$(hlink "$nurl" "$ntext")
-        bseg="$bseg $ntext"
+        bseg="$bseg $(pr_badge "$num" "$nurl")"
     fi
     out="$out | $(printf "🌿 %s" "$bseg")"
+elif [ -n "$num" ]; then
+    # No branch name available (detached HEAD, mid-rebase, non-repo cwd) but the
+    # harness gave us a PR number: still show it rather than dropping the link.
+    out="$out | $(pr_badge "$num" "$nurl")"
 fi
 [ -n "$worktree" ] && out="$out $(printf "\e[01;35m🌲%s\e[00m" "$worktree")"
 
@@ -259,25 +300,42 @@ fi
 TSTATS=""
 if [ -n "$session_id" ] && [ -n "$transcript" ]; then
     project_slug=$(basename "$(dirname "$transcript")")
-    TSTATS="$CLAUDE_DIR/token_history/$project_slug/$session_id.json"
+    # Both components land in a filesystem path that token-stats.sh then runs a
+    # `find ... -delete` sweep inside, so neither may contain a traversal or a
+    # separator. `basename` of a path like /a/b/../s.jsonl yields `..`, which
+    # would escape token_history/ into the Claude home root where settings.json
+    # lives. Reject anything outside a conservative charset rather than trying
+    # to sanitise it.
+    case "$project_slug" in
+        ''|.|..|*/*|*'\'*) project_slug="" ;;
+    esac
+    case "$session_id" in
+        ''|.|..|*/*|*'\'*) session_id="" ;;
+    esac
+    if [ -n "$project_slug" ] && [ -n "$session_id" ]; then
+        TSTATS="$CLAUDE_DIR/token_history/$project_slug/$session_id.json"
+    fi
 fi
 TSREFRESH="$CLAUDE_DIR/token-stats.sh"
 if [ -n "$TSTATS" ] && [ -n "$transcript" ] && [ -x "$TSREFRESH" ]; then
     tsstale=1
     if [ -f "$TSTATS" ]; then
-        tmt=$(stat -c %Y "$TSTATS" 2>/dev/null || stat -f %m "$TSTATS" 2>/dev/null || echo 0)
+        tmt=$(mtime_or0 "$TSTATS")
         [ $((now - tmt)) -lt 15 ] && tsstale=0
     fi
     [ "$tsstale" -eq 1 ] && ("$TSREFRESH" "$transcript" "$TSTATS" >/dev/null 2>&1 &)
 fi
-# cumulative counts + context length from the cache; fall back to the current-response snapshot.
-t_in="${cu_in:-0}"; t_out="${cu_out:-0}"; t_cr="${cu_cr:-0}"; t_cw="${cu_cw:-0}"; t_ctx=""
-m_cost=""; a_cost=""; m_in=0; m_out=0; m_cr=0; m_cw=0; a_in=0; a_out=0; a_cr=0; a_cw=0
+# Cumulative counts + context length from the cache. Until the cache exists the
+# main-chain numbers fall back to the CURRENT-RESPONSE snapshot from stdin, so
+# the Session line never shows a real dollar amount beside fabricated zeros --
+# which it did while the fallback was being written to `t_in`/`t_out`/`t_cr`/
+# `t_cw`, variables the Session segment does not read (orphaned when the
+# standalone Tokens segment was removed). Agents have no stdin equivalent, so
+# they legitimately start at 0.
+m_in=$(int_or0 "${cu_in:-0}"); m_out=$(int_or0 "${cu_out:-0}")
+m_cr=$(int_or0 "${cu_cr:-0}");  m_cw=$(int_or0 "${cu_cw:-0}")
+t_ctx=""; m_cost=""; a_cost=""; a_in=0; a_out=0; a_cr=0; a_cw=0
 if [ -n "$TSTATS" ] && [ -f "$TSTATS" ]; then
-    t_in=$(jq -r '.input // 0' "$TSTATS" 2>/dev/null)
-    t_out=$(jq -r '.output // 0' "$TSTATS" 2>/dev/null)
-    t_cr=$(jq -r '.cache_read // 0' "$TSTATS" 2>/dev/null)
-    t_cw=$(jq -r '.cache_write // 0' "$TSTATS" 2>/dev/null)
     t_ctx=$(jq -r '.context_length // empty' "$TSTATS" 2>/dev/null)
     m_cost=$(jq -r '.main.est_cost // empty' "$TSTATS" 2>/dev/null)
     a_cost=$(jq -r '.agents.est_cost // empty' "$TSTATS" 2>/dev/null)
@@ -330,7 +388,8 @@ if [ -n "$t_ctx" ] && [ "$t_ctx" -gt 0 ] 2>/dev/null; then
 elif [ -n "$ctxused" ]; then
     clen="$ctxused"
 fi
-[ -z "$cpct" ] && [ -n "$ctx" ] && cpct=$(printf "%.0f" "$ctx")
+[ -z "$cpct" ] && [ -n "$ctx" ] && cpct=$(printf "%.0f" "$ctx" 2>/dev/null)
+case "$cpct" in ''|*[!0-9]*) cpct="" ;; esac
 if [ -n "$cpct" ] || [ -n "$clen" ]; then
     cc="\e[01;32m"
     [ -n "$cpct" ] && [ "$cpct" -ge 80 ] 2>/dev/null && cc="\e[01;31m"
@@ -352,13 +411,12 @@ fi
 # (Standalone Tokens segment removed — token detail now lives in the Session segment on line 2.)
 
 # ---- everything below is sourced from the usage cache (background-refreshed) ----
-now=$(date +%s)
 UCACHE="$CLAUDE_DIR/usage-cache.json"
 REFRESH="$CLAUDE_DIR/usage-refresh.sh"
 BACKOFF="$CLAUDE_DIR/.usage-backoff"
 cache_age=""
 if [ -f "$UCACHE" ]; then
-    mt=$(stat -c %Y "$UCACHE" 2>/dev/null || stat -f %m "$UCACHE" 2>/dev/null || echo 0)
+    mt=$(mtime_or0 "$UCACHE")
     cache_age=$((now - mt))
 fi
 # Trigger a background refresh when the cache is >10 min old — unless a throttle backoff
@@ -412,14 +470,14 @@ fi
 
 limits=""
 if [ -n "$fu" ]; then
-    fi5=$(printf "%.0f" "$fu")
+    fi5=$(printf "%.0f" "$fu" 2>/dev/null); fi5=$(int_or0 "$fi5")
     c5=$(sev_color "$fsev" "$fi5")
     r5=""
     [ -n "$fr" ] && r5=" resets $(fmt_reset "$fr")"
     limits=$(printf "${c5}5h (%s%%)%s\e[00m" "$fi5" "$r5")
 fi
 if [ -n "$su" ]; then
-    fi7=$(printf "%.0f" "$su")
+    fi7=$(printf "%.0f" "$su" 2>/dev/null); fi7=$(int_or0 "$fi7")
     c7=$(sev_color "$ssev" "$fi7")
     r7=""
     [ -n "$sr" ] && r7=" resets $(fmt_reset "$sr")"

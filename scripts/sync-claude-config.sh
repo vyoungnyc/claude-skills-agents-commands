@@ -216,11 +216,18 @@ fi
 # --- CLAUDE.md: full overwrite, only when it differs, backed up first ---
 src_claude_md="$REPO_ROOT/CLAUDE.md"
 dst_claude_md="$CLAUDE_HOME/CLAUDE.md"
-if [ -f "$src_claude_md" ] && { [ ! -f "$dst_claude_md" ] || ! cmp -s "$src_claude_md" "$dst_claude_md"; }; then
+# A symlinked destination counts as needing replacement: the overlay dirs, the
+# hooks loop and the statusline loop all defend against writing THROUGH a link
+# into an external referent, and these two file paths were the gap.
+if [ -f "$src_claude_md" ] && { [ -L "$dst_claude_md" ] || [ ! -f "$dst_claude_md" ] || ! cmp -s "$src_claude_md" "$dst_claude_md"; }; then
   note "CLAUDE.md -> $dst_claude_md (differs$( [ -f "$dst_claude_md" ] && echo "; backed up first" || true))"
   CHANGED=1
   if [ "$APPLY" -eq 1 ]; then
-    if [ -f "$dst_claude_md" ]; then
+    if [ -L "$dst_claude_md" ]; then
+      backup_once
+      cp -P "$dst_claude_md" "$BACKUP_DIR/CLAUDE.md.link"
+      rm -f "$dst_claude_md"
+    elif [ -f "$dst_claude_md" ]; then
       backup_once
       cp "$dst_claude_md" "$BACKUP_DIR/CLAUDE.md"
     fi
@@ -285,68 +292,50 @@ if [ -f "$repo_settings" ]; then
       .[0] as $live | (.[1] | rewriteHome($rh)) as $repo |
       ($live.hooks // {}) as $liveHooks |
       ($repo.hooks // {}) as $repoHooks |
-      # Dedup by individual hook (COMMAND, TRIGGER) pair, not by whole-group
-      # array equality or by command alone: a live group can bundle multiple
-      # commands together (e.g. a hand-merged SessionStart group running both
-      # a local hook and usage-refresh.sh in one entry) that a repo group
-      # re-adds as its own single-command group — comparing whole `.hooks`
-      # arrays for equality would treat those as unrelated and append the
-      # repo group anyway, duplicating that command on every sync. But
-      # command alone is too coarse: the SAME command under two DIFFERENT
-      # triggers is not a duplicate. The trigger is the WHOLE group metadata
-      # (`groupKey`), not just `.matcher` — this repo`s own settings.json runs
-      # enforce-git-conventions.sh under `matcher: "Bash"` AND
-      # `if: "Bash(git *)"`, so keying on matcher alone would treat the same
-      # command under a different `if` as already covered and silently drop
-      # it, and it would never run under the repo`s intended condition.
-      # Per repo group: keep only the (command, groupKey) pairs NOT already
-      # present in the live groups for that event, dropping an empty group.
+      # Hook merge rule: THE REPO OWNS THE COMPLETE TRIGGER SET FOR ITS OWN
+      # COMMANDS. For each event, every live hook whose command is one the repo
+      # also defines is removed, then the repo groups are appended verbatim.
+      # Live-only hooks (commands the repo does not ship) are never touched.
+      #
+      # This single rule replaces three mechanisms that previously stacked up
+      # here -- a (command, trigger) dedup, an "adopt the repo hook object" pass
+      # to deploy execution metadata, and a path migration -- and it fixes what
+      # they got wrong between them:
+      #   - Keying dedup on the trigger (matcher + `if`) meant a live group that
+      #     predated a new `if:` read as a DIFFERENT trigger, so the repo group
+      #     was appended and the stale one kept. This repo own settings.json hit
+      #     exactly that: enforce-git-conventions.sh ended up registered twice,
+      #     firing on every Bash call as well as under `Bash(git *)`.
+      #   - Keying on command alone instead would drop a command the repo
+      #     deliberately ships under two different triggers.
+      # Replacing wholesale sidesteps both: whatever set of groups the repo
+      # declares for a command IS the deployed set, so adding, removing or
+      # re-triggering a hook all work, and re-running stays idempotent.
+      #
+      # Commands are compared after rewriteHomeStr normalization, so a live copy
+      # still carrying the pre-rewrite literal `"$HOME"/.claude/...` form is
+      # recognized as the same hook and replaced rather than left behind.
+      #
+      # Deliberate tradeoff: a user who hand-added an extra trigger for a
+      # repo-shipped hook loses it on sync. That matches how CLAUDE.md and
+      # statusLine already deploy (repo wins), and the live file is backed up
+      # first. A hook the user wrote themselves is unaffected.
       (reduce ($repoHooks | keys_unsorted[]) as $ev ($liveHooks;
         ($liveHooks[$ev] // []) as $liveGroups |
-        ([$repoHooks[$ev][] | . as $rg | $rg.hooks[]? | {command: .command, group: ($rg | groupKey)}]) as $repoKeys |
-        # Migrate before comparing. Upgrading an alternate-CLAUDE_HOME install
-        # means live still holds commands written BEFORE the path rewrite
-        # existed, i.e. the literal `"$HOME"/.claude/...` form, while the repo
-        # side is now rewritten to the alternate path. Those are the SAME hook,
-        # but they no longer compare equal, so the rewritten one gets appended
-        # and the obsolete default-home one stays active — the command runs
-        # twice, once from a path where nothing was ever deployed. Rewriting a
-        # live command only when its rewritten form matches a repo-authored
-        # (command, groupKey) pair means it IS that hook`s previously-deployed
-        # copy, so this is a migration in place, not a rewrite of unrelated
-        # live-only hooks (those keep whatever path the user gave them).
-        # Repo-authored hook OBJECTS for this event, indexed by the same
-        # (command, groupKey) pair, so a matching live hook can be updated in
-        # place below rather than merely recognized as a duplicate.
-        ([$repoHooks[$ev][] | . as $rg | $rg.hooks[]? | {k: {command: .command, group: ($rg | groupKey)}, hook: .}]) as $repoHookIndex |
-        ([$liveGroups[] | . as $lg
-          | .hooks |= [.[]
-              | (.command | rewriteHomeStr($rh)) as $rw
-              | (if ($rw != .command)
-                   and (([{command: $rw, group: ($lg | groupKey)}] - $repoKeys) | length) == 0
-                 then .command = $rw else . end)
-              # Adopt the repo`s hook object wholesale when this live hook is
-              # the same command under the same trigger. Dedup alone silently
-              # blocked UPDATES as well as duplicates: hook-level execution
-              # metadata (`type`, `async`, `timeout`, `statusMessage`) is not
-              # part of the identity, so a live copy of auto-test-runner.sh
-              # lacking the repo`s `async: true` / `timeout: 300` would stay
-              # synchronous forever — the repo could never change any of those
-              # fields once the command existed live. Repo wins here, same rule
-              # as `statusLine` and CLAUDE.md, and the live file is backed up
-              # before any write. Only the matching hook object is replaced, so
-              # a multi-command live group keeps its other commands and its own
-              # group metadata.
+        # Every command the repo defines for this event, post-rewrite.
+        ([$repoHooks[$ev][]? | (.hooks // [])[]? | .command]) as $repoCmds |
+        # Live groups minus the repo commands. `.hooks` may legitimately be
+        # absent on a hand-edited group, so iterate it optionally: doing that
+        # unguarded aborted the whole merge with "Cannot iterate over null",
+        # leaving a partial apply and a bare jq error with no backup pointer.
+        ([$liveGroups[]
+          | .hooks = [((.hooks // [])[]?)
               | . as $lh
-              | (first($repoHookIndex[] | select(.k == {command: $lh.command, group: ($lg | groupKey)}) | .hook) // $lh)
-            ]
-        ]) as $migratedLive |
-        ([$migratedLive[] | . as $g | $g.hooks[]? | {command: .command, group: ($g | groupKey)}]) as $liveKeys |
-        .[$ev] = ($migratedLive + ([$repoHooks[$ev][]
-          | . as $rg
-          | .hooks |= [.[] | select((([{command: .command, group: ($rg | groupKey)}] - $liveKeys) | length) > 0)]
+              | select((($lh.command // "") | rewriteHomeStr($rh)) as $rw
+                       | ([$rw] - $repoCmds) | length > 0)]
           | select((.hooks | length) > 0)
-        ]))
+        ]) as $keptLive |
+        .[$ev] = ($keptLive + [$repoHooks[$ev][]?])
       )) as $mergedHooks |
       # statusLine: repo wins when it defines one (full replace, like CLAUDE.md);
       # otherwise keep whatever live has (including having none — never introduce
@@ -362,6 +351,12 @@ if [ -f "$repo_settings" ]; then
       if [ "$APPLY" -eq 1 ]; then
         backup_once
         cp "$live_settings" "$BACKUP_DIR/settings.json"
+        # Drop a symlinked destination first, so the redirect below writes a real
+        # file here instead of following the link and rewriting its referent.
+        if [ -L "$live_settings" ]; then
+          cp -P "$live_settings" "$BACKUP_DIR/settings.json.link"
+          rm -f "$live_settings"
+        fi
         printf '%s\n' "$merged" | jq '.' > "$live_settings"
       fi
     fi
@@ -370,6 +365,7 @@ if [ -f "$repo_settings" ]; then
     CHANGED=1
     if [ "$APPLY" -eq 1 ]; then
       mkdir -p "$CLAUDE_HOME"
+      [ -L "$live_settings" ] && rm -f "$live_settings"
       jq --arg rh "$rewrite_home" "$REWRITE_HOME_JQ"'rewriteHome($rh)' "$repo_settings" > "$live_settings"
     fi
   fi

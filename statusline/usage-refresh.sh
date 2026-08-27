@@ -38,9 +38,23 @@ BACKOFF_ERROR=120    # any other failure (401, 5xx, unreachable, no token) — o
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
+# The cache exposes plan tier, credit spend/limit and 5h/7d utilization; the
+# backoff file exposes throttle state. Keep them owner-only rather than whatever
+# the ambient umask yields (observed 0644). Also covers the lock and temp files.
+umask 077
+
 now_epoch() { date +%s; }
+# mtime age in seconds. The result is validated as NUMERIC rather than trusted
+# on exit status: GNU `stat -f` means --file-system, so with GNU coreutils ahead
+# of /usr/bin (common on macOS via Homebrew) the fallback exits ZERO and prints a
+# multi-line filesystem report to stdout. `|| echo 0` therefore never fires, this
+# function returns junk, and under `set -u` the arithmetic aborts and yields an
+# EMPTY string -- which makes both lock guards below false and reclaims a lock
+# whose owner is still running, defeating single-flight entirely.
 file_age() {
-    m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0)
+    m=$(stat -c %Y "$1" 2>/dev/null)
+    case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$1" 2>/dev/null) ;; esac
+    case "$m" in ''|*[!0-9]*) m=0 ;; esac
     echo $(($(now_epoch) - m))
 }
 

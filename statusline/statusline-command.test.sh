@@ -62,11 +62,21 @@ fake_glab_stubdir() {
 # re-deriving exact escape placement in every assertion.
 LAST_OUT=""
 LAST_OUT_PLAIN=""
+LAST_STATUS=0
 run_statusline() {
   local home="$1" json="$2" extra_path="${3:-}"
   local path="$PATH"
   [ -n "$extra_path" ] && path="$extra_path:$PATH"
+  # Capture the exit status explicitly. A bare `VAR=$(pipeline)` under
+  # `set -euo pipefail` is NOT exempt from -e, so a nonzero exit from the script
+  # would kill this suite silently -- no FAIL line, no test name. That failure
+  # mode has already bitten this PR once. Same shape as run_sync in
+  # scripts/sync-claude-config.test.sh.
+  set +e
   LAST_OUT=$(printf '%s' "$json" | env HOME="$home" PATH="$path" bash "$SCRIPT")
+  LAST_STATUS=$?
+  set -e
+  [ "$LAST_STATUS" -eq 0 ] || fail "statusline-command.sh exited $LAST_STATUS (input: ${json:0:120})"
   LAST_OUT_PLAIN=$(printf '%s' "$LAST_OUT" | sed 's/\x1b\[[0-9;]*m//g')
 }
 
@@ -444,5 +454,129 @@ RES=$(usage_relaunch_probe "1 $EXPIRED_KIND")
 # No backoff file at all: refresh runs.
 RES=$(usage_relaunch_probe "0")
 [ "$RES" = "launched" ] || fail "with no active cooldown the refresh should run (got: $RES)"
+
+# =======================================================================
+# SECURITY regression: a non-numeric value must never reach `$(( ))`.
+# Bash evaluates the VALUE as an arithmetic expression, so `x[$(cmd)]`
+# executes cmd via the array-subscript rule -- turning a cache field into
+# code that runs on every ~30s render. Carrier: the `ts` field of an entry
+# in .mr-cache.json.
+# =======================================================================
+INJ_REPO="$SUITE_TMP/injrepo"
+mkdir -p "$INJ_REPO"
+git init -q "$INJ_REPO"
+git -C "$INJ_REPO" config user.email "test@example.com"
+git -C "$INJ_REPO" config user.name "Test"
+git -C "$INJ_REPO" commit -q --allow-empty -m init
+git -C "$INJ_REPO" checkout -q -b feature/inj
+git -C "$INJ_REPO" remote add origin "https://gitlab.example.com/g/r.git"
+INJ_HOME=$(fake_home)
+# mr-refresh.sh must be present and executable for the freshness branch to run.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$INJ_HOME/.claude/mr-refresh.sh"
+chmod +x "$INJ_HOME/.claude/mr-refresh.sh"
+INJ_CANARY="$SUITE_TMP/injection-canary"
+rm -f "$INJ_CANARY"
+INJ_KEY=$(printf '%s\t%s' "https://gitlab.example.com/g/r.git" "feature/inj")
+jq -n --arg k "$INJ_KEY" --arg ts "x[\$(touch $INJ_CANARY)]" \
+  '{($k): {repo:"https://gitlab.example.com/g/r.git", branch:"feature/inj", number:"9", url:"https://e/9", ts:$ts}}' \
+  > "$INJ_HOME/.claude/.mr-cache.json"
+run_statusline "$INJ_HOME" "$(jq -n --arg cwd "$INJ_REPO" '{cwd:$cwd,model:{display_name:"S"},workspace:{current_dir:$cwd}}')" "$GLAB_STUB"
+[ ! -f "$INJ_CANARY" ] \
+  || fail "a non-numeric ts in the MR cache reached \$(( )) and executed code"
+
+# A non-numeric reset epoch must not emit a bash arithmetic error, and must
+# not silently render a confident "resets in 0m" lie.
+BADRESET_HOME=$(fake_home)
+cat > "$BADRESET_HOME/.claude/usage-cache.json" <<'EOF'
+{"enabled": false, "used": 0, "limit": 0, "pct": 0,
+ "five": {"util": 42, "resets": "2026-08-28T10:00:00Z", "severity": "normal"},
+ "seven": {"util": 9, "resets": "soon", "severity": "normal"}}
+EOF
+BADRESET_ERR="$SUITE_TMP/badreset.err"
+printf '%s' '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"}}' \
+  | env HOME="$BADRESET_HOME" bash "$SCRIPT" >/dev/null 2>"$BADRESET_ERR"
+[ ! -s "$BADRESET_ERR" ] \
+  || fail "a non-numeric reset value leaked an error to stderr: $(head -2 "$BADRESET_ERR")"
+run_statusline "$BADRESET_HOME" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"}}'
+expect_not_match "resets in 0m"
+
+# A garbage utilization must not emit a printf error either.
+BADUTIL_HOME=$(fake_home)
+cat > "$BADUTIL_HOME/.claude/usage-cache.json" <<'EOF'
+{"enabled": false, "used": 0, "limit": 0, "pct": 0,
+ "five": {"util": "n/a", "resets": 9999999999, "severity": "normal"},
+ "seven": {"util": 3, "resets": 9999999999, "severity": "normal"}}
+EOF
+BADUTIL_ERR="$SUITE_TMP/badutil.err"
+printf '%s' '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"}}' \
+  | env HOME="$BADUTIL_HOME" bash "$SCRIPT" >/dev/null 2>"$BADUTIL_ERR"
+[ ! -s "$BADUTIL_ERR" ] \
+  || fail "a non-numeric util leaked a printf error to stderr: $(head -2 "$BADUTIL_ERR")"
+
+# =======================================================================
+# SECURITY regression: a traversing project slug or session id must not
+# produce a token_history path outside its project directory -- token-stats
+# runs a `find ... -delete` sweep in that directory.
+# =======================================================================
+TRAV_HOME=$(fake_home)
+TRAV_PROBE="$SUITE_TMP/traversal-argv"
+rm -f "$TRAV_PROBE"
+cat > "$TRAV_HOME/.claude/token-stats.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$2" >> "$TRAV_PROBE"
+EOF
+chmod +x "$TRAV_HOME/.claude/token-stats.sh"
+run_statusline "$TRAV_HOME" "$(jq -n --arg t '/a/b/../sess.jsonl' \
+  '{cwd:"/tmp",model:{display_name:"X"},workspace:{current_dir:"/tmp"},session_id:"s1",transcript_path:$t}')"
+i=0; while [ "$i" -lt 20 ] && [ ! -f "$TRAV_PROBE" ]; do i=$((i+1)); /bin/sleep 0.05; done
+if [ -f "$TRAV_PROBE" ]; then
+  grep -q '\.\.' "$TRAV_PROBE" && fail "a traversing transcript path produced an out-of-tree cache path: $(cat "$TRAV_PROBE")"
+fi
+# A traversing session id is likewise rejected rather than passed through.
+rm -f "$TRAV_PROBE"
+run_statusline "$TRAV_HOME" "$(jq -n --arg t "$TRAV_HOME/.claude/projects/-p/s.jsonl" \
+  '{cwd:"/tmp",model:{display_name:"X"},workspace:{current_dir:"/tmp"},session_id:"../../escape",transcript_path:$t}')"
+i=0; while [ "$i" -lt 10 ] && [ ! -f "$TRAV_PROBE" ]; do i=$((i+1)); /bin/sleep 0.05; done
+if [ -f "$TRAV_PROBE" ]; then
+  grep -q '\.\.' "$TRAV_PROBE" && fail "a traversing session id produced an out-of-tree cache path: $(cat "$TRAV_PROBE")"
+fi
+
+# =======================================================================
+# Regression: the PR/MR number comes from stdin and needs no git, so it
+# must render even when the branch name is unavailable (detached HEAD,
+# mid-rebase, non-repo cwd). It used to be nested inside the branch guard.
+# =======================================================================
+DETACH_REPO="$SUITE_TMP/detachrepo"
+mkdir -p "$DETACH_REPO"
+git init -q "$DETACH_REPO"
+git -C "$DETACH_REPO" config user.email "test@example.com"
+git -C "$DETACH_REPO" config user.name "Test"
+git -C "$DETACH_REPO" commit -q --allow-empty -m one
+git -C "$DETACH_REPO" commit -q --allow-empty -m two
+git -C "$DETACH_REPO" checkout -q --detach HEAD~1
+[ -z "$(git -C "$DETACH_REPO" branch --show-current)" ] || fail "detached-HEAD fixture is not actually detached"
+DETACH_HOME=$(fake_home)
+run_statusline "$DETACH_HOME" "$(jq -n --arg cwd "$DETACH_REPO" \
+  '{cwd:$cwd,model:{display_name:"X"},workspace:{current_dir:$cwd},pr:{number:"123",url:"https://e/pull/123"}}')"
+expect_match "(#123)"
+# Same for a cwd that is not a git repo at all.
+NONREPO_HOME=$(fake_home)
+run_statusline "$NONREPO_HOME" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"},"pr":{"number":"77","url":"https://e/pull/77"}}'
+expect_match "(#77)"
+
+# =======================================================================
+# Regression: before the token cache exists, the Session breakdown must
+# fall back to the current-response snapshot rather than printing zeros
+# beside a real dollar figure (it read m_*/a_*, while the fallback was
+# being written to variables nothing consumed).
+# =======================================================================
+FALLBACK_HOME=$(fake_home)
+run_statusline "$FALLBACK_HOME" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"},
+  "cost":{"total_cost_usd":1.50},
+  "context_window":{"context_window_size":1000000,"total_input_tokens":100000,"used_percentage":10,
+    "current_usage":{"input_tokens":1234,"output_tokens":567,"cache_read_input_tokens":98000,"cache_creation_input_tokens":2000}}}'
+expect_match '$1.50'
+expect_not_match 'main $1.50 (0 in · 0 out · 0 cache-r · 0 cache-w)'
+expect_match "1.2k in"
 
 echo "statusline-command.test.sh: all assertions passed"

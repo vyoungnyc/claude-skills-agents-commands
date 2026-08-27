@@ -265,7 +265,7 @@ HDR_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
 printf '200::{"ok":true}\n' > "$HDR_STATE/plan"
 STUBDIR=$(fake_bindir "$HDR_STATE")
 env HOME="$HDR_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" >/dev/null
-HDR_ARG=$(tr '\0' '\n' < "$HDR_STATE/argv.1" | grep -A1 -x -- '-D' | tail -1)
+HDR_ARG=$(tr '\0' '\n' < "$HDR_STATE/argv.1" | grep -A1 -x -- '-D' | tail -1 || true)
 printf '%s' "$HDR_ARG" | grep -q '\.usage-hdrs\.[0-9]*$' \
   && fail "the header file is still a predictable PID-derived /tmp path: $HDR_ARG"
 [ -n "$HDR_ARG" ] || fail "expected a -D header file argument in curl's argv"
@@ -278,7 +278,13 @@ EXHAUST_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
 printf '429::{"error":"throttled"}\n' > "$EXHAUST_STATE/plan"
 STUBDIR=$(fake_bindir "$EXHAUST_STATE")
 env HOME="$EXHAUST_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" >/dev/null
-EXHAUST_HDR=$(tr '\0' '\n' < "$EXHAUST_STATE/argv.1" | grep -A1 -x -- '-D' | tail -1)
+# `|| true`: a bare VAR=$(pipeline) is not exempt from `set -e`, so a grep miss
+# would kill this suite with no failing assertion. And guard for non-empty before
+# the -e test: `[ ! -e "" ]` is TRUE, so an empty extraction would silently pass
+# a leak check that tested nothing.
+EXHAUST_HDR=$(tr '\0' '\n' < "$EXHAUST_STATE/argv.1" | grep -A1 -x -- '-D' | tail -1 || true)
+[ -n "$EXHAUST_HDR" ] && [ "$EXHAUST_HDR" != "-D" ] \
+  || fail "expected a -D header-file argument in the recorded argv, got: [$EXHAUST_HDR]"
 [ ! -e "$EXHAUST_HDR" ] || fail "the header temp file leaked after retries were exhausted: $EXHAUST_HDR"
 
 echo "fetch-usage.test.sh: all assertions passed"

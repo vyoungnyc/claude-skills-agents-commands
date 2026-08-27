@@ -43,9 +43,16 @@ fake_home() {
 fake_glab_stubdir() {
   local home="$1" json="$2" dir
   dir=$(mktemp -d "$SUITE_TMP/bin.XXXXXX")
+  # Records argv (NUL-separated) and the working directory, so a wrong
+  # --source-branch or a dropped `cd "$cwd"` is detectable -- the same gap that
+  # made the curl stub unable to catch a token leaking into argv. Also refuses
+  # to answer without --source-branch, as real glab would.
   cat > "$dir/glab" <<EOF
 #!/usr/bin/env bash
 touch "$home/glab-called"
+printf '%s\0' "\$@" > "$home/glab-argv"
+pwd > "$home/glab-cwd"
+case " \$* " in *" --source-branch "*) ;; *) echo "missing --source-branch" >&2; exit 1 ;; esac
 cat <<'JSON'
 $json
 JSON
@@ -53,6 +60,9 @@ EOF
   chmod +x "$dir/glab"
   printf '%s' "$dir"
 }
+
+# glab_argv_has <home> <string> — was <string> passed to glab?
+glab_argv_has() { tr '\0' '\n' < "$1/glab-argv" 2>/dev/null | grep -Fqx -- "$2"; }
 
 glab_called() { [ -f "$1/glab-called" ]; }
 
@@ -90,6 +100,12 @@ KEY=$(mr_key "" "feature/x")
 [ "$(jq -r --arg k "$KEY" '.[$k].branch' "$CACHE")" = "feature/x" ] || fail "cached branch mismatch"
 [ "$(jq -r --arg k "$KEY" '.[$k].number' "$CACHE")" = "42" ] || fail "cached MR number mismatch"
 [ "$(jq -r --arg k "$KEY" '.[$k].url' "$CACHE")" = "https://gitlab.example.com/group/proj/-/merge_requests/42" ] || fail "cached MR url mismatch"
+# The invocation contract: right branch, right flags, right working directory.
+glab_argv_has "$FOUND_HOME" "--source-branch" || fail "glab was not given --source-branch"
+glab_argv_has "$FOUND_HOME" "feature/x" || fail "glab was queried for the wrong branch"
+glab_argv_has "$FOUND_HOME" "-F" || fail "glab was not asked for JSON output"
+[ "$(cat "$FOUND_HOME/glab-cwd" 2>/dev/null)" = "$(cd "$SUITE_TMP" && pwd -P)" ] \
+  || fail "glab did not run in the requested cwd (got $(cat "$FOUND_HOME/glab-cwd" 2>/dev/null))"
 
 # =======================================================================
 # No MR for the branch: cache still records the branch (so the status line
@@ -364,5 +380,22 @@ glab_called "$DEADOWNER_HOME" || fail "a lock whose owner is dead must be reclai
 [ ! -d "$DEADOWNER_LOCK" ] || fail "lock should be released after reclaiming from a dead owner"
 LEFTOVER=$(find "$DEADOWNER_HOME/.claude" -name '.mr-cache.json.tmp*' 2>/dev/null)
 [ -z "$LEFTOVER" ] || fail "a cache temp file was left behind: $LEFTOVER"
+
+# =======================================================================
+# The MR freshness windows are duplicated: named constants here, bare
+# literals in statusline-command.sh, with a code comment asserting they
+# must match. Nothing checked that, so a one-sided edit would give either
+# permanent staleness or a per-render respawn storm with a green suite.
+# =======================================================================
+W_MAX=$(grep -oE '^MAX_AGE=[0-9]+' "$SCRIPT_DIR/mr-refresh.sh" | head -1 | cut -d= -f2)
+W_FAIL=$(grep -oE '^FAIL_COOLDOWN=[0-9]+' "$SCRIPT_DIR/mr-refresh.sh" | head -1 | cut -d= -f2)
+R_MAX=$(grep -oE 'mr_window=[0-9]+' "$SCRIPT_DIR/statusline-command.sh" | head -1 | cut -d= -f2)
+R_FAIL=$(grep -oE 'mr_window=[0-9]+' "$SCRIPT_DIR/statusline-command.sh" | tail -1 | cut -d= -f2)
+[ -n "$W_MAX" ] && [ -n "$W_FAIL" ] && [ -n "$R_MAX" ] && [ -n "$R_FAIL" ] \
+  || fail "could not extract both sides of the MR freshness windows (writer=$W_MAX/$W_FAIL reader=$R_MAX/$R_FAIL)"
+[ "$W_MAX" = "$R_MAX" ] \
+  || fail "MR success window drifted: mr-refresh.sh MAX_AGE=$W_MAX vs statusline-command.sh $R_MAX"
+[ "$W_FAIL" = "$R_FAIL" ] \
+  || fail "MR failure cooldown drifted: mr-refresh.sh FAIL_COOLDOWN=$W_FAIL vs statusline-command.sh $R_FAIL"
 
 echo "mr-refresh.test.sh: all assertions passed"

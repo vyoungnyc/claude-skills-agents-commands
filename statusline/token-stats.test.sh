@@ -320,8 +320,9 @@ bash "$SCRIPT" "$RESUMED" "$RESUMED_OUT"
   || fail "expected output 100+200+400+800=1500, got $(jq -r '.output' "$RESUMED_OUT")"
 [ "$(jq -r '.context_length' "$RESUMED_OUT")" = "8000" ] \
   || fail "context_length must come from the newest row AFTER the damaged one, got $(jq -r '.context_length' "$RESUMED_OUT")"
-# The malformed row's own numbers must not leak in.
-[ "$(jq -r '.input' "$RESUMED_OUT")" != "24999" ] || fail "the malformed row was somehow counted"
+# The malformed row's own numbers must not leak in anywhere in the output.
+# (Asserting != 24999 was dead: line above already pins .input == 15000.)
+grep -q '9999' "$RESUMED_OUT" && fail "the malformed row's numbers leaked into the output"
 
 # Same for a subagent transcript with a mid-file torn row.
 RES_SESSION="$SUITE_TMP/resumed-session"
@@ -364,5 +365,95 @@ FRESHZERO_OUT="$SUITE_TMP/freshzero/session.json"
 bash "$SCRIPT" "$GARBAGE" "$FRESHZERO_OUT"
 [ -f "$FRESHZERO_OUT" ] || fail "a new session with zero usage should still create its cache file"
 [ "$(jq -r '.input' "$FRESHZERO_OUT")" = "0" ] || fail "expected a zeroed cache for a brand-new session"
+
+# =======================================================================
+# SECURITY regression: an <out> path containing `..` must be refused, and
+# the cleanup sweep must only ever run inside a token_history directory.
+# The caller derives the path from `basename "$(dirname "$transcript")"`,
+# which yields `..` for a transcript like /a/b/../s.jsonl -- escaping to
+# the Claude home ROOT, where the `find -name '*.json' -mtime +7 -delete`
+# sweep would delete the user settings.json and caches.
+# =======================================================================
+ESC_HOME="$SUITE_TMP/escape-home"
+mkdir -p "$ESC_HOME/token_history"
+for f in settings.json usage-cache.json .mr-cache.json; do
+  echo '{"precious":true}' > "$ESC_HOME/$f"
+  set_mtime "$(($(date +%s) - 900000))" "$ESC_HOME/$f"
+done
+bash "$SCRIPT" "$T1" "$ESC_HOME/token_history/../escaped.json" >/dev/null 2>&1
+[ -f "$ESC_HOME/settings.json" ] \
+  || fail "a traversing out-path let the cleanup sweep delete settings.json in the Claude home root"
+[ -f "$ESC_HOME/usage-cache.json" ] || fail "the sweep deleted usage-cache.json"
+[ -f "$ESC_HOME/.mr-cache.json" ] || fail "the sweep deleted .mr-cache.json"
+[ ! -f "$ESC_HOME/escaped.json" ] || fail "a traversing out-path should be refused outright, not written"
+
+# The sweep still prunes inside a legitimate token_history project directory.
+SWEEP_DIR="$SUITE_TMP/token_history/-sweep-proj"
+mkdir -p "$SWEEP_DIR"
+echo '{}' > "$SWEEP_DIR/ancient.json"
+set_mtime "$(($(date +%s) - 900000))" "$SWEEP_DIR/ancient.json"
+bash "$SCRIPT" "$T1" "$SWEEP_DIR/current.json" >/dev/null 2>&1
+[ ! -f "$SWEEP_DIR/ancient.json" ] || fail "the legitimate sweep should still prune a >7d cache"
+[ -f "$SWEEP_DIR/current.json" ] || fail "the current cache should be written"
+# ...and the cache is owner-only.
+# GNU stat first, BSD second, and validate numerically -- `stat -f` on a GNU
+# host is --file-system and prints a report with exit 0, which is the exact bug
+# this suite is testing for in the script.
+SWEEP_MODE=$(stat -c %a "$SWEEP_DIR/current.json" 2>/dev/null)
+case "$SWEEP_MODE" in ''|*[!0-7]*) SWEEP_MODE=$(stat -f %Lp "$SWEEP_DIR/current.json" 2>/dev/null) ;; esac
+case "$SWEEP_MODE" in ''|*[!0-7]*) SWEEP_MODE="?" ;; esac
+[ "$SWEEP_MODE" = "600" ] || fail "the token cache should be mode 600, got $SWEEP_MODE"
+
+# =======================================================================
+# Regression: the mtime helper must validate that its output is NUMERIC.
+# GNU `stat -f` means --file-system: it exits ZERO and prints a multi-line
+# filesystem report, so a `|| echo 0` fallback never fires and the caller
+# does arithmetic on junk -- which under `set -u` yields an empty age and
+# collapses both lock guards, stealing a lock from a live owner.
+# =======================================================================
+GNUSTAT_DIR=$(mktemp -d "$SUITE_TMP/gnustat.XXXXXX")
+cat > "$GNUSTAT_DIR/stat" <<'EOF'
+#!/usr/bin/env bash
+# Model GNU stat: -c works for an existing path; -f is --file-system and
+# prints a report with exit 0 regardless.
+if [ "$1" = "-c" ]; then
+  [ -e "$3" ] || exit 1
+  command stat -f %m "$3" 2>/dev/null || echo 0
+  exit 0
+fi
+if [ "$1" = "-f" ]; then
+  printf '  File: "%s"
+  Type: apfs
+' "${3:-x}"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$GNUSTAT_DIR/stat"
+GNUSTAT_OUT="$SUITE_TMP/gnustat-out/session.json"
+# A stale, owner-less lock: reclaimable only if the age is a usable number.
+mkdir -p "$SUITE_TMP/gnustat-out"
+mkdir "$GNUSTAT_OUT.lock"
+set_mtime "$(($(date +%s) - 400))" "$GNUSTAT_OUT.lock"
+env PATH="$GNUSTAT_DIR:$PATH" bash "$SCRIPT" "$T1" "$GNUSTAT_OUT" >/dev/null 2>&1
+[ -f "$GNUSTAT_OUT" ] \
+  || fail "with a GNU-style stat on PATH the run should still complete (age must be validated as numeric)"
+
+# =======================================================================
+# Regression: a failure must leave a negative-cache marker, or the caller
+# relaunches this script on every ~30s render forever.
+# =======================================================================
+MARKER_OUT="$SUITE_TMP/marker/session.json"
+bash "$SCRIPT" "$SUITE_TMP/definitely-not-a-transcript.jsonl" "$MARKER_OUT" >/dev/null 2>&1
+[ -f "$MARKER_OUT" ] || fail "a missing transcript must still write a marker so the caller stops respawning us"
+[ "$(jq -r '.failed' "$MARKER_OUT")" = "true" ] || fail "the marker should record failed:true"
+[ "$(jq -r '.input' "$MARKER_OUT")" = "0" ] || fail "the marker should report zero usage"
+# The marker must never overwrite real figures.
+REALFIRST_OUT="$SUITE_TMP/realfirst/session.json"
+bash "$SCRIPT" "$T1" "$REALFIRST_OUT" >/dev/null 2>&1
+REAL_IN=$(jq -r '.input' "$REALFIRST_OUT")
+bash "$SCRIPT" "$SUITE_TMP/definitely-not-a-transcript.jsonl" "$REALFIRST_OUT" >/dev/null 2>&1
+[ "$(jq -r '.input' "$REALFIRST_OUT")" = "$REAL_IN" ] \
+  || fail "the failure marker must not replace a populated cache"
 
 echo "token-stats.test.sh: all assertions passed"

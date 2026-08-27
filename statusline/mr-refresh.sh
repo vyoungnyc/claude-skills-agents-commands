@@ -83,7 +83,19 @@ umask 077
 key="$repo_id"$'\t'"$branch"
 now=$(date +%s)
 
-file_age() { m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0); echo $(($(date +%s) - m)); }
+# mtime age in seconds. The result is validated as NUMERIC rather than trusted
+# on exit status: GNU `stat -f` means --file-system, so with GNU coreutils ahead
+# of /usr/bin (common on macOS via Homebrew) the fallback exits ZERO and prints a
+# multi-line filesystem report to stdout. `|| echo 0` therefore never fires, this
+# function returns junk, and under `set -u` the arithmetic aborts and yields an
+# EMPTY string -- which makes both lock guards below false and reclaims a lock
+# whose owner is still running, defeating single-flight entirely.
+file_age() {
+    m=$(stat -c %Y "$1" 2>/dev/null)
+    case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$1" 2>/dev/null) ;; esac
+    case "$m" in ''|*[!0-9]*) m=0 ;; esac
+    echo $(($(date +%s) - m))
+}
 
 # Single-flight across sessions (atomic mkdir), with the holder's PID recorded
 # in an `owner` file. A purely time-based staleness check is unsafe on both
@@ -153,6 +165,9 @@ trap lock_release EXIT
 if [ -f "$CACHE" ]; then
     entry=$(jq -r --arg k "$key" '(.[$k] // {}) | "\(.ts // "")\t\(if .failed then 1 else 0 end)"' "$CACHE" 2>/dev/null)
     entry_ts=${entry%%$'\t'*}
+    # Coerce before arithmetic: bash evaluates the VALUE inside $(( )), so a
+    # non-numeric `ts` in the cache is executable via the array-subscript rule.
+    case "$entry_ts" in ''|*[!0-9]*) entry_ts=0 ;; esac
     entry_failed=${entry##*$'\t'}
     window="$MAX_AGE"
     [ "$entry_failed" = "1" ] && window="$FAIL_COOLDOWN"

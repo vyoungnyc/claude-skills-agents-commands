@@ -233,25 +233,25 @@ expect_exit 0 "$COLLIDE_REPO" "$COLLIDE_HOME" --apply
 [ "$(cat "$COLLIDE_HOME/hooks/example.sh")" = "#!/bin/bash
 echo hi" ] || fail "colliding hooks/ file not overwritten with repo version"
 
-COLLIDE_AGENT_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1)
+COLLIDE_AGENT_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/agents/example.md" 2>/dev/null | head -1 || true)
 [ -n "$COLLIDE_AGENT_BACKUP" ] || fail "expected a backup of the overwritten agents/example.md"
 [ "$(cat "$COLLIDE_AGENT_BACKUP")" = "live agent content, pre-sync" ] || fail "backed-up agents/example.md does not match pre-sync content"
 
-COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1)
+COLLIDE_HOOK_BACKUP=$(find "$COLLIDE_HOME/backups" -path "*/hooks/example.sh" 2>/dev/null | head -1 || true)
 [ -n "$COLLIDE_HOOK_BACKUP" ] || fail "expected a backup of the overwritten hooks/example.sh"
 [ "$(cat "$COLLIDE_HOOK_BACKUP")" = "#!/bin/bash
 echo live-pre-sync" ] || fail "backed-up hooks/example.sh does not match pre-sync content"
 
 # Whole-directory snapshot: the live-only hook (never in the repo) is captured
 # in the hooks backup too, and survives in place after the overlay.
-COLLIDE_HOOK_LIVEONLY=$(find "$COLLIDE_HOME/backups" -path "*/hooks/keep.sh" 2>/dev/null | head -1)
+COLLIDE_HOOK_LIVEONLY=$(find "$COLLIDE_HOME/backups" -path "*/hooks/keep.sh" 2>/dev/null | head -1 || true)
 [ -n "$COLLIDE_HOOK_LIVEONLY" ] || fail "hooks backup is not a whole-directory snapshot (live-only keep.sh missing)"
 [ -f "$COLLIDE_HOME/hooks/keep.sh" ] || fail "overlay must not delete a live-only hook"
 
 # Symlink preservation: a live symlinked hook must be backed up AS a symlink
 # (cp -R, not -r, which follows links on BSD), so a restore recreates the link
 # rather than a dereferenced regular file.
-COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/dev/null | head -1)
+COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/dev/null | head -1 || true)
 [ -L "$COLLIDE_HOOK_LINK" ] || fail "hooks backup dereferenced a symlink instead of preserving it"
 [ "$(readlink "$COLLIDE_HOOK_LINK")" = "example.sh" ] || fail "backed-up symlink target changed"
 
@@ -259,7 +259,7 @@ COLLIDE_HOOK_LINK=$(find "$COLLIDE_HOME/backups" -path "*/hooks/linked.sh" 2>/de
 # file rather than as a directory snapshot.
 [ "$(cat "$COLLIDE_HOME/statusline-example.sh")" = "$(cat "$COLLIDE_REPO/statusline/statusline-example.sh")" ] \
   || fail "colliding statusline script not overwritten with repo version"
-COLLIDE_SL_BACKUP=$(find "$COLLIDE_HOME/backups" -name "statusline-example.sh" 2>/dev/null | head -1)
+COLLIDE_SL_BACKUP=$(find "$COLLIDE_HOME/backups" -name "statusline-example.sh" 2>/dev/null | head -1 || true)
 [ -n "$COLLIDE_SL_BACKUP" ] || fail "expected a backup of the overwritten statusline-example.sh"
 [ "$(cat "$COLLIDE_SL_BACKUP")" = "live-statusline-presync" ] \
   || fail "backed-up statusline-example.sh does not match pre-sync content"
@@ -302,7 +302,7 @@ expect_exit 0 "$ROOTSYM_REPO" "$ROOTSYM_HOME" --apply
 [ "$(cat "$ROOTSYM_HOME/agents/example.md")" = "agent content" ] || fail "repo file not deployed into the real root"
 [ -f "$EXT_ROOT/outsider.md" ] || fail "external referent file removed"
 [ -e "$ROOTSYM_HOME/agents/outsider.md" ] && fail "overlay wrote into the external referent"
-ROOTLINK=$(find "$ROOTSYM_HOME/backups" -name "agents.rootlink" 2>/dev/null | head -1)
+ROOTLINK=$(find "$ROOTSYM_HOME/backups" -name "agents.rootlink" 2>/dev/null | head -1 || true)
 [ -n "$ROOTLINK" ] || fail "symlinked category root not recorded in backup"
 [ -L "$ROOTLINK" ] || fail "recorded root backup is not a symlink"
 
@@ -316,7 +316,7 @@ mkdir -p "$MD_HOME"
 echo "# live CLAUDE.md, pre-sync" > "$MD_HOME/CLAUDE.md"
 expect_exit 0 "$MD_REPO" "$MD_HOME" --apply
 [ "$(cat "$MD_HOME/CLAUDE.md")" = "# CLAUDE.md repo version" ] || fail "CLAUDE.md not overwritten with repo version"
-BACKUP_MD=$(find "$MD_HOME/backups" -name "CLAUDE.md" 2>/dev/null | head -1)
+BACKUP_MD=$(find "$MD_HOME/backups" -name "CLAUDE.md" 2>/dev/null | head -1 || true)
 [ -n "$BACKUP_MD" ] || fail "expected a CLAUDE.md backup under $MD_HOME/backups"
 [ "$(cat "$BACKUP_MD")" = "# live CLAUDE.md, pre-sync" ] || fail "backed-up CLAUDE.md does not match pre-sync content"
 
@@ -355,7 +355,7 @@ jq -e '.env.LIVE_ONLY_FLAG == "1" and .env.REPO_FLAG == "1"' "$ST_HOME/settings.
 jq -e '.statusLine.command == "repo-statusline.sh"' "$ST_HOME/settings.json" >/dev/null \
   || fail "settings.json merge did not add the repo's statusLine (live had none)"
 
-ST_BACKUP=$(find "$ST_HOME/backups" -name "settings.json" 2>/dev/null | head -1)
+ST_BACKUP=$(find "$ST_HOME/backups" -name "settings.json" 2>/dev/null | head -1 || true)
 [ -n "$ST_BACKUP" ] || fail "expected a settings.json backup"
 jq -e '.hooks.PreToolUse[0].hooks[0].command == "live-only-hook.sh" and (.hooks.UserPromptSubmit | not) and (.statusLine | not)' "$ST_BACKUP" >/dev/null \
   || fail "backed-up settings.json does not match pre-merge content"
@@ -402,7 +402,7 @@ cat > "$BUNDLE_REPO/settings.json" <<'EOF'
 {
   "hooks": {
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "usage-refresh.sh --force"}]}
+      {"hooks": [{"type": "command", "command": "usage-refresh.sh --force", "timeout": 5}]}
     ]
   }
 }
@@ -421,12 +421,21 @@ cat > "$BUNDLE_HOME/settings.json" <<'EOF'
 }
 EOF
 expect_exit 0 "$BUNDLE_REPO" "$BUNDLE_HOME" --apply
-BUNDLE_COUNT=$(jq '.hooks.SessionStart | length' "$BUNDLE_HOME/settings.json")
-[ "$BUNDLE_COUNT" -eq 1 ] || fail "a repo hook already bundled into a live group must not be duplicated as a second group (count=$BUNDLE_COUNT)"
-jq -e '.hooks.SessionStart[0].hooks | length == 2' "$BUNDLE_HOME/settings.json" >/dev/null \
-  || fail "the original bundled live group (local hook + usage-refresh) must survive intact"
-jq -e '[.hooks.SessionStart[0].hooks[].command] | index("local-only-hook.js") != null' "$BUNDLE_HOME/settings.json" >/dev/null \
-  || fail "the live-only command inside the bundled group must not be dropped"
+# Assert COMMAND multiplicity, not group count: the harm is a command running
+# twice on every session start. The repo-owns-its-commands merge strips the repo
+# command out of the bundled live group and re-adds the repo group, so the group
+# count is legitimately 2 while each command still appears exactly once.
+BUNDLE_DUP=$(jq '[.hooks.SessionStart[].hooks[].command] | group_by(.) | map(select(length > 1)) | length' "$BUNDLE_HOME/settings.json")
+[ "$BUNDLE_DUP" -eq 0 ] || fail "a repo hook already bundled into a live group must not end up registered twice"
+jq -e '[.hooks.SessionStart[].hooks[].command] | index("local-only-hook.js")' "$BUNDLE_HOME/settings.json" >/dev/null \
+  || fail "the live-only hook bundled alongside it must survive"
+# The repo command is re-added as its own group, so the previously-bundled live
+# group is left holding just the live-only hook. What must hold is that the
+# live-only command survives somewhere and the repo command is registered once
+# (both asserted above), plus that the repo metadata actually got deployed --
+# which the old structure could never do.
+jq -e '[.hooks.SessionStart[].hooks[] | select(.command == "usage-refresh.sh --force") | .timeout] | .[0] == 5' "$BUNDLE_HOME/settings.json" >/dev/null \
+  || fail "the repo hook metadata (timeout) should be deployed onto the bundled command"
 
 expect_exit 0 "$BUNDLE_REPO" "$BUNDLE_HOME" --apply
 expect_stdout_match "Already in sync"
@@ -487,16 +496,32 @@ cat > "$MATCHER_HOME/settings.json" <<'EOF'
 {
   "hooks": {
     "PostToolUse": [
-      {"matcher": "Edit", "hooks": [{"type": "command", "command": "shared.sh"}]}
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "shared.sh"}]},
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "user-own-hook.sh"}]}
     ]
   }
 }
 EOF
 expect_exit 0 "$MATCHER_REPO" "$MATCHER_HOME" --apply
-jq -e '[.hooks.PostToolUse[] | select(.matcher == "Edit" and (.hooks[0].command == "shared.sh"))] | length == 1' "$MATCHER_HOME/settings.json" >/dev/null \
-  || fail "the original Edit-matcher group must survive intact"
-jq -e '[.hooks.PostToolUse[] | select(.matcher == "Write" and (.hooks[0].command == "shared.sh"))] | length == 1' "$MATCHER_HOME/settings.json" >/dev/null \
-  || fail "shared.sh under matcher Write must be added -- command-only dedup would have wrongly treated it as already covered by the Edit-matcher group"
+# DELIBERATE BEHAVIOR CHOICE, changed from an earlier additive rule: the repo
+# declares the complete trigger set for its own commands, so re-targeting
+# shared.sh from Edit to Write MOVES it rather than accumulating both. There is
+# no signal in a live settings.json that distinguishes "a stale group this repo
+# deployed earlier" from "a trigger the user added by hand" -- both are just a
+# group -- so a default has to be picked. Additive was the old default and it is
+# what left enforce-git-conventions.sh registered twice (see the `if` test
+# below); it also makes it impossible for the repo to ever remove or re-target
+# one of its own hooks. Repo-authoritative matches how CLAUDE.md and statusLine
+# already deploy, and the live file is backed up first.
+jq -e '[.hooks.PostToolUse[] | select(.matcher == "Edit" and ((.hooks // [])[0].command == "shared.sh"))] | length == 0' "$MATCHER_HOME/settings.json" >/dev/null \
+  || fail "re-targeting a repo command should move it, not leave the stale Edit-matcher group behind"
+jq -e '[.hooks.PostToolUse[] | select(.matcher == "Write" and ((.hooks // [])[0].command == "shared.sh"))] | length == 1' "$MATCHER_HOME/settings.json" >/dev/null \
+  || fail "shared.sh must be registered under the repo trigger (Write)"
+[ "$(jq '[.hooks.PostToolUse[].hooks[]? | select(.command == "shared.sh")] | length' "$MATCHER_HOME/settings.json")" -eq 1 ] \
+  || fail "shared.sh must be registered exactly once"
+# A command the user wrote themselves (not shipped by the repo) is untouched.
+jq -e '[.hooks.PostToolUse[].hooks[]? | select(.command == "user-own-hook.sh")] | length == 1' "$MATCHER_HOME/settings.json" >/dev/null \
+  || fail "a live-only hook the repo does not ship must survive"
 
 # =======================================================================
 # Regression: the group-level `if` predicate is part of the trigger, so the
@@ -526,10 +551,16 @@ cat > "$IF_HOME/settings.json" <<'EOF'
 }
 EOF
 expect_exit 0 "$IF_REPO" "$IF_HOME" --apply
-jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(rm *)" and (.hooks[0].command == "guard.sh"))] | length == 1' "$IF_HOME/settings.json" >/dev/null \
-  || fail "the live group under a different \`if\` must survive intact"
-jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(git *)" and (.hooks[0].command == "guard.sh"))] | length == 1' "$IF_HOME/settings.json" >/dev/null \
-  || fail "guard.sh under the repo's own \`if\` must be added -- a (command, matcher)-only key wrongly treats it as already covered, so it never runs under that condition"
+# Same repo-authoritative rule as the matcher case above: the repo declares the
+# trigger set for guard.sh, so its `if` replaces the live one rather than both
+# being kept. Keeping both is precisely what registered
+# enforce-git-conventions.sh twice in a real config.
+jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(rm *)")] | length == 0' "$IF_HOME/settings.json" >/dev/null \
+  || fail "the stale live predicate should be replaced, not kept alongside the repo one"
+jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(git *)" and ((.hooks // [])[0].command == "guard.sh"))] | length == 1' "$IF_HOME/settings.json" >/dev/null \
+  || fail "guard.sh must be registered under the repo predicate"
+[ "$(jq '[.hooks.PreToolUse[].hooks[]? | select(.command == "guard.sh")] | length' "$IF_HOME/settings.json")" -eq 1 ] \
+  || fail "guard.sh must be registered exactly once"
 
 # An identical group (same command, matcher AND if) is still deduped -- the
 # richer key must not turn every re-sync into an append.
@@ -624,15 +655,18 @@ cat > "$MULTIMETA_HOME/settings.json" <<'EOF'
 }
 EOF
 expect_exit 0 "$MULTIMETA_REPO" "$MULTIMETA_HOME" --apply
-jq -e '.hooks.SessionStart[0].hooks[0].command == "my-local-hook.sh"' "$MULTIMETA_HOME/settings.json" >/dev/null \
+# Assert by command, not by index: the repo command is re-added as its own group,
+# so positions shift. What matters is that each command appears once, the repo
+# one carries the repo metadata, and the live-only one is untouched.
+jq -e '[.hooks.SessionStart[].hooks[]? | select(.command == "my-local-hook.sh")] | length == 1' "$MULTIMETA_HOME/settings.json" >/dev/null \
   || fail "a live-only command in a multi-command group must survive untouched"
-jq -e '.hooks.SessionStart[0].hooks[1].async == true' "$MULTIMETA_HOME/settings.json" >/dev/null \
-  || fail "the shared command in a multi-command group should pick up the repo's metadata"
-MULTIMETA_TOTAL=$(jq '[.hooks.SessionStart[].hooks[]] | length' "$MULTIMETA_HOME/settings.json")
-[ "$MULTIMETA_TOTAL" -eq 2 ] || fail "updating in place must not append a duplicate group (total hooks=$MULTIMETA_TOTAL)"
+jq -e '[.hooks.SessionStart[].hooks[]? | select(.command == "shared.sh") | .async] | .[0] == true' "$MULTIMETA_HOME/settings.json" >/dev/null \
+  || fail "the shared command should carry the repo metadata (async)"
+MULTIMETA_TOTAL=$(jq '[.hooks.SessionStart[].hooks[]?] | length' "$MULTIMETA_HOME/settings.json")
+[ "$MULTIMETA_TOTAL" -eq 2 ] || fail "each command exactly once (total hooks=$MULTIMETA_TOTAL)"
 
 # A live-only hook with no repo counterpart keeps its own metadata.
-jq -e '.hooks.SessionStart[0].hooks[0] | has("async") | not' "$MULTIMETA_HOME/settings.json" >/dev/null \
+jq -e '[.hooks.SessionStart[].hooks[]? | select(.command == "my-local-hook.sh")] | .[0] | has("async") | not' "$MULTIMETA_HOME/settings.json" >/dev/null \
   || fail "a live-only hook must not inherit metadata from an unrelated repo hook"
 
 # =======================================================================
@@ -740,6 +774,93 @@ chmod +x "$SPACE_TARGET/statusline-command.sh"
 rewritten_cmd=$(jq -r '.statusLine.command' "$SPACE_TARGET/settings.json")
 [ "$(bash -c "$rewritten_cmd")" = "ran-ok" ] \
   || fail "rewritten command with a space in CLAUDE_HOME must execute as one path when run through a shell, got command: $rewritten_cmd"
+
+# =======================================================================
+# Regression: a live group that predates a new `if:` predicate must not
+# leave the hook registered TWICE. Including `if` in a dedup key made the
+# stale live group read as a different trigger, so the repo group was
+# appended and the old one kept -- this repo own enforce-git-conventions.sh
+# then fired on every Bash call as well as under `Bash(git *)`.
+# =======================================================================
+IFDUP_REPO=$(fake_repo)
+cat > "$IFDUP_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "if": "Bash(git *)", "hooks": [{"type": "command", "command": "guard.sh"}]}
+    ]
+  }
+}
+EOF
+IFDUP_HOME=$(fake_home)
+cat > "$IFDUP_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "guard.sh"}]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$IFDUP_REPO" "$IFDUP_HOME" --apply
+IFDUP_N=$(jq '[.hooks.PreToolUse[].hooks[] | select(.command == "guard.sh")] | length' "$IFDUP_HOME/settings.json")
+[ "$IFDUP_N" -eq 1 ] || fail "guard.sh should be registered exactly once, got $IFDUP_N (stale predicate-less group kept alongside the repo group)"
+jq -e '[.hooks.PreToolUse[] | select(.if == "Bash(git *)")] | length == 1' "$IFDUP_HOME/settings.json" >/dev/null \
+  || fail "the surviving registration should carry the repo predicate"
+# The repo may still ship one command under two DELIBERATE triggers.
+TWOTRIG_REPO=$(fake_repo)
+cat > "$TWOTRIG_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit", "hooks": [{"type": "command", "command": "both.sh"}]},
+      {"matcher": "Write", "hooks": [{"type": "command", "command": "both.sh"}]}
+    ]
+  }
+}
+EOF
+TWOTRIG_HOME=$(fake_home)
+echo '{}' > "$TWOTRIG_HOME/settings.json"
+expect_exit 0 "$TWOTRIG_REPO" "$TWOTRIG_HOME" --apply
+[ "$(jq '[.hooks.PostToolUse[].hooks[] | select(.command == "both.sh")] | length' "$TWOTRIG_HOME/settings.json")" -eq 2 ] \
+  || fail "a command the repo deliberately ships under two triggers must get both"
+
+# =======================================================================
+# Regression: a live hook group with no `hooks` key must not abort the
+# merge. The live side iterated `.hooks` unguarded while the repo side used
+# `?`, so a hand-edited group produced "Cannot iterate over null", exit 5,
+# and a partial apply with no backup pointer printed.
+# =======================================================================
+NOHOOKS_REPO=$(fake_repo)
+NOHOOKS_HOME=$(fake_home)
+cat > "$NOHOOKS_HOME/settings.json" <<'EOF'
+{"hooks": {"PreToolUse": [{"matcher": "Bash"}]}}
+EOF
+expect_exit 0 "$NOHOOKS_REPO" "$NOHOOKS_HOME" --apply
+jq -e '.hooks' "$NOHOOKS_HOME/settings.json" >/dev/null \
+  || fail "a live group missing its hooks key should not corrupt the merged settings"
+
+# =======================================================================
+# Regression: CLAUDE.md and settings.json must not be written THROUGH a
+# symlink. The script already defends the overlay dirs, hooks and
+# statusline this way; these two paths were missed, so an --apply clobbered
+# a file outside CLAUDE_HOME and left the link in place.
+# =======================================================================
+SYMFILE_REPO=$(fake_repo)
+SYMFILE_HOME=$(fake_home)
+SYMFILE_OUT=$(mktemp -d "$SUITE_TMP/outside.XXXXXX")
+echo 'EXTERNAL CLAUDE.md' > "$SYMFILE_OUT/victim.md"
+echo '{"external":"settings"}' > "$SYMFILE_OUT/victim-settings.json"
+ln -s "$SYMFILE_OUT/victim.md" "$SYMFILE_HOME/CLAUDE.md"
+ln -s "$SYMFILE_OUT/victim-settings.json" "$SYMFILE_HOME/settings.json"
+expect_exit 0 "$SYMFILE_REPO" "$SYMFILE_HOME" --apply
+[ "$(cat "$SYMFILE_OUT/victim.md")" = "EXTERNAL CLAUDE.md" ] \
+  || fail "sync wrote through the CLAUDE.md symlink and clobbered a file outside CLAUDE_HOME"
+jq -e '.external == "settings"' "$SYMFILE_OUT/victim-settings.json" >/dev/null \
+  || fail "sync wrote through the settings.json symlink and clobbered a file outside CLAUDE_HOME"
+[ ! -L "$SYMFILE_HOME/CLAUDE.md" ] || fail "the CLAUDE.md symlink should have been replaced with a real file"
+[ ! -L "$SYMFILE_HOME/settings.json" ] || fail "the settings.json symlink should have been replaced with a real file"
+[ -f "$SYMFILE_HOME/CLAUDE.md" ] || fail "CLAUDE.md should exist as a real file after the sync"
 
 # =======================================================================
 # Coverage note: every branch this suite can reach without mocking a

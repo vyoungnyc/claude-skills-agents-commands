@@ -23,12 +23,64 @@ set -uo pipefail
 tp="${1:-}"
 out="${2:-}"
 [ -n "$tp" ] && [ -n "$out" ] || exit 0
-[ -f "$tp" ] || exit 0
+
+# SECURITY: refuse an <out> path containing a `..` component. The caller builds
+# it as <home>/token_history/<project-slug>/<session-id>.json, where the slug is
+# `basename "$(dirname "$transcript")"` — which yields `..` for a transcript path
+# like /a/b/../s.jsonl. That escapes to the Claude home ROOT, and the cleanup
+# sweep at the bottom of this script (`find <dirname> -name '*.json' -mtime +7
+# -delete`) would then delete the user's settings.json, usage-cache.json and
+# .mr-cache.json. The caller now validates the slug too; this is the backstop,
+# because the destructive operation lives here.
+case "/$out/" in
+    */../*) exit 0 ;;
+esac
+# Write a minimal "I ran and failed" cache so the caller stops relaunching us on
+# every ~30s render. statusline-command.sh treats an existing cache as fresh for
+# 15s, so this bounds a broken transcript to one run per window instead of one
+# per render. Mirrors the negative-caching the sibling refreshers already do
+# (usage-refresh.sh's backoff file, mr-refresh.sh's `failed` entries) -- this was
+# the only one of the three with no such brake.
+write_failed_marker() {
+    [ -n "${out:-}" ] || return 0
+    case "/$out/" in */../*) return 0 ;; esac
+    mkdir -p "$(dirname "$out")" 2>/dev/null
+    printf '%s\n' '{"input":0,"output":0,"cache_read":0,"cache_write":0,"est_cost":0,"context_length":0,"failed":true,"main":{"input":0,"output":0,"cache_read":0,"cache_write":0,"est_cost":0},"agents":{"input":0,"output":0,"cache_read":0,"cache_write":0,"est_cost":0}}' \
+        >"$out.tmp.$$" 2>/dev/null || { rm -f "$out.tmp.$$" 2>/dev/null; return 0; }
+    # Never let the marker replace real figures (same rule as the main write).
+    if [ -s "$out" ]; then
+        rm -f "$out.tmp.$$" 2>/dev/null
+        return 0
+    fi
+    mv "$out.tmp.$$" "$out" 2>/dev/null || rm -f "$out.tmp.$$" 2>/dev/null
+    return 0
+}
+
+# A missing/unreadable transcript is a failure, not a no-op: mark it.
+[ -f "$tp" ] || { write_failed_marker; exit 0; }
+
+# The cache records per-project session paths and token counts; keep it
+# owner-only rather than whatever the ambient umask yields. Covers the output
+# file, its temp file, and the lock directory.
+umask 077
 
 mkdir -p "$(dirname "$out")" 2>/dev/null
 
 lock="$out.lock"
-age() { m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0); echo $(($(date +%s) - m)); }
+# mtime in epoch seconds. Validate that the result is NUMERIC rather than
+# trusting exit status: GNU `stat -f` means --file-system, so on a host with GNU
+# coreutils ahead of /usr/bin (common on macOS via Homebrew) the fallback exits
+# ZERO and prints a multi-line filesystem report to stdout — so `|| echo 0` never
+# fires, `age` returns junk, and under `set -u` the arithmetic aborts and yields
+# an empty string. An empty age makes BOTH lock guards below evaluate false,
+# which reclaims a lock whose owner is still inside the critical section. Same
+# `case` validation already used for the backoff epoch in statusline-command.sh.
+age() {
+    m=$(stat -c %Y "$1" 2>/dev/null)
+    case "$m" in ''|*[!0-9]*) m=$(stat -f %m "$1" 2>/dev/null) ;; esac
+    case "$m" in ''|*[!0-9]*) m=0 ;; esac
+    echo $(($(date +%s) - m))
+}
 # Single-flight (atomic mkdir) with the holder's PID recorded in an `owner`
 # file. A purely time-based staleness check is unsafe on both sides: a run that
 # outlives the threshold has its LIVE lock stolen, and its unconditional
@@ -208,7 +260,7 @@ jq -n --argjson m "$main" --argjson a "$agents" --argjson ctx "$ctx" '
     context_length: $ctx,
     main:   {input:$m.i, output:$m.o, cache_read:$m.r, cache_write:$m.w, est_cost:$m.c},
     agents: {input:$a.i, output:$a.o, cache_read:$a.r, cache_write:$a.w, est_cost:$a.c}
-  }' >"$out.tmp.$$" 2>/dev/null || { rm -f "$out.tmp.$$" 2>/dev/null; exit 0; }
+  }' >"$out.tmp.$$" 2>/dev/null || { rm -f "$out.tmp.$$" 2>/dev/null; write_failed_marker; exit 0; }
 
 # Never replace a populated cache with an all-zero one. A session's cumulative
 # totals only ever grow, so zeros on a session that previously had usage mean
@@ -229,6 +281,15 @@ if [ -s "$out" ]; then
 fi
 mv "$out.tmp.$$" "$out"
 
-# opportunistic cleanup: drop token-stats caches for sessions untouched for a week, scoped
-# to this session's own project subdirectory under token_history/.
-find "$(dirname "$out")" -maxdepth 1 -name '*.json' -mtime +7 -delete 2>/dev/null || true
+# Opportunistic cleanup: drop token-stats caches for sessions untouched for a
+# week. Scoped by REQUIRING the directory to sit under a `token_history/`
+# component, rather than trusting `dirname "$out"`: this is a recursive delete of
+# *.json, so it must never be able to run in the Claude home root (where
+# settings.json lives) even if the caller hands us a surprising path. Combined
+# with the `..` rejection at the top, the sweep can only ever touch a
+# token_history project directory.
+sweep_dir=$(dirname "$out")
+case "$sweep_dir" in
+    */token_history/*|*/token_history)
+        find "$sweep_dir" -maxdepth 1 -name '*.json' -mtime +7 -delete 2>/dev/null || true ;;
+esac
