@@ -65,8 +65,17 @@ sanitize_repo_id() {
 }
 
 input=$(cat)
+# Validate the payload ONCE. Every field read below is its own `jq` call, so
+# an unparseable payload otherwise produced ~26 `jq: parse error` lines on
+# stderr -- straight into the user's terminal, on every ~30s render. Falling
+# back to an empty object degrades to a minimal status line instead, which is
+# the right failure mode for a cosmetic component.
+if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
+    input='{}'
+fi
 now=$(date +%s)
-model=$(echo "$input" | jq -r '.model.display_name')
+model=$(echo "$input" | jq -r '.model.display_name // empty')
+[ -n "$model" ] || model="?"
 session_id=$(echo "$input" | jq -r '.session_id // empty')
 transcript=$(echo "$input" | jq -r '.transcript_path // empty')
 effort=$(echo "$input" | jq -r '.effort.level // empty')
@@ -78,7 +87,11 @@ repo_owner=$(echo "$input" | jq -r '.workspace.repo.owner // empty')
 repo_name=$(echo "$input" | jq -r '.workspace.repo.name // empty')
 pr=$(echo "$input" | jq -r '.pr.number // empty')
 pr_url=$(echo "$input" | jq -r '.pr.url // empty')
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd')
+cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
+# An empty cwd would make every `git -C ""` a no-op against the PROCESS's own
+# directory, so the status line would confidently show an unrelated repo with
+# a live hyperlink. Fall back explicitly instead.
+[ -n "$cwd" ] || cwd="$PWD"
 
 # OSC 8 terminal hyperlink: hlink <url> <text>. Renders as plain text where unsupported.
 hlink() { printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$1" "$2"; }
@@ -419,8 +432,11 @@ if [ -f "$UCACHE" ]; then
     mt=$(mtime_or0 "$UCACHE")
     cache_age=$((now - mt))
 fi
-# Trigger a background refresh when the cache is >10 min old — unless a throttle backoff
-# window is still active (don't hammer a rate-limited endpoint).
+# Trigger a background refresh when the cache is >10 min old — unless a backoff
+# window is still active. This reader honors the window regardless of KIND
+# (throttle or error); only usage-refresh.sh itself distinguishes them, and
+# only to decide what --force may bypass. Comment previously said "throttle",
+# which no longer matched the code.
 if [ -x "$REFRESH" ]; then
     # The backoff file is "<until_epoch> <kind>" (see usage-refresh.sh). Read
     # ONLY the epoch field: `cat`ing the whole line here fed "<epoch> <kind>"

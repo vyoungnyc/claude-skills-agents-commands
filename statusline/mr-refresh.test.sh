@@ -398,4 +398,93 @@ R_FAIL=$(grep -oE 'mr_window=[0-9]+' "$SCRIPT_DIR/statusline-command.sh" | tail 
 [ "$W_FAIL" = "$R_FAIL" ] \
   || fail "MR failure cooldown drifted: mr-refresh.sh FAIL_COOLDOWN=$W_FAIL vs statusline-command.sh $R_FAIL"
 
+# =======================================================================
+# LOCK: the owner-aware single-flight body is duplicated verbatim across
+# usage-refresh.sh, mr-refresh.sh and token-stats.sh, but was only tested
+# in usage-refresh -- so a release-side or reclaim-race regression here was
+# invisible. These two tests are ported from that suite.
+#
+# Reclaim must be mutually exclusive: several real processes race one
+# abandoned lock and exactly one may reach the critical section. (An
+# assertion under genuine concurrency rather than a forced interleaving --
+# but the pre-fix forms lose it reliably, 2-3 of 6.)
+# =======================================================================
+ATOMIC_HOME=$(fake_home)
+ATOMIC_LOCK="$ATOMIC_HOME/.claude/.mr-refresh.lock"
+ATOMIC_WINNERS="$ATOMIC_HOME/winners"
+: > "$ATOMIC_WINNERS"
+ATOMIC_BIN=$(mktemp -d "$SUITE_TMP/atomicbin.XXXXXX")
+cat > "$ATOMIC_BIN/glab" <<EOF
+#!/usr/bin/env bash
+# Reaching here means this process is inside the critical section.
+echo "\$PPID" >> "$ATOMIC_WINNERS"
+cat <<'JSON'
+$FOUND_JSON
+JSON
+EOF
+chmod +x "$ATOMIC_BIN/glab"
+# An abandoned lock: owner recorded but definitely dead, so every contender
+# agrees it is reclaimable.
+( : ) &
+GONE_PID=$!
+wait "$GONE_PID" 2>/dev/null || true
+mkdir "$ATOMIC_LOCK"
+printf '%s' "$GONE_PID" > "$ATOMIC_LOCK/owner"
+for _ in 1 2 3 4 5 6; do
+  env HOME="$ATOMIC_HOME" PATH="$ATOMIC_BIN:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x" >/dev/null 2>&1 &
+done
+wait
+ATOMIC_COUNT=$(wc -l < "$ATOMIC_WINNERS" | tr -d ' ')
+[ "$ATOMIC_COUNT" -eq 1 ] \
+  || fail "exactly one process may reclaim an abandoned lock and enter the critical section, got $ATOMIC_COUNT"
+[ ! -d "$ATOMIC_LOCK" ] || fail "the winning process should have released its lock on exit"
+STRAY=$(find "$ATOMIC_HOME/.claude" -maxdepth 1 -name '.mr-refresh.lock.reclaim' 2>/dev/null)
+[ -z "$STRAY" ] || fail "reclaim left its serialization lock behind: $STRAY"
+
+# Release side: a process whose lock was taken over mid-run must NOT delete
+# the new owner's lock on exit -- that admits a third process.
+TAKEOVER_HOME=$(fake_home)
+TAKEOVER_LOCK="$TAKEOVER_HOME/.claude/.mr-refresh.lock"
+OTHER_PID=$$   # a live pid that is never the script's own
+TAKEOVER_BIN=$(mktemp -d "$SUITE_TMP/takeoverbin.XXXXXX")
+cat > "$TAKEOVER_BIN/glab" <<EOF
+#!/usr/bin/env bash
+touch "$TAKEOVER_HOME/glab-called"
+# Simulate another process reclaiming the lock mid-lookup.
+printf '%s' "$OTHER_PID" > "$TAKEOVER_LOCK/owner"
+cat <<'JSON'
+$FOUND_JSON
+JSON
+EOF
+chmod +x "$TAKEOVER_BIN/glab"
+env HOME="$TAKEOVER_HOME" PATH="$TAKEOVER_BIN:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+glab_called "$TAKEOVER_HOME" || fail "takeover test setup: the glab stub never ran"
+[ -d "$TAKEOVER_LOCK" ] \
+  || fail "the EXIT trap deleted a lock this process no longer owned -- that lets a third process in"
+[ "$(cat "$TAKEOVER_LOCK/owner")" = "$OTHER_PID" ] || fail "the new owner's lock content was clobbered"
+rm -rf "$TAKEOVER_LOCK"
+
+# =======================================================================
+# PRUNE_AGE had zero coverage: the age branch of write_entry's jq was only
+# ever exercised by the credential predicate, so the constant could be
+# changed to 1 with the suite green. Assert both sides of it.
+# =======================================================================
+PRUNEV=$(grep -oE '^PRUNE_AGE=[0-9]+' "$SCRIPT_DIR/mr-refresh.sh" | head -1 | cut -d= -f2)
+[ -n "$PRUNEV" ] || fail "could not read PRUNE_AGE from mr-refresh.sh"
+PRUNE_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$PRUNE_HOME" "$FOUND_JSON")
+NOW=$(date +%s)
+OLD_KEY=$(mr_key "https://gitlab.example.com/g/ancient.git" "old-branch")
+YOUNG_KEY=$(mr_key "https://gitlab.example.com/g/recent.git" "recent-branch")
+jq -n --arg o "$OLD_KEY" --arg y "$YOUNG_KEY" \
+      --argjson told "$((NOW - PRUNEV - 3600))" --argjson tyoung "$((NOW - PRUNEV + 3600))" \
+  '{($o): {repo:"https://gitlab.example.com/g/ancient.git", branch:"old-branch", number:"1", url:"u", ts:$told},
+    ($y): {repo:"https://gitlab.example.com/g/recent.git", branch:"recent-branch", number:"2", url:"u", ts:$tyoung}}' \
+  > "$PRUNE_HOME/.claude/.mr-cache.json"
+env HOME="$PRUNE_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+[ "$(jq -r --arg k "$OLD_KEY" 'has($k)' "$PRUNE_HOME/.claude/.mr-cache.json")" = "false" ] \
+  || fail "an entry older than PRUNE_AGE (${PRUNEV}s) should be pruned on write"
+[ "$(jq -r --arg k "$YOUNG_KEY" 'has($k)' "$PRUNE_HOME/.claude/.mr-cache.json")" = "true" ] \
+  || fail "an entry younger than PRUNE_AGE must be kept -- pruning is not a whole-file wipe"
+
 echo "mr-refresh.test.sh: all assertions passed"

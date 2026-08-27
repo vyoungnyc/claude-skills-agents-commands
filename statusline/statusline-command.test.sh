@@ -579,4 +579,121 @@ expect_match '$1.50'
 expect_not_match 'main $1.50 (0 in · 0 out · 0 cache-r · 0 cache-w)'
 expect_match "1.2k in"
 
+# =======================================================================
+# fmt_reset: every existing fixture used resets=9999999999 (year 2286), so
+# only the >7d branch ever ran and the " resets ..." text was never
+# asserted at all -- breaking either near-term branch went unnoticed. These
+# are the forms users actually see.
+# =======================================================================
+reset_render() {
+  # <epoch> -> the rendered line, plain
+  local home epoch="$1"
+  home=$(fake_home)
+  cat > "$home/.claude/usage-cache.json" <<EOF
+{"enabled": false, "used": 0, "limit": 0, "pct": 0,
+ "five": {"util": 42, "resets": $epoch, "severity": "normal"},
+ "seven": {"util": 9, "resets": $epoch, "severity": "normal"}}
+EOF
+  run_statusline "$home" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"}}'
+  printf '%s' "$LAST_OUT_PLAIN"
+}
+NOW_E=$(date +%s)
+# <24h renders a relative "in Xh0Ym".
+printf '%s' "$(reset_render "$((NOW_E + 5400))")" | grep -qE 'resets in 1h3[0-9]m' \
+  || fail "a reset 90 minutes out should render as 'in 1h30m', got: $LAST_OUT_PLAIN"
+# <1h renders bare minutes.
+printf '%s' "$(reset_render "$((NOW_E + 1500))")" | grep -qE 'resets in 2[0-9]m' \
+  || fail "a reset 25 minutes out should render as 'in 25m', got: $LAST_OUT_PLAIN"
+# <7d renders a weekday + clock, not a relative time.
+# NOTE: must assert on the CLOCK, not just a leading weekday -- the >7d
+# format is "Tue Sep 1", which also starts with a weekday, so a weekday-only
+# regex matches both branches and cannot tell them apart.
+THREE_DAY=$(reset_render "$((NOW_E + 259200))")
+printf '%s' "$THREE_DAY" | grep -qE 'resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun) [0-9]+:[0-9]{2}(am|pm)' \
+  || fail "a reset 3 days out should render as a weekday + clock, got: $THREE_DAY"
+printf '%s' "$THREE_DAY" | grep -q 'resets in ' \
+  && fail "a reset 3 days out must not use the relative form"
+# >7d renders a date.
+THIRTY_DAY=$(reset_render "$((NOW_E + 2592000))")
+printf '%s' "$THIRTY_DAY" | grep -qE 'resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]+' \
+  || fail "a reset 30 days out should render as a date, got: $THIRTY_DAY"
+# A past reset clamps to "in 0m" rather than rendering a negative duration.
+printf '%s' "$(reset_render "$((NOW_E - 3600))")" | grep -q 'resets in 0m' \
+  || fail "a reset in the past should clamp to 'in 0m', got: $LAST_OUT_PLAIN"
+
+# =======================================================================
+# Severity colors are decided by sev_color but every assertion here reads
+# the ANSI-stripped copy, so the whole mapping was unverifiable. Assert on
+# the RAW output for the decisions that matter.
+# =======================================================================
+color_render() {
+  # <severity> <util> -> raw output
+  local home sev="$1" util="$2"
+  home=$(fake_home)
+  cat > "$home/.claude/usage-cache.json" <<EOF
+{"enabled": false, "used": 0, "limit": 0, "pct": 0,
+ "five": {"util": $util, "resets": 9999999999, "severity": $sev},
+ "seven": {"util": 3, "resets": 9999999999, "severity": "normal"}}
+EOF
+  run_statusline "$home" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp"}}'
+  printf '%s' "$LAST_OUT"
+}
+printf '%s' "$(color_render '"critical"' 10)" | grep -q $'\033\[01;31m' \
+  || fail "a critical severity should render red"
+printf '%s' "$(color_render '"warning"' 10)" | grep -q $'\033\[01;33m' \
+  || fail "a warning severity should render yellow"
+# With no severity the percentage thresholds decide.
+printf '%s' "$(color_render 'null' 85)" | grep -q $'\033\[01;31m' \
+  || fail "85% with no severity should fall back to red (>=80)"
+printf '%s' "$(color_render 'null' 60)" | grep -q $'\033\[01;33m' \
+  || fail "60% with no severity should fall back to yellow (>=50)"
+
+# =======================================================================
+# Untested render paths: the worktree segment, the repo hyperlink, the
+# .pr.* priority over the MR cache, and malformed stdin. Each of these
+# could be deleted outright with the suite still green.
+# =======================================================================
+# 🌲 worktree segment.
+WT_HOME=$(fake_home)
+run_statusline "$WT_HOME" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp","git_worktree":"wt-feature"}}'
+expect_match "🌲wt-feature"
+
+# Repo name hyperlinked from workspace.repo.{host,owner,name}. The sed in
+# run_statusline strips only SGR colors, so the OSC-8 target is still in
+# LAST_OUT_PLAIN and can be asserted directly.
+LINK_HOME=$(fake_home)
+run_statusline "$LINK_HOME" '{"cwd":"/tmp","model":{"display_name":"X"},"workspace":{"current_dir":"/tmp","repo":{"host":"github.com","owner":"o","name":"r"}}}'
+expect_match "https://github.com/o/r"
+
+# .pr.number takes priority over the MR cache when both could apply.
+PRIO_HOME=$(fake_home)
+PRIO_KEY=$(printf '%s\t%s' "$GIT_REPO" "feature/widget")
+jq -n --arg k "$PRIO_KEY" --arg repo "$GIT_REPO" --argjson now "$(date +%s)" \
+  '{($k): {branch:"feature/widget", repo:$repo, number:"999", url:"https://mr/999", ts:$now}}' \
+  > "$PRIO_HOME/.claude/.mr-cache.json"
+run_statusline "$PRIO_HOME" "$(jq -n --arg cwd "$GIT_REPO" \
+  '{cwd:$cwd,model:{display_name:"X"},workspace:{current_dir:$cwd},pr:{number:"42",url:"https://pr/42"}}')" "$GLAB_STUB"
+expect_match "(#42)"
+expect_not_match "(#999)"
+
+# Malformed stdin must not spew parse errors into the terminal. The status
+# line renders on every prompt, so stderr noise here is highly visible.
+GARBAGE_ERR="$SUITE_TMP/garbage.err"
+GARBAGE_HOME=$(fake_home)
+printf '%s' 'this is not json at all' \
+  | env HOME="$GARBAGE_HOME" bash "$SCRIPT" >/dev/null 2>"$GARBAGE_ERR"
+[ ! -s "$GARBAGE_ERR" ] \
+  || fail "malformed stdin leaked $(wc -l < "$GARBAGE_ERR" | tr -d ' ') error line(s) to stderr: $(head -2 "$GARBAGE_ERR")"
+# Empty stdin likewise.
+EMPTY_ERR="$SUITE_TMP/empty.err"
+printf '' | env HOME="$GARBAGE_HOME" bash "$SCRIPT" >/dev/null 2>"$EMPTY_ERR"
+[ ! -s "$EMPTY_ERR" ] || fail "empty stdin leaked to stderr: $(head -2 "$EMPTY_ERR")"
+
+# A payload missing model/cwd must degrade, not render the literal "null"
+# (these were the only two stdin reads without a default).
+MINIMAL_HOME=$(fake_home)
+run_statusline "$MINIMAL_HOME" '{}'
+expect_not_match "[null]"
+expect_not_match "📁 null"
+
 echo "statusline-command.test.sh: all assertions passed"

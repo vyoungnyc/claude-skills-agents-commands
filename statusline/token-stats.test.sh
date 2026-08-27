@@ -20,6 +20,8 @@ fail() {
 }
 
 SUITE_TMP=$(mktemp -d)
+SUITE_TMP=$(cd "$SUITE_TMP" && pwd -P)  # resolve macOS's /var -> /private/var symlink,
+                                        # matching the other suites
 trap 'rm -rf "$SUITE_TMP"' EXIT
 
 # set_mtime <epoch> <file> — GNU date first, BSD fallback (mirrors the
@@ -455,5 +457,145 @@ REAL_IN=$(jq -r '.input' "$REALFIRST_OUT")
 bash "$SCRIPT" "$SUITE_TMP/definitely-not-a-transcript.jsonl" "$REALFIRST_OUT" >/dev/null 2>&1
 [ "$(jq -r '.input' "$REALFIRST_OUT")" = "$REAL_IN" ] \
   || fail "the failure marker must not replace a populated cache"
+
+# =======================================================================
+# LOCK: the owner-aware single-flight body is duplicated verbatim across
+# usage-refresh.sh, mr-refresh.sh and token-stats.sh but was tested only in
+# usage-refresh, so a regression in THIS copy was invisible.
+#
+# Tested deterministically rather than by racing. Racing is a poor fit here:
+# token-stats has no under-lock freshness re-check (unlike the two
+# refreshers -- its lock is per-session-file, so contention is only
+# same-session renders), which means contenders running one-after-another
+# is CORRECT and a winner count proves nothing. The invariant that matters
+# is that the reclaim decision is serialized and the release is
+# ownership-checked, and both can be set up directly.
+# =======================================================================
+
+# Reclaim serialization: an abandoned lock is NOT reclaimable while another
+# process holds the reclaim lock. Removing the `mkdir "$lock.reclaim"` guard
+# lets this contender tear down a lock a winner is about to create.
+RSER_OUT="$SUITE_TMP/reclaim-ser/session.json"
+mkdir -p "$SUITE_TMP/reclaim-ser"
+( : ) &
+RSER_DEAD=$!
+wait "$RSER_DEAD" 2>/dev/null || true
+mkdir "$RSER_OUT.lock"
+printf '%s' "$RSER_DEAD" > "$RSER_OUT.lock/owner"   # abandoned: owner is dead
+mkdir "$RSER_OUT.lock.reclaim"                      # ...but a reclaim is in flight
+bash "$SCRIPT" "$T1" "$RSER_OUT" >/dev/null 2>&1
+[ ! -f "$RSER_OUT" ] \
+  || fail "a contender reclaimed an abandoned lock while another process held the reclaim lock"
+[ -d "$RSER_OUT.lock" ] || fail "the in-flight reclaim's target lock was torn down"
+rm -rf "$RSER_OUT.lock" "$RSER_OUT.lock.reclaim"
+# With the reclaim lock free, the same abandoned lock IS reclaimed (proving
+# the assertion above is not passing for an unrelated reason).
+mkdir "$RSER_OUT.lock"
+printf '%s' "$RSER_DEAD" > "$RSER_OUT.lock/owner"
+bash "$SCRIPT" "$T1" "$RSER_OUT" >/dev/null 2>&1
+[ -f "$RSER_OUT" ] || fail "an abandoned lock with no in-flight reclaim should be reclaimed"
+
+# Release side: a process whose lock is taken over mid-run must NOT delete
+# the new owner's lock on exit -- doing so admits a third process. A `jq`
+# wrapper holds the critical section open (jq is only invoked after the lock
+# is taken) so the owner can be swapped underneath it.
+LOCKBIN=$(mktemp -d "$SUITE_TMP/lockbin.XXXXXX")
+REAL_JQ=$(command -v jq)
+cat > "$LOCKBIN/jq" <<EOF
+#!/usr/bin/env bash
+if [ ! -f "$SUITE_TMP/ts-held" ]; then
+  : > "$SUITE_TMP/ts-held"
+  sleep 1
+fi
+exec "$REAL_JQ" "\$@"
+EOF
+chmod +x "$LOCKBIN/jq"
+rm -f "$SUITE_TMP/ts-held"
+TAKEOVER_OUT="$SUITE_TMP/tstakeover/session.json"
+mkdir -p "$SUITE_TMP/tstakeover"
+TS_OTHER_PID=$$   # a live pid that is never the script's own
+env PATH="$LOCKBIN:$PATH" bash "$SCRIPT" "$T1" "$TAKEOVER_OUT" >/dev/null 2>&1 &
+TS_PID=$!
+i=0
+while [ "$i" -lt 300 ] && [ ! -d "$TAKEOVER_OUT.lock" ]; do i=$((i+1)); /bin/sleep 0.01; done
+[ -d "$TAKEOVER_OUT.lock" ] || fail "takeover setup: the run never took its lock"
+printf '%s' "$TS_OTHER_PID" > "$TAKEOVER_OUT.lock/owner"
+wait "$TS_PID" 2>/dev/null || true
+rm -f "$SUITE_TMP/ts-held"
+[ -d "$TAKEOVER_OUT.lock" ] \
+  || fail "the EXIT trap deleted a lock this process no longer owned -- that lets a third process in"
+[ "$(cat "$TAKEOVER_OUT.lock/owner" 2>/dev/null)" = "$TS_OTHER_PID" ] \
+  || fail "the new owner's lock content was clobbered"
+rm -rf "$TAKEOVER_OUT.lock"
+
+# =======================================================================
+# COST MODEL. Every fixture above uses claude-sonnet-5 and the flat
+# cache_creation_input_tokens shape, so the 5-way model dispatch, both cache
+# multipliers and the 5m/1h TTL split had ZERO coverage -- and est_cost, the
+# dollar figure users read, was never asserted numerically anywhere. All of
+# these mutations previously survived.
+#
+# Prices are list-price per 1M tokens, per the table in token-stats.sh.
+# =======================================================================
+cost_of() {
+  # <model> <in> <out> <cache_read> <cache_write_flat> -> est_cost
+  local model="$1" tin="$2" tout="$3" tcr="$4" tcw="$5" f out
+  f="$SUITE_TMP/cost-$RANDOM.jsonl"
+  jq -nc --arg m "$model" --argjson i "$tin" --argjson o "$tout" --argjson r "$tcr" --argjson w "$tcw" \
+    '{message:{usage:{input_tokens:$i,output_tokens:$o,cache_read_input_tokens:$r,cache_creation_input_tokens:$w},
+      model:$m,stop_reason:"end_turn"},isSidechain:false,timestamp:"2026-08-27T10:00:00.000Z"}' > "$f"
+  out="$SUITE_TMP/cost-out-$RANDOM/session.json"
+  bash "$SCRIPT" "$f" "$out" >/dev/null 2>&1
+  jq -r '.est_cost' "$out"
+}
+close_to() {
+  # <actual> <expected> <label> -- float compare with a small tolerance
+  awk -v a="$1" -v e="$2" 'BEGIN{ d=a-e; if (d<0) d=-d; exit !(d < 1e-9) }' \
+    || fail "$3: expected ~$2, got $1"
+}
+# Input-token pricing per model. 1M input tokens => exactly the per-1M price.
+close_to "$(cost_of claude-opus-4 1000000 0 0 0)"   5  "opus input price"
+close_to "$(cost_of claude-sonnet-5 1000000 0 0 0)" 2  "sonnet-5 input price"
+close_to "$(cost_of claude-sonnet-4 1000000 0 0 0)" 3  "sonnet (non-5) input price"
+close_to "$(cost_of claude-haiku-4-5 1000000 0 0 0)" 1 "haiku input price"
+close_to "$(cost_of claude-fable-5 1000000 0 0 0)"  10 "fable input price"
+close_to "$(cost_of some-unknown-model 1000000 0 0 0)" 5 "unknown model falls back to the opus rate"
+# Output is priced separately (sonnet-5: 10/1M).
+close_to "$(cost_of claude-sonnet-5 0 1000000 0 0)" 10 "sonnet-5 output price"
+# Cache reads are 0.1x the input rate.
+close_to "$(cost_of claude-sonnet-5 0 0 1000000 0)" 0.2 "cache read is 0.1x input"
+# A flat cache_creation_input_tokens is billed at the 5m rate (1.25x input).
+close_to "$(cost_of claude-sonnet-5 0 0 0 1000000)" 2.5 "flat cache write is 1.25x input"
+
+# The NESTED cache_creation shape: 5m at 1.25x, 1h at 2x.
+NESTED="$SUITE_TMP/nested.jsonl"
+jq -nc '{message:{usage:{input_tokens:0,output_tokens:0,cache_read_input_tokens:0,
+   cache_creation:{ephemeral_5m_input_tokens:1000000,ephemeral_1h_input_tokens:1000000}},
+   model:"claude-sonnet-5",stop_reason:"end_turn"},isSidechain:false,timestamp:"2026-08-27T10:00:00.000Z"}' > "$NESTED"
+NESTED_OUT="$SUITE_TMP/nested-out/session.json"
+bash "$SCRIPT" "$NESTED" "$NESTED_OUT" >/dev/null 2>&1
+# 1M at 1.25x2 = 2.5, plus 1M at 2x2 = 4  =>  6.5
+close_to "$(jq -r '.est_cost' "$NESTED_OUT")" 6.5 "nested 5m+1h cache writes"
+
+# Known inconsistency, pinned so it is a deliberate choice rather than a
+# surprise: `cache_write` sums only the FLAT field while the cost model
+# prefers the nested one, so a nested-shape transcript reports a zero
+# cache_write beside a nonzero cost. Documented rather than silently true.
+[ "$(jq -r '.cache_write' "$NESTED_OUT")" = "0" ] \
+  || fail "cache_write is expected to be 0 for a nested-only transcript (it sums the flat field); update this test if that changes"
+
+# =======================================================================
+# The <dir>/subagents/ fallback location: only <dir>/<stem>/subagents was
+# covered, so removing this alternative from the search survived.
+# =======================================================================
+FALLBACK_DIR="$SUITE_TMP/fallback-session"
+mkdir -p "$FALLBACK_DIR/subagents"
+FB_T="$FALLBACK_DIR/mysession.jsonl"
+echo '{"message":{"usage":{"input_tokens":5,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":false,"timestamp":"2026-08-27T13:00:00.000Z"}' > "$FB_T"
+echo '{"message":{"usage":{"input_tokens":600,"output_tokens":60,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"model":"claude-sonnet-5","stop_reason":"end_turn"},"isSidechain":true,"timestamp":"2026-08-27T13:01:00.000Z"}' > "$FALLBACK_DIR/subagents/agent-1.jsonl"
+FB_OUT="$SUITE_TMP/fallback-out/session.json"
+bash "$SCRIPT" "$FB_T" "$FB_OUT" >/dev/null 2>&1
+[ "$(jq -r '.agents.input' "$FB_OUT")" = "600" ] \
+  || fail "the <dir>/subagents/ fallback location should be searched, got $(jq -r '.agents.input' "$FB_OUT")"
 
 echo "token-stats.test.sh: all assertions passed"

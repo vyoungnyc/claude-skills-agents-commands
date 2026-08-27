@@ -80,8 +80,14 @@ while :; do
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/plain, */*" \
             -H "User-Agent: claude-code/2.1.246")
+    # curl's own exit status, not just the HTTP status. A transport failure
+    # (6 DNS, 7 connection refused, 28 --max-time) exits nonzero and prints NO
+    # status trailer, so `code` is empty and both HTTP tests below are false --
+    # meaning the commonest transient failure used to get ZERO retries while a
+    # 503 got three. Retry it on the same schedule instead.
+    curl_rc=$?
     code=$(printf '%s' "$resp" | sed -n 's/^__HTTP_STATUS__//p')
-    if [ "$code" = "429" ] || [ "$code" -ge 500 ] 2>/dev/null; then
+    if [ "$curl_rc" -ne 0 ] || [ "$code" = "429" ] || [ "$code" -ge 500 ] 2>/dev/null; then
         if [ "$attempt" -lt "$max" ]; then
             ra=$(sed -n 's/^[Rr]etry-[Aa]fter:[[:space:]]*\([0-9]*\).*/\1/p' "$hdrfile" 2>/dev/null | head -1)
             [ -z "$ra" ] && ra=$((attempt * 2))

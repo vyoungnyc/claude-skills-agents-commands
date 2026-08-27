@@ -97,6 +97,14 @@ plan_line=\$(sed -n "\${n}p" "\$STATE/plan")
 [ -n "\$plan_line" ] || plan_line=\$(tail -1 "\$STATE/plan")
 status=\$(printf '%s' "\$plan_line" | cut -d: -f1)
 retry=\$(printf '%s' "\$plan_line" | cut -d: -f2)
+# \`fail:<code>\` models a TRANSPORT failure. Real curl exits nonzero (6 DNS,
+# 7 connection refused, 28 --max-time) and prints NO __HTTP_STATUS__ trailer.
+# The stub previously always exited 0 with a trailer, so it had no failure
+# mode at all and the retry behaviour on the commonest production failure
+# was untestable.
+if [ "\$status" = "fail" ]; then
+  exit "\$retry"
+fi
 body=\$(printf '%s' "\$plan_line" | cut -d: -f3-)
 if [ -n "\$headerfile" ]; then
   if [ -n "\$retry" ]; then
@@ -286,5 +294,53 @@ EXHAUST_HDR=$(tr '\0' '\n' < "$EXHAUST_STATE/argv.1" | grep -A1 -x -- '-D' | tai
 [ -n "$EXHAUST_HDR" ] && [ "$EXHAUST_HDR" != "-D" ] \
   || fail "expected a -D header-file argument in the recorded argv, got: [$EXHAUST_HDR]"
 [ ! -e "$EXHAUST_HDR" ] || fail "the header temp file leaked after retries were exhausted: $EXHAUST_HDR"
+
+# =======================================================================
+# Regression: a TRANSPORT failure (curl exits nonzero, no status trailer --
+# DNS failure, connection refused, --max-time) must retry on the same
+# schedule as a 5xx. It previously got ZERO retries because `code` is empty
+# and both HTTP tests were false, so the commonest transient failure was
+# the one least tolerated. The stub could not express this at all until it
+# was given a failure mode.
+# =======================================================================
+TRANSPORT_HOME=$(fake_home_with_token)
+TRANSPORT_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf 'fail:7:\n' > "$TRANSPORT_STATE/plan"
+STUBDIR=$(fake_bindir "$TRANSPORT_STATE")
+env HOME="$TRANSPORT_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" >/dev/null 2>&1 || true
+[ "$(call_count "$TRANSPORT_STATE")" -eq 3 ] \
+  || fail "a transport failure should be retried to the 3-attempt cap like a 5xx, got $(call_count "$TRANSPORT_STATE")"
+
+# ...and a transient one recovers rather than being abandoned.
+RECOVER_HOME=$(fake_home_with_token)
+RECOVER_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf 'fail:7:\n200::{"recovered":true}\n' > "$RECOVER_STATE/plan"
+STUBDIR=$(fake_bindir "$RECOVER_STATE")
+OUT=$(env HOME="$RECOVER_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT")
+printf '%s' "$OUT" | grep -q '__HTTP_STATUS__200' \
+  || fail "a transient transport failure should recover on retry, got: $OUT"
+printf '%s' "$OUT" | grep -q 'recovered' || fail "expected the successful response body after recovery"
+[ "$(call_count "$RECOVER_STATE")" -eq 2 ] || fail "expected exactly 2 attempts (1 failure + 1 success)"
+
+# =======================================================================
+# Regression: a hostile or broken Retry-After must be capped. Uncapped, a
+# server sending `Retry-After: 86400` would sleep for a day WHILE HOLDING
+# the caller's single-flight lock.
+# =======================================================================
+CAP_HOME=$(fake_home_with_token)
+CAP_STATE=$(mktemp -d "$SUITE_TMP/state.XXXXXX")
+printf '429:99999:{"e":1}\n200::{"ok":true}\n' > "$CAP_STATE/plan"
+STUBDIR=$(fake_bindir "$CAP_STATE")
+env HOME="$CAP_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" >/dev/null 2>&1
+CAP_SLEPT=$(head -1 "$CAP_STATE/slept" 2>/dev/null)
+[ -n "$CAP_SLEPT" ] || fail "expected a sleep between the 429 and the retry"
+[ "$CAP_SLEPT" -le 30 ] \
+  || fail "an absurd Retry-After must be capped at 30s, slept $CAP_SLEPT (would hold the single-flight lock)"
+
+# The request must carry the timeout flags, or a hung endpoint holds the
+# lock until something else intervenes.
+TIMEOUT_ARGV=$(tr '\0' '\n' < "$CAP_STATE/argv.1")
+printf '%s' "$TIMEOUT_ARGV" | grep -qx -- '--max-time' || fail "curl should be given --max-time"
+printf '%s' "$TIMEOUT_ARGV" | grep -qx -- '--connect-timeout' || fail "curl should be given --connect-timeout"
 
 echo "fetch-usage.test.sh: all assertions passed"

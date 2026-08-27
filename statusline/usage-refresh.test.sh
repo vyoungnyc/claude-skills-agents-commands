@@ -270,12 +270,21 @@ if [ "\${args[0]:-}" = "-f" ]; then
     "%Y-%m-%dT%H:%M:%S")
       printf '%s' "\$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\$' || {
         echo "date: illegal time format" >&2; exit 1; }
-      if [ "\$utc" -eq 1 ]; then exec "$REAL_DATE" -u -d "\$val" +%s
-      else exec "$REAL_DATE" -d "\$val" +%s; fi ;;
+      # Convert in pure python rather than delegating to \`date -d\`: that is a
+      # GNU-only flag, so delegating made this stub -- written to cover the BSD
+      # fallback -- unable to run on the very platform where that fallback is
+      # the live path. Stock macOS has python3.
+      if [ "\$utc" -eq 1 ]; then
+        python3 -c "import datetime,calendar,sys;print(calendar.timegm(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S').timetuple()))" "\$val"
+      else
+        python3 -c "import datetime,time,sys;print(int(time.mktime(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S').timetuple())))" "\$val"
+      fi
+      exit 0 ;;
     "%Y-%m-%dT%H:%M:%S%z")
       printf '%s' "\$val" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}\$' || {
         echo "date: illegal time format" >&2; exit 1; }
-      exec "$REAL_DATE" -d "\$val" +%s ;;
+      python3 -c "import datetime,sys;print(int(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S%z').timestamp()))" "\$val"
+      exit 0 ;;
     *) echo "date: illegal time format" >&2; exit 1 ;;
   esac
 fi
@@ -401,10 +410,9 @@ fetch_called "$DEADOWNER_HOME" || fail "a lock whose owner is dead must be recla
 # recreated -- both end up inside the critical section, racing the cache
 # write. `mv` is rename(2), so exactly one process can claim it.
 #
-# Driven deterministically rather than by hoping a real race lands: the
-# fetch stub for process A blocks on a fifo, so A is provably mid-critical-
-# section (holding its freshly-reclaimed lock) when B runs. B must not be
-# able to take the lock, and must not destroy A's.
+# Several real processes race one abandoned lock; each records itself if it
+# reaches the critical section, and exactly one may. This asserts the
+# invariant under genuine concurrency rather than forcing an interleaving.
 # =======================================================================
 # Several real processes are launched against ONE abandoned lock and each
 # records itself if it reaches the critical section. Exactly one may. Note
@@ -518,5 +526,42 @@ NOMARKER_HOME=$(fake_home 200 "$SUCCESS_BODY")
 env HOME="$NOMARKER_HOME" bash "$NOMARKER_DEPLOY/usage-refresh.sh" --force
 fetch_called "$NOMARKER_HOME" || fail "without a sibling settings.json the script must fall back to \$HOME/.claude"
 [ -f "$NOMARKER_HOME/.claude/usage-cache.json" ] || fail "fallback run should have written the default-home cache"
+
+# =======================================================================
+# Constant boundaries. These were unpinned: every fixture used an age of 0
+# or no cache at all, so FRESH could be changed to 5 and BACKOFF_THROTTLE to
+# 1 with the suite still green. Probe either side of the threshold instead
+# of trusting the value.
+# =======================================================================
+FRESHV=$(grep -oE '^FRESH=[0-9]+' "$SCRIPT_DIR/usage-refresh.sh" | head -1 | cut -d= -f2)
+[ -n "$FRESHV" ] || fail "could not read FRESH from usage-refresh.sh"
+# Just inside the window: skipped.
+INSIDE_HOME=$(fake_home 200 "$SUCCESS_BODY")
+echo '{"used":1}' > "$INSIDE_HOME/.claude/usage-cache.json"
+set_mtime "$(($(date +%s) - FRESHV + 30))" "$INSIDE_HOME/.claude/usage-cache.json"
+env HOME="$INSIDE_HOME" bash "$SCRIPT" || true
+fetch_called "$INSIDE_HOME" && fail "a cache ${FRESHV}s-30 old is still fresh and must not trigger a refresh"
+# Just outside: refreshed.
+OUTSIDE_HOME=$(fake_home 200 "$SUCCESS_BODY")
+echo '{"used":1}' > "$OUTSIDE_HOME/.claude/usage-cache.json"
+set_mtime "$(($(date +%s) - FRESHV - 30))" "$OUTSIDE_HOME/.claude/usage-cache.json"
+env HOME="$OUTSIDE_HOME" bash "$SCRIPT" || true
+fetch_called "$OUTSIDE_HOME" || fail "a cache older than ${FRESHV}s must trigger a refresh"
+
+# The 429 cooldown must be a meaningful duration, not merely "in the future".
+THROTV=$(grep -oE '^BACKOFF_THROTTLE=[0-9]+' "$SCRIPT_DIR/usage-refresh.sh" | head -1 | cut -d= -f2)
+ERRV=$(grep -oE '^BACKOFF_ERROR=[0-9]+' "$SCRIPT_DIR/usage-refresh.sh" | head -1 | cut -d= -f2)
+[ -n "$THROTV" ] && [ -n "$ERRV" ] || fail "could not read the backoff constants"
+MAGN_HOME=$(fake_home 429 '{"error":"throttled"}')
+BEFORE=$(date +%s)
+env HOME="$MAGN_HOME" bash "$SCRIPT" --force || true
+read -r MV MK < "$MAGN_HOME/.claude/.usage-backoff" || true
+[ "$MK" = "throttle" ] || fail "a 429 should record kind throttle, got $MK"
+[ "$((MV - BEFORE))" -ge "$((THROTV - 5))" ] \
+  || fail "the 429 cooldown should be about ${THROTV}s, got $((MV - BEFORE))s"
+# An error cooldown must be SHORTER than a throttle one -- that asymmetry is
+# the point of having two kinds.
+[ "$ERRV" -lt "$THROTV" ] \
+  || fail "BACKOFF_ERROR ($ERRV) should be shorter than BACKOFF_THROTTLE ($THROTV)"
 
 echo "usage-refresh.test.sh: all assertions passed"
