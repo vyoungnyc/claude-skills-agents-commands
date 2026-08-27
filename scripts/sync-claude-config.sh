@@ -315,12 +315,31 @@ if [ -f "$repo_settings" ]; then
         # (command, groupKey) pair means it IS that hook`s previously-deployed
         # copy, so this is a migration in place, not a rewrite of unrelated
         # live-only hooks (those keep whatever path the user gave them).
+        # Repo-authored hook OBJECTS for this event, indexed by the same
+        # (command, groupKey) pair, so a matching live hook can be updated in
+        # place below rather than merely recognized as a duplicate.
+        ([$repoHooks[$ev][] | . as $rg | $rg.hooks[]? | {k: {command: .command, group: ($rg | groupKey)}, hook: .}]) as $repoHookIndex |
         ([$liveGroups[] | . as $lg
           | .hooks |= [.[]
               | (.command | rewriteHomeStr($rh)) as $rw
-              | if ($rw != .command)
+              | (if ($rw != .command)
                    and (([{command: $rw, group: ($lg | groupKey)}] - $repoKeys) | length) == 0
-                then .command = $rw else . end]
+                 then .command = $rw else . end)
+              # Adopt the repo`s hook object wholesale when this live hook is
+              # the same command under the same trigger. Dedup alone silently
+              # blocked UPDATES as well as duplicates: hook-level execution
+              # metadata (`type`, `async`, `timeout`, `statusMessage`) is not
+              # part of the identity, so a live copy of auto-test-runner.sh
+              # lacking the repo`s `async: true` / `timeout: 300` would stay
+              # synchronous forever — the repo could never change any of those
+              # fields once the command existed live. Repo wins here, same rule
+              # as `statusLine` and CLAUDE.md, and the live file is backed up
+              # before any write. Only the matching hook object is replaced, so
+              # a multi-command live group keeps its other commands and its own
+              # group metadata.
+              | . as $lh
+              | (first($repoHookIndex[] | select(.k == {command: $lh.command, group: ($lg | groupKey)}) | .hook) // $lh)
+            ]
         ]) as $migratedLive |
         ([$migratedLive[] | . as $g | $g.hooks[]? | {command: .command, group: ($g | groupKey)}]) as $liveKeys |
         .[$ev] = ($migratedLive + ([$repoHooks[$ev][]

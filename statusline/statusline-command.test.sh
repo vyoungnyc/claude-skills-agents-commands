@@ -331,4 +331,50 @@ expect_match "(#88)"
 printf '%s' "$LAST_OUT_PLAIN" | grep -q 'glpat-ROUNDTRIP999' \
   && fail "the token leaked into the rendered status line"
 
+# =======================================================================
+# Reader side of the failure cooldown: a `failed` entry must count as fresh
+# (so a broken glab is not relaunched on every ~30s render) while it is
+# inside the short cooldown, and must NOT be treated as fresh once that
+# cooldown expires -- even though the same age would still be "fresh" under
+# the 600s success window. A real mr-refresh.sh stand-in records whether it
+# was launched.
+# =======================================================================
+mr_relaunch_probe() {
+  # <cache_ts> <failed 0|1> -> "launched" | "suppressed"
+  local ts="$1" failed="$2" home probe
+  home=$(fake_home)
+  probe="$home/.claude/mr-refresh.sh"
+  cat > "$probe" <<EOF
+#!/usr/bin/env bash
+touch "$home/refresh-launched"
+EOF
+  chmod +x "$probe"
+  local key
+  key=$(printf '%s\t%s' "$GIT_REPO" "feature/widget")
+  jq -n --arg k "$key" --arg repo "$GIT_REPO" --argjson t "$ts" --argjson f "$failed" \
+    '{($k): ({branch:"feature/widget", repo:$repo, number:null, url:null, ts:$t}
+             + (if $f == 1 then {failed:true} else {} end))}' \
+    > "$home/.claude/.mr-cache.json"
+  run_statusline "$home" "$(jq -n --arg cwd "$GIT_REPO" '{cwd:$cwd,model:{display_name:"Sonnet 5"},workspace:{current_dir:$cwd}}')" "$GLAB_STUB"
+  # The backgrounded relaunch is async; give it a moment to land.
+  local i=0
+  while [ "$i" -lt 20 ] && [ ! -f "$home/refresh-launched" ]; do i=$((i+1)); /bin/sleep 0.05; done
+  [ -f "$home/refresh-launched" ] && printf 'launched' || printf 'suppressed'
+}
+
+NOW_EPOCH=$(date +%s)
+# Failed entry, 10s old: inside the 120s cooldown -> no relaunch.
+RES=$(mr_relaunch_probe "$((NOW_EPOCH - 10))" 1)
+[ "$RES" = "suppressed" ] \
+  || fail "a fresh failed entry must suppress the relaunch, or a broken glab is respawned on every render (got: $RES)"
+# Failed entry, 300s old: past the 120s cooldown but still inside the 600s
+# success window -> must relaunch, so only the failure window explains it.
+RES=$(mr_relaunch_probe "$((NOW_EPOCH - 300))" 1)
+[ "$RES" = "launched" ] \
+  || fail "an expired failed entry must be retried -- a transient failure must not hide a real MR (got: $RES)"
+# Successful entry, 300s old: inside the 600s window -> no relaunch.
+RES=$(mr_relaunch_probe "$((NOW_EPOCH - 300))" 0)
+[ "$RES" = "suppressed" ] \
+  || fail "a successful entry within the 600s window must not trigger a relaunch (got: $RES)"
+
 echo "statusline-command.test.sh: all assertions passed"

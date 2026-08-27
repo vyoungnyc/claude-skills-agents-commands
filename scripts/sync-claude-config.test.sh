@@ -559,6 +559,86 @@ EMPTYM_COUNT=$(jq '[.hooks.UserPromptSubmit[].hooks[] | select(.command == "same
 [ "$EMPTYM_COUNT" -eq 1 ] || fail "an explicit empty matcher and an absent matcher must dedup as the same trigger (count=$EMPTYM_COUNT)"
 
 # =======================================================================
+# Regression: hook-level execution metadata must be deployable. Dedup keys
+# on (command, trigger), which correctly prevents duplicate appends -- but
+# it also silently blocked UPDATES: `type`/`async`/`timeout`/
+# `statusMessage` are not part of the identity, so a live copy of a command
+# lacking the repo's `async: true` would stay synchronous forever and the
+# repo could never change those fields once the command existed live.
+# (This repo's own auto-test-runner.sh really does carry async+timeout.)
+# =======================================================================
+META_REPO=$(fake_repo)
+cat > "$META_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit|Write", "hooks": [
+        {"type": "command", "command": "auto-test-runner.sh", "async": true, "timeout": 300, "statusMessage": "Running tests..."}
+      ]}
+    ]
+  }
+}
+EOF
+META_HOME=$(fake_home)
+cat > "$META_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "Edit|Write", "hooks": [
+        {"type": "command", "command": "auto-test-runner.sh", "timeout": 30}
+      ]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$META_REPO" "$META_HOME" --apply
+META_COUNT=$(jq '[.hooks.PostToolUse[].hooks[] | select(.command == "auto-test-runner.sh")] | length' "$META_HOME/settings.json")
+[ "$META_COUNT" -eq 1 ] || fail "the hook should be updated in place, not duplicated (count=$META_COUNT)"
+jq -e '.hooks.PostToolUse[0].hooks[0].async == true' "$META_HOME/settings.json" >/dev/null \
+  || fail "the repo's async:true was never deployed -- dedup dropped the repo hook instead of updating the live one"
+jq -e '.hooks.PostToolUse[0].hooks[0].timeout == 300' "$META_HOME/settings.json" >/dev/null \
+  || fail "the repo's timeout should replace the live obsolete one, got: $(jq -r '.hooks.PostToolUse[0].hooks[0].timeout' "$META_HOME/settings.json")"
+jq -e '.hooks.PostToolUse[0].hooks[0].statusMessage == "Running tests..."' "$META_HOME/settings.json" >/dev/null \
+  || fail "the repo's statusMessage should be deployed"
+
+# Updating a matching hook must not disturb the OTHER commands in a
+# multi-command live group, nor that group's own metadata.
+MULTIMETA_REPO=$(fake_repo)
+cat > "$MULTIMETA_REPO/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "shared.sh", "async": true}]}
+    ]
+  }
+}
+EOF
+MULTIMETA_HOME=$(fake_home)
+cat > "$MULTIMETA_HOME/settings.json" <<'EOF'
+{
+  "hooks": {
+    "SessionStart": [
+      {"hooks": [
+        {"type": "command", "command": "my-local-hook.sh"},
+        {"type": "command", "command": "shared.sh"}
+      ]}
+    ]
+  }
+}
+EOF
+expect_exit 0 "$MULTIMETA_REPO" "$MULTIMETA_HOME" --apply
+jq -e '.hooks.SessionStart[0].hooks[0].command == "my-local-hook.sh"' "$MULTIMETA_HOME/settings.json" >/dev/null \
+  || fail "a live-only command in a multi-command group must survive untouched"
+jq -e '.hooks.SessionStart[0].hooks[1].async == true' "$MULTIMETA_HOME/settings.json" >/dev/null \
+  || fail "the shared command in a multi-command group should pick up the repo's metadata"
+MULTIMETA_TOTAL=$(jq '[.hooks.SessionStart[].hooks[]] | length' "$MULTIMETA_HOME/settings.json")
+[ "$MULTIMETA_TOTAL" -eq 2 ] || fail "updating in place must not append a duplicate group (total hooks=$MULTIMETA_TOTAL)"
+
+# A live-only hook with no repo counterpart keeps its own metadata.
+jq -e '.hooks.SessionStart[0].hooks[0] | has("async") | not' "$MULTIMETA_HOME/settings.json" >/dev/null \
+  || fail "a live-only hook must not inherit metadata from an unrelated repo hook"
+
+# =======================================================================
 # Regression: UPGRADING an existing alternate-CLAUDE_HOME install. Its live
 # settings.json still holds commands written before the path rewrite
 # existed -- the literal "$HOME"/.claude form -- while the repo side is now

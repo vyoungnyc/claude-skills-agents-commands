@@ -241,6 +241,71 @@ grep -q 'glpat-OLDTOKEN' "$LEGACYCRED_HOME/.claude/.mr-cache.json" \
   || fail "an unsanitized scp-form key should be dropped as stale-by-construction"
 
 # =======================================================================
+# Regression: a FAILING lookup (auth error, network down, unknown host,
+# timeout) must still record an entry. It used to exit writing nothing, so
+# the reader saw no fresh entry and relaunched this script on every
+# status-line render (~30s), respawning the failing CLI and re-hitting the
+# network indefinitely. The entry is marked `failed` so both sides treat it
+# as fresh only for the short FAIL_COOLDOWN window.
+# =======================================================================
+fake_failing_glab_stubdir() {
+  local home="$1" dir
+  dir=$(mktemp -d "$SUITE_TMP/failbin.XXXXXX")
+  cat > "$dir/glab" <<EOF
+#!/usr/bin/env bash
+touch "$home/glab-called"
+echo "error: authentication failed" >&2
+exit 1
+EOF
+  chmod +x "$dir/glab"
+  printf '%s' "$dir"
+}
+
+FAIL_HOME=$(fake_home)
+STUBDIR=$(fake_failing_glab_stubdir "$FAIL_HOME")
+env HOME="$FAIL_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+glab_called "$FAIL_HOME" || fail "failure test setup: glab should have been invoked"
+FAIL_CACHE="$FAIL_HOME/.claude/.mr-cache.json"
+[ -f "$FAIL_CACHE" ] || fail "a failed lookup must still write a cache entry, or it is retried on every render"
+FAIL_KEY=$(mr_key "" "feature/x")
+[ "$(jq -r --arg k "$FAIL_KEY" '.[$k].failed' "$FAIL_CACHE")" = "true" ] \
+  || fail "the entry from a failed lookup should be marked failed:true"
+[ "$(jq -r --arg k "$FAIL_KEY" '.[$k].number' "$FAIL_CACHE")" = "null" ] \
+  || fail "a failed lookup must not invent an MR number"
+
+# Within the cooldown, a second run does NOT re-invoke glab.
+rm -f "$FAIL_HOME/glab-called"
+env HOME="$FAIL_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+glab_called "$FAIL_HOME" \
+  && fail "a fresh failed entry should suppress the retry -- otherwise the failing CLI is respawned every render"
+
+# Once the cooldown has expired, it retries (a transient failure must not
+# hide a real MR indefinitely). Backdate the entry past FAIL_COOLDOWN=120
+# but keep it inside the 600s success window, so only the failure-specific
+# window can explain a retry.
+jq --arg k "$FAIL_KEY" --argjson t "$(($(date +%s) - 300))" '.[$k].ts = $t' "$FAIL_CACHE" > "$FAIL_CACHE.new" \
+  && mv "$FAIL_CACHE.new" "$FAIL_CACHE"
+rm -f "$FAIL_HOME/glab-called"
+STUBDIR_OK=$(fake_glab_stubdir "$FAIL_HOME" "$FOUND_JSON")
+env HOME="$FAIL_HOME" PATH="$STUBDIR_OK:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+glab_called "$FAIL_HOME" || fail "an expired failed entry should be retried (120s cooldown, not the 600s success window)"
+[ "$(jq -r --arg k "$FAIL_KEY" '.[$k].number' "$FAIL_CACHE")" = "42" ] \
+  || fail "a successful retry should replace the failed entry with the real MR"
+[ "$(jq -r --arg k "$FAIL_KEY" '.[$k].failed' "$FAIL_CACHE")" = "null" ] \
+  || fail "the failed marker must be cleared once the lookup succeeds"
+
+# A failed lookup must not disturb another repo/branch's entry.
+OTHERKEY=$(mr_key "https://gitlab.example.com/group/untouched.git" "other")
+FAILMERGE_HOME=$(fake_home)
+STUBDIR=$(fake_failing_glab_stubdir "$FAILMERGE_HOME")
+jq -n --arg k "$OTHERKEY" --argjson now "$(date +%s)" \
+  '{($k): {repo:"https://gitlab.example.com/group/untouched.git", branch:"other", number:"5", url:"https://e/5", ts:$now}}' \
+  > "$FAILMERGE_HOME/.claude/.mr-cache.json"
+env HOME="$FAILMERGE_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+[ "$(jq -r --arg k "$OTHERKEY" '.[$k].number' "$FAILMERGE_HOME/.claude/.mr-cache.json")" = "5" ] \
+  || fail "a failed lookup must merge its entry, not replace the whole cache"
+
+# =======================================================================
 # Single-flight lock: a held (fresh) lock skips the lookup.
 # =======================================================================
 LOCK_HOME=$(fake_home)

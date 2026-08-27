@@ -216,8 +216,18 @@ if [ -n "$branch" ]; then
                     # Freshness is this entry's own "ts" field, not file mtime
                     # -- another session's write to a different key also
                     # bumps mtime without making THIS entry any fresher.
-                    entry_ts=$(jq -r --arg k "$mr_key" '.[$k].ts // empty' "$MRCACHE" 2>/dev/null)
-                    [ -n "$entry_ts" ] && [ $((now - entry_ts)) -lt 600 ] && mrstale=0
+                    # A `failed` entry (glab auth/network/host error) counts as
+                    # fresh for a SHORTER window: without honoring it at all we
+                    # would relaunch the failing lookup on every render, and
+                    # treating it as fresh for the full window would hide a real
+                    # MR long after a transient failure cleared. Both windows
+                    # must match mr-refresh.sh's MAX_AGE / FAIL_COOLDOWN.
+                    mr_entry=$(jq -r --arg k "$mr_key" '(.[$k] // {}) | "\(.ts // "")\t\(if .failed then 1 else 0 end)"' "$MRCACHE" 2>/dev/null)
+                    entry_ts=${mr_entry%%$'\t'*}
+                    entry_failed=${mr_entry##*$'\t'}
+                    mr_window=600
+                    [ "$entry_failed" = "1" ] && mr_window=120
+                    [ -n "$entry_ts" ] && [ $((now - entry_ts)) -lt "$mr_window" ] && mrstale=0
                 fi
                 [ "$mrstale" -eq 1 ] && ("$MRREFRESH" "$cwd" "$branch" >/dev/null 2>&1 &)
             fi
