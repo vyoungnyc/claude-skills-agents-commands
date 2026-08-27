@@ -2,6 +2,15 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.14.1] - 2026-08-27
+
+### Fix: Two Flaky Tests Introduced in 2.14.0
+
+Both passed standalone and failed only under `scripts/run-tests.sh`, where the machine is loaded — so they were green when written and red on the merged branch. Both were defects in the tests, not the code under test, and both are now deterministic rather than merely retimed.
+
+- **`statusline/statusline-command.test.sh` — the `fmt_reset` relative-time assertions raced the clock.** The fixture computed `now + 5400` and then asserted the render matched `in 1h3[0-9]m`, but the script recomputes `now` after the fixture is built: once a single second elapses the value is `5399`, which renders `1h29m` and fails the pattern. Under a loaded full-suite run that second always elapses. The assertions now check the *branch* (an `in XhYYm` relative form) rather than exact arithmetic, and are verified against a deliberately injected 90-second clock skew. They also report the actual render on failure — previously they printed a stale global from an earlier test, because the helper runs in a command substitution and its assignment never reaches the parent shell.
+- **`statusline/token-stats.test.sh` — the lock-takeover test polled for the lock from outside.** It waited for the lock directory to appear and then swapped the owner, so under load the run could finish before the poll landed and the test failed for a reason unrelated to the invariant. The takeover is now performed by the `jq` wrapper from *inside* the critical section, which removes the race entirely. Mutation-verified: removing the release-side ownership check still fails the test.
+
 ## [2.14.0] - 2026-08-27
 
 ### Rich Status Line, Deployed Via `sync-claude-config.sh`

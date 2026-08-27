@@ -599,11 +599,17 @@ EOF
 }
 NOW_E=$(date +%s)
 # <24h renders a relative "in Xh0Ym".
-printf '%s' "$(reset_render "$((NOW_E + 5400))")" | grep -qE 'resets in 1h3[0-9]m' \
-  || fail "a reset 90 minutes out should render as 'in 1h30m', got: $LAST_OUT_PLAIN"
+# Tolerant on the minute: the script recomputes `now` after this fixture is
+# built, so a 5400s offset renders 1h29m rather than 1h30m as soon as a second
+# elapses -- which under a loaded full-suite run it always does. Assert the
+# BRANCH (an hours+minutes relative form), not the exact arithmetic.
+RENDER_90=$(reset_render "$((NOW_E + 5400))")
+printf '%s' "$RENDER_90" | grep -qE 'resets in 1h[0-9][0-9]m' \
+  || fail "a reset ~90 minutes out should render as an 'in XhYYm' relative time, got: $RENDER_90"
 # <1h renders bare minutes.
-printf '%s' "$(reset_render "$((NOW_E + 1500))")" | grep -qE 'resets in 2[0-9]m' \
-  || fail "a reset 25 minutes out should render as 'in 25m', got: $LAST_OUT_PLAIN"
+RENDER_25=$(reset_render "$((NOW_E + 1500))")
+printf '%s' "$RENDER_25" | grep -qE 'resets in 2[0-9]m' \
+  || fail "a reset ~25 minutes out should render as bare minutes, got: $RENDER_25"
 # <7d renders a weekday + clock, not a relative time.
 # NOTE: must assert on the CLOCK, not just a leading weekday -- the >7d
 # format is "Tue Sep 1", which also starts with a weekday, so a weekday-only
@@ -618,8 +624,9 @@ THIRTY_DAY=$(reset_render "$((NOW_E + 2592000))")
 printf '%s' "$THIRTY_DAY" | grep -qE 'resets (Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]+' \
   || fail "a reset 30 days out should render as a date, got: $THIRTY_DAY"
 # A past reset clamps to "in 0m" rather than rendering a negative duration.
-printf '%s' "$(reset_render "$((NOW_E - 3600))")" | grep -q 'resets in 0m' \
-  || fail "a reset in the past should clamp to 'in 0m', got: $LAST_OUT_PLAIN"
+RENDER_PAST=$(reset_render "$((NOW_E - 3600))")
+printf '%s' "$RENDER_PAST" | grep -q 'resets in 0m' \
+  || fail "a reset in the past should clamp to 'in 0m', got: $RENDER_PAST"
 
 # =======================================================================
 # Severity colors are decided by sev_color but every assertion here reads
