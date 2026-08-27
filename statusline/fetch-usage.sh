@@ -74,6 +74,7 @@ while :; do
     attempt=$((attempt + 1))
     resp=$(printf 'Authorization: Bearer %s\n' "$tok" \
         | curl -sS -D "$hdrfile" -w '\n__HTTP_STATUS__%{http_code}\n' "$url" \
+            --connect-timeout 10 --max-time 30 \
             -H @- \
             -H "anthropic-beta: oauth-2025-04-20" \
             -H "Content-Type: application/json" \

@@ -203,7 +203,43 @@ mkdir -p "$STALE_HOME/.claude"
 mkdir "$STALE_HOME/.claude/.mr-refresh.lock"
 set_mtime "$(($(date +%s) - 200))" "$STALE_HOME/.claude/.mr-refresh.lock"
 env HOME="$STALE_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
-glab_called "$STALE_HOME" || fail "a stale (>120s) lock should have been reclaimed"
+glab_called "$STALE_HOME" || fail "a stale (>120s) lock with no recorded owner should have been reclaimed"
 [ ! -d "$STALE_HOME/.claude/.mr-refresh.lock" ] || fail "lock should be released after a successful run"
+
+# =======================================================================
+# A lock held by a LIVE process is never reclaimed, however old it is:
+# `glab` does network I/O and can outlive any fixed staleness threshold, and
+# stealing its lock starts a concurrent lookup whose exit then tears down
+# the newer holder's lock. This suite's own pid stands in for that live
+# holder (never a backgrounded sleep -- it would inherit this suite's stdout
+# and wedge the caller on any early exit). A dead owner is still reclaimed.
+# =======================================================================
+LIVEOWNER_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$LIVEOWNER_HOME" "$FOUND_JSON")
+mkdir -p "$LIVEOWNER_HOME/.claude"
+LIVEOWNER_LOCK="$LIVEOWNER_HOME/.claude/.mr-refresh.lock"
+mkdir "$LIVEOWNER_LOCK"
+printf '%s' "$$" > "$LIVEOWNER_LOCK/owner"
+set_mtime "$(($(date +%s) - 400))" "$LIVEOWNER_LOCK"
+env HOME="$LIVEOWNER_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+glab_called "$LIVEOWNER_HOME" \
+  && fail "a lock owned by a LIVE process was reclaimed despite its age -- that admits a concurrent lookup"
+[ -d "$LIVEOWNER_LOCK" ] || fail "the live owner's lock must still exist"
+[ "$(cat "$LIVEOWNER_LOCK/owner")" = "$$" ] || fail "the live owner's lock was taken over"
+
+( : ) &
+DEAD_PID=$!
+wait "$DEAD_PID" 2>/dev/null || true
+DEADOWNER_HOME=$(fake_home)
+STUBDIR=$(fake_glab_stubdir "$DEADOWNER_HOME" "$FOUND_JSON")
+mkdir -p "$DEADOWNER_HOME/.claude"
+DEADOWNER_LOCK="$DEADOWNER_HOME/.claude/.mr-refresh.lock"
+mkdir "$DEADOWNER_LOCK"
+printf '%s' "$DEAD_PID" > "$DEADOWNER_LOCK/owner"
+env HOME="$DEADOWNER_HOME" PATH="$STUBDIR:$PATH" bash "$SCRIPT" "$SUITE_TMP" "feature/x"
+glab_called "$DEADOWNER_HOME" || fail "a lock whose owner is dead must be reclaimed rather than deadlocking"
+[ ! -d "$DEADOWNER_LOCK" ] || fail "lock should be released after reclaiming from a dead owner"
+LEFTOVER=$(find "$DEADOWNER_HOME/.claude" -name '.mr-cache.json.tmp*' 2>/dev/null)
+[ -z "$LEFTOVER" ] || fail "a cache temp file was left behind: $LEFTOVER"
 
 echo "mr-refresh.test.sh: all assertions passed"

@@ -209,8 +209,41 @@ mkdir -p "$SUITE_TMP/stale"
 mkdir "$STALE_OUT.lock"
 set_mtime "$(($(date +%s) - 200))" "$STALE_OUT.lock"
 bash "$SCRIPT" "$T1" "$STALE_OUT"
-[ -f "$STALE_OUT" ] || fail "a stale (>120s) lock should have been reclaimed, allowing the run to complete"
-[ ! -d "$STALE_OUT.lock" ] || fail "lock directory should be released (rmdir via trap) after a successful run"
+[ -f "$STALE_OUT" ] || fail "a stale (>120s) lock with no recorded owner should have been reclaimed, allowing the run to complete"
+[ ! -d "$STALE_OUT.lock" ] || fail "lock directory should be released via the trap after a successful run"
+
+# =======================================================================
+# A lock held by a LIVE process is never reclaimed, however old it is: a
+# large transcript plus many subagent files can outlive a fixed staleness
+# threshold, and stealing the lock starts a concurrent run whose exit then
+# tears down the newer holder's lock, racing them on the output temp file.
+# This suite's own pid stands in for the live holder. A dead owner is still
+# reclaimed, so a crash cannot deadlock the cache.
+# =======================================================================
+LIVEOWNER_OUT="$SUITE_TMP/liveowner/session.json"
+mkdir -p "$SUITE_TMP/liveowner"
+echo '{"input":999}' > "$LIVEOWNER_OUT"
+mkdir "$LIVEOWNER_OUT.lock"
+printf '%s' "$$" > "$LIVEOWNER_OUT.lock/owner"
+set_mtime "$(($(date +%s) - 400))" "$LIVEOWNER_OUT.lock"
+bash "$SCRIPT" "$T1" "$LIVEOWNER_OUT"
+[ "$(jq -r '.input' "$LIVEOWNER_OUT")" = "999" ] \
+  || fail "a lock owned by a LIVE process was reclaimed despite its age -- the cache was overwritten by a concurrent run"
+[ -d "$LIVEOWNER_OUT.lock" ] || fail "the live owner's lock must still exist"
+[ "$(cat "$LIVEOWNER_OUT.lock/owner")" = "$$" ] || fail "the live owner's lock was taken over"
+
+( : ) &
+DEAD_PID=$!
+wait "$DEAD_PID" 2>/dev/null || true
+DEADOWNER_OUT="$SUITE_TMP/deadowner/session.json"
+mkdir -p "$SUITE_TMP/deadowner"
+mkdir "$DEADOWNER_OUT.lock"
+printf '%s' "$DEAD_PID" > "$DEADOWNER_OUT.lock/owner"
+bash "$SCRIPT" "$T1" "$DEADOWNER_OUT"
+[ -f "$DEADOWNER_OUT" ] || fail "a lock whose owner is dead must be reclaimed rather than deadlocking"
+[ ! -d "$DEADOWNER_OUT.lock" ] || fail "lock should be released after reclaiming from a dead owner"
+LEFTOVER=$(find "$SUITE_TMP/deadowner" -name 'session.json.tmp*' 2>/dev/null)
+[ -z "$LEFTOVER" ] || fail "an output temp file was left behind: $LEFTOVER"
 
 # =======================================================================
 # Opportunistic cleanup: a cache file untouched for >7 days in the same

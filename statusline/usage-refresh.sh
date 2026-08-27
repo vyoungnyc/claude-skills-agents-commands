@@ -33,11 +33,50 @@ file_age() {
     echo $(($(now_epoch) - m))
 }
 
-# Single-flight across all Claude sessions: mkdir is atomic. If another refresh holds
-# the lock, exit quietly. Clear a stale lock (>120s = a crashed/hung refresh).
-[ -d "$LOCK" ] && [ "$(file_age "$LOCK")" -gt 120 ] && rmdir "$LOCK" 2>/dev/null
-mkdir "$LOCK" 2>/dev/null || exit 0
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# Single-flight across all Claude sessions: mkdir is atomic. The lock directory
+# also records the holder's PID in an `owner` file, because a purely
+# time-based staleness check is unsafe on BOTH sides of the critical section:
+#   - Reclaiming: a refresh that legitimately runs longer than the threshold
+#     has its LIVE lock removed, and a second fetch starts concurrently.
+#   - Releasing: the original then exits and its unconditional `rmdir` trap
+#     deletes whichever NEWER process now holds the lock, letting a third in —
+#     and concurrent writers race on the cache temp file.
+# So: reclaim only when the recorded owner is gone, and release only while we
+# still own it. LOCK_HARD bounds the pathological case where the owner's PID
+# was recycled by an unrelated live process, which would otherwise wedge the
+# lock permanently. Bounding the fetch itself (curl --max-time below) is what
+# keeps a healthy run from ever approaching these thresholds.
+LOCK_GRACE=120  # lock exists but no owner recorded (killed between mkdir and write)
+LOCK_HARD=3600  # owner looks alive but the lock is impossibly old -> assume PID reuse
+lock_owner() { cat "$LOCK/owner" 2>/dev/null; }
+lock_acquire() {
+    if mkdir "$LOCK" 2>/dev/null; then
+        printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
+        return 0
+    fi
+    local owner age
+    owner=$(lock_owner)
+    age=$(file_age "$LOCK")
+    # A live owner keeps the lock no matter how long it has been running.
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$age" -lt "$LOCK_HARD" ]; then
+        return 1
+    fi
+    # No owner recorded yet: only treat it as abandoned once past the grace
+    # window, so we never race a holder that has mkdir'd but not yet written.
+    if [ -z "$owner" ] && [ "$age" -lt "$LOCK_GRACE" ]; then
+        return 1
+    fi
+    rm -rf "$LOCK" 2>/dev/null
+    mkdir "$LOCK" 2>/dev/null || return 1
+    printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
+    return 0
+}
+lock_release() {
+    [ "$(lock_owner)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null
+    return 0
+}
+lock_acquire || exit 0
+trap lock_release EXIT
 
 # Re-check under the lock: another session may have just refreshed, or a throttle backoff
 # may be active — in either case do nothing (avoids N sessions each hitting the endpoint).
@@ -126,4 +165,4 @@ printf '%s' "$body" | jq \
         resets: num($resets),
         five:  (if $fu == "" then null else {util: ($fu | tonumber | floor), resets: num($fr), severity: str($fsev)} end),
         seven: (if $su == "" then null else {util: ($su | tonumber | floor), resets: num($sr), severity: str($ssev)} end)
-    }' >"$CACHE.tmp" 2>/dev/null && mv "$CACHE.tmp" "$CACHE"
+    }' >"$CACHE.tmp.$$" 2>/dev/null && mv "$CACHE.tmp.$$" "$CACHE"

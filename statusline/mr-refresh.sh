@@ -42,10 +42,40 @@ now=$(date +%s)
 
 file_age() { m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0); echo $(($(date +%s) - m)); }
 
-# Single-flight across sessions (atomic mkdir); clear a stale lock (>120s).
-[ -d "$LOCK" ] && [ "$(file_age "$LOCK")" -gt 120 ] && rmdir "$LOCK" 2>/dev/null
-mkdir "$LOCK" 2>/dev/null || exit 0
-trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+# Single-flight across sessions (atomic mkdir), with the holder's PID recorded
+# in an `owner` file. A purely time-based staleness check is unsafe on both
+# sides: it lets a slow-but-LIVE lookup have its lock stolen, and then that
+# process's unconditional `rmdir` trap deletes the newer holder's lock,
+# admitting a third and racing them all on the cache temp file. `glab` does
+# network I/O, so exceeding a fixed threshold is realistic, not theoretical.
+# Reclaim only when the owner is gone; release only while we still own it.
+LOCK_GRACE=120  # lock exists but no owner recorded (killed between mkdir and write)
+LOCK_HARD=3600  # owner looks alive but the lock is impossibly old -> assume PID reuse
+lock_owner() { cat "$LOCK/owner" 2>/dev/null; }
+lock_acquire() {
+    if mkdir "$LOCK" 2>/dev/null; then
+        printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
+        return 0
+    fi
+    owner=$(lock_owner)
+    age=$(file_age "$LOCK")
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$age" -lt "$LOCK_HARD" ]; then
+        return 1
+    fi
+    if [ -z "$owner" ] && [ "$age" -lt "$LOCK_GRACE" ]; then
+        return 1
+    fi
+    rm -rf "$LOCK" 2>/dev/null
+    mkdir "$LOCK" 2>/dev/null || return 1
+    printf '%s' "$$" >"$LOCK/owner" 2>/dev/null
+    return 0
+}
+lock_release() {
+    [ "$(lock_owner)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null
+    return 0
+}
+lock_acquire || exit 0
+trap lock_release EXIT
 
 # Re-check under the lock: skip only if THIS repo+branch's own entry is still
 # fresh -- freshness is per-entry (its own "ts" field), not file mtime, since
@@ -57,7 +87,15 @@ if [ -f "$CACHE" ]; then
     fi
 fi
 
-json=$(cd "$cwd" 2>/dev/null && glab mr list --source-branch "$branch" --per-page 1 -F json 2>/dev/null) || exit 0
+# Bound the lookup so a hung `glab` cannot sit on the lock indefinitely.
+# `timeout` is GNU coreutils and is NOT on a stock macOS, so use it only when
+# present (gtimeout via Homebrew counts) and run bare otherwise — the
+# owner-aware lock above is what keeps a hang from blocking other sessions.
+timeout_cmd=""
+for t in timeout gtimeout; do
+    command -v "$t" >/dev/null 2>&1 && { timeout_cmd="$t"; break; }
+done
+json=$(cd "$cwd" 2>/dev/null && ${timeout_cmd:+$timeout_cmd 30} glab mr list --source-branch "$branch" --per-page 1 -F json 2>/dev/null) || exit 0
 num=$(printf '%s' "$json" | jq -r '.[0].iid // empty' 2>/dev/null)
 url=$(printf '%s' "$json" | jq -r '.[0].web_url // empty' 2>/dev/null)
 
@@ -77,4 +115,4 @@ jq -n --argjson existing "$existing" --arg k "$key" --arg r "$repo_id" --arg b "
     --arg n "$num" --arg u "$url" --argjson now "$now" --argjson prune "$PRUNE_AGE" '
     ($existing | with_entries(select((.value.ts // 0) as $t | ($now - $t) < $prune))) as $pruned |
     $pruned + {($k): {repo:$r, branch:$b, number:(if $n=="" then null else $n end), url:(if $u=="" then null else $u end), ts:$now}}
-' >"$CACHE.tmp" 2>/dev/null && mv "$CACHE.tmp" "$CACHE"
+' >"$CACHE.tmp.$$" 2>/dev/null && mv "$CACHE.tmp.$$" "$CACHE"

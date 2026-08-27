@@ -240,8 +240,82 @@ STALE_HOME=$(fake_home 200 "$SUCCESS_BODY")
 mkdir "$STALE_HOME/.claude/.usage-refresh.lock"
 set_mtime "$(($(date +%s) - 200))" "$STALE_HOME/.claude/.usage-refresh.lock"
 env HOME="$STALE_HOME" bash "$SCRIPT" --force
-fetch_called "$STALE_HOME" || fail "a stale (>120s) lock should have been reclaimed"
+fetch_called "$STALE_HOME" || fail "a stale (>120s) lock with no recorded owner should have been reclaimed"
 [ ! -d "$STALE_HOME/.claude/.usage-refresh.lock" ] || fail "lock should be released after a successful run"
+
+# =======================================================================
+# Regression: a lock held by a LIVE process must never be reclaimed, no
+# matter how old it is. curl has no implicit time limit, so a genuinely
+# slow fetch can outlive any fixed staleness threshold -- stealing its lock
+# starts a second concurrent fetch, and the first process's exit then tears
+# down the newer holder's lock, admitting a third and racing them all on
+# the cache temp file.
+# =======================================================================
+# This suite's OWN pid is a guaranteed-live process that is never the pid of
+# the script under test (it runs as a child), so it stands in for "another
+# session's refresh, still running". Deliberately not a backgrounded `sleep`:
+# a long-lived background child inherits this suite's stdout, so any early
+# exit would leave it holding the pipe open and wedge the caller.
+LIVE_PID=$$
+LIVEOWNER_HOME=$(fake_home 200 "$SUCCESS_BODY")
+LIVEOWNER_LOCK="$LIVEOWNER_HOME/.claude/.usage-refresh.lock"
+mkdir "$LIVEOWNER_LOCK"
+printf '%s' "$LIVE_PID" > "$LIVEOWNER_LOCK/owner"
+set_mtime "$(($(date +%s) - 400))" "$LIVEOWNER_LOCK"   # far past the old 120s threshold
+env HOME="$LIVEOWNER_HOME" bash "$SCRIPT" --force
+fetch_called "$LIVEOWNER_HOME" \
+  && fail "a lock owned by a LIVE process was reclaimed despite its age -- that admits a concurrent fetch"
+[ -d "$LIVEOWNER_LOCK" ] || fail "the live owner's lock must still exist"
+[ "$(cat "$LIVEOWNER_LOCK/owner")" = "$LIVE_PID" ] || fail "the live owner's lock was taken over"
+
+# A lock whose recorded owner is DEAD is still reclaimed (no deadlock).
+# `( : ) &` exits immediately; `wait` then guarantees the pid is gone.
+( : ) &
+DEAD_PID=$!
+wait "$DEAD_PID" 2>/dev/null || true
+DEADOWNER_HOME=$(fake_home 200 "$SUCCESS_BODY")
+DEADOWNER_LOCK="$DEADOWNER_HOME/.claude/.usage-refresh.lock"
+mkdir "$DEADOWNER_LOCK"
+printf '%s' "$DEAD_PID" > "$DEADOWNER_LOCK/owner"
+env HOME="$DEADOWNER_HOME" bash "$SCRIPT" --force
+fetch_called "$DEADOWNER_HOME" || fail "a lock whose owner is dead must be reclaimed rather than deadlocking"
+[ ! -d "$DEADOWNER_LOCK" ] || fail "lock should be released after reclaiming from a dead owner"
+
+# =======================================================================
+# Regression, release side: if this process's lock gets taken over while it
+# runs, its EXIT trap must NOT delete the new owner's lock -- doing so lets
+# a third process into the critical section. The fetch stub rewrites the
+# owner file to another live pid, which mirrors the real sequence: a slow
+# fetch has its lock reclaimed, another process takes it, and the original
+# then reaches its trap. The response is a 200 so the script runs all the
+# way to its normal exit (a non-200 exits early on the backoff path).
+# =======================================================================
+TAKEOVER_HOME=$(fake_home 200 "$SUCCESS_BODY")
+TAKEOVER_LOCK="$TAKEOVER_HOME/.claude/.usage-refresh.lock"
+OTHER_PID=$$   # a live pid that is not the script's own (see note above)
+cat > "$TAKEOVER_HOME/.claude/fetch-usage.sh" <<EOF
+#!/usr/bin/env bash
+touch "$TAKEOVER_HOME/fetch-called"
+# Simulate the lock being reclaimed by another process mid-fetch.
+printf '%s' "$OTHER_PID" > "$TAKEOVER_LOCK/owner"
+cat <<'BODY'
+$SUCCESS_BODY
+BODY
+printf '__HTTP_STATUS__%s\n' 200
+EOF
+chmod +x "$TAKEOVER_HOME/.claude/fetch-usage.sh"
+env HOME="$TAKEOVER_HOME" bash "$SCRIPT" --force
+fetch_called "$TAKEOVER_HOME" || fail "takeover test setup: the fetch stub never ran"
+[ -d "$TAKEOVER_LOCK" ] \
+  || fail "the EXIT trap deleted a lock this process no longer owned -- that lets a third process into the critical section"
+[ "$(cat "$TAKEOVER_LOCK/owner")" = "$OTHER_PID" ] || fail "the new owner's lock content was clobbered"
+rm -rf "$TAKEOVER_LOCK"
+
+# No temp file may be left behind under any of the above.
+for h in "$LIVEOWNER_HOME" "$DEADOWNER_HOME" "$TAKEOVER_HOME" "$STALE_HOME"; do
+  LEFTOVER=$(find "$h/.claude" -name 'usage-cache.json.tmp*' 2>/dev/null)
+  [ -z "$LEFTOVER" ] || fail "a cache temp file was left behind: $LEFTOVER"
+done
 
 # =======================================================================
 # Regression: an install under an alternate CLAUDE_HOME must invoke the

@@ -29,9 +29,40 @@ mkdir -p "$(dirname "$out")" 2>/dev/null
 
 lock="$out.lock"
 age() { m=$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0); echo $(($(date +%s) - m)); }
-[ -d "$lock" ] && [ "$(age "$lock")" -gt 120 ] && rmdir "$lock" 2>/dev/null
-mkdir "$lock" 2>/dev/null || exit 0
-trap 'rmdir "$lock" 2>/dev/null' EXIT
+# Single-flight (atomic mkdir) with the holder's PID recorded in an `owner`
+# file. A purely time-based staleness check is unsafe on both sides: a run that
+# outlives the threshold has its LIVE lock stolen, and its unconditional
+# `rmdir` trap then deletes whichever newer process holds the lock, admitting a
+# third and racing them all on the shared output temp file. A big transcript
+# plus many subagent files is a realistic way to exceed a fixed threshold here.
+# Reclaim only when the owner is gone; release only while we still own it.
+LOCK_GRACE=120  # lock exists but no owner recorded (killed between mkdir and write)
+LOCK_HARD=3600  # owner looks alive but the lock is impossibly old -> assume PID reuse
+lock_owner() { cat "$lock/owner" 2>/dev/null; }
+lock_acquire() {
+    if mkdir "$lock" 2>/dev/null; then
+        printf '%s' "$$" >"$lock/owner" 2>/dev/null
+        return 0
+    fi
+    owner=$(lock_owner)
+    lage=$(age "$lock")
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && [ "$lage" -lt "$LOCK_HARD" ]; then
+        return 1
+    fi
+    if [ -z "$owner" ] && [ "$lage" -lt "$LOCK_GRACE" ]; then
+        return 1
+    fi
+    rm -rf "$lock" 2>/dev/null
+    mkdir "$lock" 2>/dev/null || return 1
+    printf '%s' "$$" >"$lock/owner" 2>/dev/null
+    return 0
+}
+lock_release() {
+    [ "$(lock_owner)" = "$$" ] && rm -rf "$lock" 2>/dev/null
+    return 0
+}
+lock_acquire || exit 0
+trap lock_release EXIT
 
 # Sum finalized usage over one-or-more JSONL files (slurped). Emits {i,o,r,w,c}.
 # c = list-price $ estimate: per-entry model pricing, cache read at 0.1x input, cache
@@ -135,7 +166,7 @@ jq -n --argjson m "$main" --argjson a "$agents" --argjson ctx "$ctx" '
     context_length: $ctx,
     main:   {input:$m.i, output:$m.o, cache_read:$m.r, cache_write:$m.w, est_cost:$m.c},
     agents: {input:$a.i, output:$a.o, cache_read:$a.r, cache_write:$a.w, est_cost:$a.c}
-  }' >"$out.tmp" 2>/dev/null && mv "$out.tmp" "$out"
+  }' >"$out.tmp.$$" 2>/dev/null && mv "$out.tmp.$$" "$out"
 
 # opportunistic cleanup: drop token-stats caches for sessions untouched for a week, scoped
 # to this session's own project subdirectory under token_history/.
