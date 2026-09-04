@@ -1,0 +1,22 @@
+{
+  "name": "caveman",
+  "version": "1.0.0",
+  "description": "Caveman mode for omp (oh-my-pi) — compress agent output while keeping technical accuracy. Injected rules tracked verbatim from JuliusBrussee/caveman.",
+  "type": "module",
+  "omp": {
+    "name": "Caveman",
+    "description": "Why use many token when few do trick. Compress agent output while keeping technical accuracy; levels lite/full/ultra plus wenyan variants.",
+    "extensions": [
+      "src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "^18.0.0",
+    "@oh-my-pi/pi-tui": "^18.0.0"
+  },
+  "files": [
+    "src",
+    "prompts"
+  ],
+  "license": "MIT"
+}

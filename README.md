@@ -2,7 +2,7 @@
 
 A structured multi-agent workflow system for Claude Code that enforces strict delegation, gated approvals, and traceable software development lifecycle.
 
-**Version:** 2.14.1
+**Version:** 2.15.0
 **Requires:** Claude Code v2.1.76+ (for Tool Search, worktree isolation, agent memory, hooks). Agent teams require v2.1.32+.
 
 ## What This Is
@@ -106,7 +106,7 @@ Or if you already have a PRD:
 | enforce-git-conventions.sh | PreToolUse | Enforce conventional commits, branch naming, block force-push |
 | auto-approve-safe-ops.sh | PermissionRequest | Auto-approve npm test, lint, tsc, git status, etc. |
 
-### Scripts (7)
+### Scripts (8)
 
 | Script | Platform | Purpose |
 |---|---|---|
@@ -115,7 +115,8 @@ Or if you already have a PRD:
 | create-github-issues.sh | GitHub | Create GitHub epic (tracking issue) + child issues from plan steps; output step→issue-number mapping for swarm sessions. |
 | create-local-issues.sh | Any | Fallback for non-GitHub repos: create file-based epic + issues in `plans/` (gitignored). Same JSON output shape as GitHub script. Overwrite-protected (`FORCE_OVERWRITE=1` to rerun). |
 | sync-claude-config.sh | Any | Deploy this repo's agents/skills/commands/rules/hooks/statusline/CLAUDE.md to `~/.claude` (or `$CLAUDE_HOME`). Dry run by default; `--apply` writes, backing up any overwritten file first. `settings.json` is never overwritten wholesale — only `hooks`/`env`/`statusLine` are merged in, idempotently, preserving every other live-only key. |
-| sync-omp-config.sh | Any | Convert this repo's Claude config to oh-my-pi (omp) format and sync it into `~/.omp/agent/` (or `$OMP_HOME`). Agents get their frontmatter rewritten to the omp task-agent schema (tools translated to omp names, Claude-only keys dropped); skills/commands copy verbatim; hooks are bridged by a generated `claude-compat.ts` adapter that shells out to the original `.sh`. Conversion is ephemeral — nothing converted is committed. Dry run by default; `--apply` writes with backups. Flags: `--map-models`, `--no-hooks`. |
+| sync-omp-config.sh | Any | Convert this repo's Claude config to oh-my-pi (omp) format and sync it into `~/.omp/agent/` (or `$OMP_HOME`). Agents get their frontmatter rewritten to the omp task-agent schema (tools translated to omp names, Claude-only keys dropped); skills/commands copy verbatim; hooks are bridged by a generated `claude-compat.ts` adapter that shells out to the original `.sh`; omp-native extension packages under `omp-extensions/` copy verbatim into `~/.omp/agent/extensions/`, and the caveman extension seeds `~/.omp/agent/caveman.json` when absent. On `--apply` it first refreshes the vendored caveman prompt from upstream via `update-caveman-prompt.sh` (best-effort; `--no-update` to skip). Conversion is ephemeral — nothing converted is committed. Dry run by default; `--apply` writes with backups. Flags: `--map-models`, `--no-hooks`, `--no-extensions`, `--no-update`. |
+| update-caveman-prompt.sh | Any | Vendor the caveman-mode prompt from `skills/caveman/SKILL.md` in [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) into `omp-extensions/caveman/prompts/`, so the omp caveman extension tracks the canonical upstream definition instead of a hand-copied snapshot. `--check` exits 3 when the vendored copy is stale (CI drift gate). |
 | run-tests.sh | Any | Discovers and runs every `*.test.sh` suite in the repo (no hardcoded list); prints per-suite PASS/FAIL plus a final summary; exits 0 only if every suite passes. |
 
 **Exit codes:** `0` = approved, `1` = new comments, `2` = idle timeout, `3` = blocked on human, `4` = pipeline failed (GitLab only), `10` = usage error, `11` = snapshot failure.
@@ -212,6 +213,12 @@ Multi-session safe: an atomic lock guarantees only one background refresh runs a
 ## What Changed
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+**v2.15.0** — Caveman mode for omp, deployed via `sync-omp-config.sh`:
+- New `omp-extensions/caveman/` — a self-contained omp extension (ported from [jonjonrankin/pi-caveman](https://github.com/jonjonrankin/pi-caveman)) that compresses agent output while keeping full technical accuracy: `/caveman` command, level taxonomy (lite/full/ultra + wenyan variants), animated status bar, auto-activation on every session, config at `~/.omp/agent/caveman.json`
+- The injected rules are **not** hardcoded — they are vendored verbatim from `skills/caveman/SKILL.md` in [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) into `omp-extensions/caveman/prompts/`, and `scripts/update-caveman-prompt.sh` re-pulls upstream (`--check` fails when the copy is stale) so the extension tracks the canonical definition
+- `sync-omp-config.sh` now overlays `omp-extensions/*` into `~/.omp/agent/extensions/<name>/` (omp auto-discovers them), refreshes the vendored prompt from upstream first on `--apply` (best-effort, non-fatal; `--no-update` to skip), and seeds `~/.omp/agent/caveman.json` from the shared default only when absent — never clobbering a chosen level; skip extensions with `--no-extensions`
+- Script count 7 → 8 (`update-caveman-prompt.sh` + test suite); `sync-omp-config.test.sh` gains 8 extension/settings/refresh cases (16 → 24)
 
 **v2.14.0** — Rich status line, deployed via `sync-claude-config.sh`:
 - New `statusline/` directory (5 scripts): model/effort/repo/branch/context/cache-hit-rate on line 1, session cost on line 2, and — on Max/Pro or API billing — 5h/7d rate limits or credit spend pulled from the same endpoint `/usage` uses
