@@ -45,6 +45,19 @@
 #               file_path recovery on the edit tool is best-effort). Skip with
 #               --no-hooks.
 #
+#   omp-extensions/ — omp-NATIVE, no conversion. Each subdirectory is a
+#               self-contained omp extension package (package.json with an "omp"
+#               manifest key + src/*.ts). Copied verbatim to
+#               <OMP_HOME>/agent/extensions/<name>/, which omp auto-discovers.
+#               The caveman extension additionally seeds
+#               <OMP_HOME>/agent/caveman.json from its caveman.default.json only
+#               if that file is absent (never clobbers a chosen level). Skip with
+#               --no-extensions.
+#               On --apply, the caveman prompt is first refreshed from upstream
+#               via scripts/update-caveman-prompt.sh (network; a failure is
+#               non-fatal — the committed vendored copy is used). Skip with
+#               --no-update. Dry runs never refresh (they touch nothing).
+#
 # Claude tool name -> omp tool name mapping used for agents:
 #   Read->read Write->write Edit/MultiEdit/NotebookEdit->edit Bash->bash
 #   Grep->grep Glob->glob WebSearch/WebFetch->web_search Task/Agent->task
@@ -72,17 +85,21 @@ OMP_AGENT="$OMP_HOME/agent"
 APPLY=0
 MAP_MODELS=0
 WITH_HOOKS=1
+WITH_EXT=1
+UPDATE_PROMPT=1
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --map-models) MAP_MODELS=1 ;;
     --no-hooks) WITH_HOOKS=0 ;;
+    --no-extensions) WITH_EXT=0 ;;
+    --no-update) UPDATE_PROMPT=0 ;;
     -h|--help)
-      sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '2,72p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
-      echo "sync-omp-config.sh: unknown argument '$arg' (use --apply, --map-models, --no-hooks, -h)" >&2
+      echo "sync-omp-config.sh: unknown argument '$arg' (use --apply, --map-models, --no-hooks, --no-extensions, --no-update, -h)" >&2
       exit 2
       ;;
   esac
@@ -447,6 +464,28 @@ export default function claudeCompat(pi: HookAPI): void {
 TS
 fi
 
+# Refresh the vendored caveman prompt from upstream before staging, so an
+# --apply always deploys the latest canonical rules. Network + best-effort: a
+# failure (offline, upstream down, no curl) is non-fatal — the committed
+# vendored copy is deployed instead. Gated to --apply so dry runs never mutate
+# the repo. Skip with --no-update.
+UPDATER="$REPO_ROOT/scripts/update-caveman-prompt.sh"
+if [ "$WITH_EXT" -eq 1 ] && [ "$APPLY" -eq 1 ] && [ "$UPDATE_PROMPT" -eq 1 ] && [ -x "$UPDATER" ]; then
+  echo "caveman: refreshing prompt from upstream..."
+  if bash "$UPDATER"; then :; else
+    echo "  warning: upstream refresh failed; deploying the vendored prompt as-is" >&2
+  fi
+fi
+
+# --- omp-extensions: verbatim omp-native extension packages ---
+if [ "$WITH_EXT" -eq 1 ] && [ -d "$REPO_ROOT/omp-extensions" ]; then
+  mkdir -p "$STAGE/extensions"
+  for extdir in "$REPO_ROOT"/omp-extensions/*/; do
+    [ -d "$extdir" ] || continue
+    cp -R "${extdir%/}" "$STAGE/extensions/"
+  done
+fi
+
 # ============================ SYNC (overlay onto target) =====================
 
 # Replace any symlinked ancestor directory of a staged file (the path
@@ -530,6 +569,22 @@ if [ "$WITH_HOOKS" -eq 1 ]; then
   echo "hooks:"
   overlay_tree "$STAGE/hooks" "$OMP_AGENT/hooks" "hooks"
 fi
+if [ "$WITH_EXT" -eq 1 ]; then
+  echo "extensions:"
+  overlay_tree "$STAGE/extensions" "$OMP_AGENT/extensions" "extensions"
+  # Seed the shared caveman defaults only when the user has none yet, so a fresh
+  # install starts in caveman mode without ever clobbering a chosen level.
+  caveman_seed="$REPO_ROOT/omp-extensions/caveman/caveman.default.json"
+  caveman_target="$OMP_AGENT/caveman.json"
+  if [ -f "$caveman_seed" ] && [ ! -e "$caveman_target" ]; then
+    note "caveman.json (seed defaults)"
+    CHANGED=$((CHANGED + 1))
+    if [ "$APPLY" -eq 1 ]; then
+      mkdir -p "$OMP_AGENT"
+      cp "$caveman_seed" "$caveman_target"
+    fi
+  fi
+fi
 
 echo
 if [ "$CHANGED" -eq 0 ]; then
@@ -546,6 +601,12 @@ if [ "$APPLY" -eq 1 ]; then
     echo "does not auto-discover user hooks there, register the module in"
     echo "$OMP_AGENT/config.yml. PermissionRequest (auto-approve-safe-ops.sh)"
     echo "has no omp hook event — use omp approval/allowlist settings instead."
+  fi
+  if [ "$WITH_EXT" -eq 1 ]; then
+    echo
+    echo "EXTENSIONS: wrote $OMP_AGENT/extensions/<name>/ — omp auto-discovers"
+    echo "these. Caveman default settings seed $OMP_AGENT/caveman.json when absent;"
+    echo "edit that file or run /caveman config to change your level."
   fi
   if [ "$MAP_MODELS" -eq 1 ]; then
     echo
