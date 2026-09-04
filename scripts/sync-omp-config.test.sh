@@ -85,6 +85,18 @@ EOF
 echo test
 EOF
 
+  # omp-native extension package + shared settings seed (deployed verbatim).
+  mkdir -p "$dir/omp-extensions/caveman/src"
+  cat > "$dir/omp-extensions/caveman/package.json" <<'EOF'
+{ "name": "caveman", "type": "module", "omp": { "name": "Caveman", "extensions": ["src/index.ts"] } }
+EOF
+  cat > "$dir/omp-extensions/caveman/src/index.ts" <<'EOF'
+export default function caveman() {}
+EOF
+  cat > "$dir/omp-extensions/caveman/caveman.default.json" <<'EOF'
+{ "defaultLevel": "full", "showStatus": true }
+EOF
+
   echo "$dir"
 }
 
@@ -307,4 +319,73 @@ diff -q "$R11/skills/demo-skill/SKILL.md" "$R11/omp/agent/skills/demo-skill/SKIL
 NEST_OUT="$(run "$R11" 2>&1)"
 echo "$NEST_OUT" | grep -q "Already in sync" || fail "(16) nested symlink not resolved: $NEST_OUT"
 
-echo "PASS: sync-omp-config.test.sh (16 cases)"
+# ============================================================ (17) extension deploy
+R12="$(setup_repo)"
+run "$R12" --apply >/dev/null 2>&1 || fail "(17) apply failed"
+EXT="$R12/omp/agent/extensions/caveman"
+[ -f "$EXT/package.json" ] || fail "(17) extension package.json not deployed"
+grep -q '"omp"' "$EXT/package.json" || fail "(17) omp manifest key missing from deployed package.json"
+diff -q "$R12/omp-extensions/caveman/src/index.ts" "$EXT/src/index.ts" >/dev/null \
+  || fail "(17) extension src/index.ts not deployed verbatim"
+
+# ============================================================ (18) settings seeded when absent
+[ -f "$R12/omp/agent/caveman.json" ] || fail "(18) caveman.json not seeded on first apply"
+grep -q '"defaultLevel": "full"' "$R12/omp/agent/caveman.json" || fail "(18) seeded settings content wrong"
+
+# ============================================================ (19) seed never clobbers a chosen level
+printf '{"defaultLevel":"ultra","showStatus":false}\n' > "$R12/omp/agent/caveman.json"
+SEED_OUT="$(run "$R12" --apply 2>&1)"
+echo "$SEED_OUT" | grep -q "Already in sync" || fail "(19) re-apply not idempotent with extensions: $SEED_OUT"
+grep -q '"defaultLevel":"ultra"' "$R12/omp/agent/caveman.json" || fail "(19) seed clobbered an existing user settings file"
+
+# ============================================================ (20) --no-extensions
+R13="$(setup_repo)"
+run "$R13" --apply --no-extensions >/dev/null 2>&1 || fail "(20) --no-extensions exited nonzero"
+[ -e "$R13/omp/agent/extensions" ] && fail "(20) --no-extensions still deployed extensions"
+[ -e "$R13/omp/agent/caveman.json" ] && fail "(20) --no-extensions still seeded settings"
+[ -f "$R13/omp/agent/agents/checker.md" ] || fail "(20) --no-extensions skipped agents too"
+
+# ====================================================== (21) apply refreshes prompt
+# When update-caveman-prompt.sh is present, --apply must invoke it first. A stub
+# records the call (and touches no network) so the wiring is tested offline.
+R14="$(setup_repo)"
+cat > "$R14/scripts/update-caveman-prompt.sh" <<EOF
+#!/bin/bash
+echo ran > "$R14/updater-ran"
+EOF
+chmod +x "$R14/scripts/update-caveman-prompt.sh"
+run "$R14" --apply >/dev/null 2>&1 || fail "(21) apply with updater present failed"
+[ -f "$R14/updater-ran" ] || fail "(21) sync did not invoke update-caveman-prompt.sh on --apply"
+
+# ====================================================== (22) --no-update suppresses refresh
+R15="$(setup_repo)"
+cat > "$R15/scripts/update-caveman-prompt.sh" <<EOF
+#!/bin/bash
+echo ran > "$R15/updater-ran"
+EOF
+chmod +x "$R15/scripts/update-caveman-prompt.sh"
+run "$R15" --apply --no-update >/dev/null 2>&1 || fail "(22) --no-update apply failed"
+[ -f "$R15/updater-ran" ] && fail "(22) --no-update still invoked the updater"
+
+# ====================================================== (23) dry run never refreshes
+R16="$(setup_repo)"
+cat > "$R16/scripts/update-caveman-prompt.sh" <<EOF
+#!/bin/bash
+echo ran > "$R16/updater-ran"
+EOF
+chmod +x "$R16/scripts/update-caveman-prompt.sh"
+run "$R16" >/dev/null 2>&1 || fail "(23) dry run failed"
+[ -f "$R16/updater-ran" ] && fail "(23) dry run invoked the updater (must be apply-only)"
+
+# ====================================================== (24) refresh failure is non-fatal
+R17="$(setup_repo)"
+cat > "$R17/scripts/update-caveman-prompt.sh" <<'EOF'
+#!/bin/bash
+echo "boom" >&2
+exit 4
+EOF
+chmod +x "$R17/scripts/update-caveman-prompt.sh"
+run "$R17" --apply >/dev/null 2>&1 || fail "(24) a failing updater must not abort the sync"
+[ -f "$R17/omp/agent/extensions/caveman/package.json" ] || fail "(24) extension not deployed after non-fatal updater failure"
+
+echo "PASS: sync-omp-config.test.sh (24 cases)"

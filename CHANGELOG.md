@@ -2,6 +2,18 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.15.0] - 2026-09-04
+
+### Caveman Mode for omp, Deployed Via `sync-omp-config.sh`
+
+A self-owned omp (oh-my-pi) port of [jonjonrankin/pi-caveman](https://github.com/jonjonrankin/pi-caveman), whose injected rules track the canonical upstream skill from [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) rather than a hand-copied snapshot.
+
+- **New `omp-extensions/caveman/`** — a self-contained omp extension: `/caveman` command (toggle, set level, `config` dialog), the upstream level taxonomy (`lite`/`full`/`ultra`/`wenyan-lite`/`wenyan-full`/`wenyan-ultra`), an animated campfire status bar, session-persistent level, and auto-activation on every new session. Ported from pi-caveman with three changes: imports target `@oh-my-pi/pi-coding-agent`/`@oh-my-pi/pi-tui`, config resolves via `getAgentDir()` (`~/.omp/agent/caveman.json`), and the prompt is loaded from a vendored file instead of inline strings.
+- **Rules tracked from upstream.** `omp-extensions/caveman/prompts/caveman.SKILL.md` is a verbatim vendored copy of `skills/caveman/SKILL.md` in JuliusBrussee/caveman. The extension reads it at runtime, strips the YAML frontmatter, injects the body, and appends the active level. `before_agent_start` therefore always injects the canonical definition.
+- **New `scripts/update-caveman-prompt.sh`** re-pulls the upstream skill into the vendored path (curl, with a `name: caveman` frontmatter sanity guard that refuses to overwrite a good copy with a 404 body). `--check` exits 3 when the vendored copy is stale — a CI drift gate. Exit codes: 0 up-to-date/updated · 2 usage · 3 stale · 1 missing curl · 4 fetch failed · 5 failed sanity guard.
+- **`sync-omp-config.sh`** now overlays every package under `omp-extensions/` into `<OMP_HOME>/agent/extensions/<name>/` (which omp auto-discovers) and seeds `<OMP_HOME>/agent/caveman.json` from the extension's `caveman.default.json` **only when absent**, so a fresh install starts in caveman mode without ever clobbering a chosen level. On `--apply` it first refreshes the vendored prompt from upstream via `update-caveman-prompt.sh` (best-effort — an offline or failed fetch is non-fatal and deploys the committed copy); dry runs never refresh. Skip extensions with `--no-extensions`, the refresh with `--no-update`.
+- **Tests.** New `scripts/update-caveman-prompt.test.sh` (8 cases, network-free via `file://` fixtures). `scripts/sync-omp-config.test.sh` gains 8 cases (16 → 24): extension deployed verbatim, settings seeded when absent, seed never clobbers an existing file, `--no-extensions` skips both, and the upstream refresh is invoked on apply / suppressed by `--no-update` / never run on dry-run / non-fatal on failure. Script count 7 → 8.
+
 ## [2.14.1] - 2026-08-27
 
 ### Fix: Two Flaky Tests Introduced in 2.14.0
