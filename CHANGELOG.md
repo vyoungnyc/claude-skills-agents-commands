@@ -2,6 +2,16 @@
 
 All notable changes to this multi-agent orchestration system are documented in this file.
 
+## [2.14.2] - 2026-08-21
+
+### `/codereview`: Claude Adversarial Reviewer Replaces Codex Adversarial; `--no-codex-adversarial` → `--no-codex`
+
+- **`commands/codereview.md`:** replaces the Codex adversarial reviewer (#7) with a new native Claude sub-agent, Agent #6 — same adversarial mandate (assume the diff is broken, actively try to find how: malicious/malformed input, races, resource exhaustion, security bypasses, unseen-caller interactions), but haiku-scored like the other Claude agents instead of depending on the optional Codex companion. Codex now runs a single reviewer (#7, standard review only). Merged with `main`'s later Markdown-formatted `mr_comment` requirement (v2.11.4 below) — source list uses `claude-adversarial` rather than the pre-existing `codex-adversarial` name it replaced.
+- **Flag renamed:** `--no-codex-adversarial` → `--no-codex` — since Codex no longer runs an adversarial pass of its own, the flag now just skips the lone remaining Codex reviewer, keeping all 6 Claude agents (including the new adversarial one).
+- **`README.md`:** `/codereview` command table entry updated for the new roster and flag name.
+
+Note: authored as a colliding `2.11.4` self-assignment (branched before `main`'s v2.12.0–2.14.1 landed); renumbered to `2.14.2` on merge, same pattern as the `2.11.4`/`2.13.0` collisions noted below.
+
 ## [2.14.1] - 2026-08-27
 
 ### Fix: Two Flaky Tests Introduced in 2.14.0

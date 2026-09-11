@@ -401,7 +401,7 @@ bash "$SCRIPT" "$T1" "$SWEEP_DIR/current.json" >/dev/null 2>&1
 # GNU stat first, BSD second, and validate numerically -- `stat -f` on a GNU
 # host is --file-system and prints a report with exit 0, which is the exact bug
 # this suite is testing for in the script.
-SWEEP_MODE=$(stat -c %a "$SWEEP_DIR/current.json" 2>/dev/null)
+SWEEP_MODE=$(stat -c %a "$SWEEP_DIR/current.json" 2>/dev/null) || true
 case "$SWEEP_MODE" in ''|*[!0-7]*) SWEEP_MODE=$(stat -f %Lp "$SWEEP_DIR/current.json" 2>/dev/null) ;; esac
 case "$SWEEP_MODE" in ''|*[!0-7]*) SWEEP_MODE="?" ;; esac
 [ "$SWEEP_MODE" = "600" ] || fail "the token cache should be mode 600, got $SWEEP_MODE"
