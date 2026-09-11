@@ -19,6 +19,18 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.claude/usage-refresh.sh --force >/dev/null 2>&1 &",
+            "timeout": 5,
+            "statusMessage": "Refreshing usage stats..."
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
@@ -87,5 +99,10 @@
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "\"$HOME\"/.claude/statusline-command.sh",
+    "refreshInterval": 30
   }
 }
