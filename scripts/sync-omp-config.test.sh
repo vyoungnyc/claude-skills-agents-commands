@@ -388,4 +388,18 @@ chmod +x "$R17/scripts/update-caveman-prompt.sh"
 run "$R17" --apply >/dev/null 2>&1 || fail "(24) a failing updater must not abort the sync"
 [ -f "$R17/omp/agent/extensions/caveman/package.json" ] || fail "(24) extension not deployed after non-fatal updater failure"
 
-echo "PASS: sync-omp-config.test.sh (24 cases)"
+
+
+# ============================== (25) seed leaves a dangling config symlink alone
+# `test -e` follows symlinks, so a dangling link reads as absent. Seeding through
+# it aborts mid-apply (cp: "not writing through dangling symlink") or, on
+# implementations that follow the link, writes outside OMP_HOME.
+R18="$(setup_repo)"
+mkdir -p "$R18/omp/agent"
+ln -s "$R18/omp/agent/nonexistent-caveman.json" "$R18/omp/agent/caveman.json"
+run "$R18" --apply >/dev/null 2>&1 || fail "(25) apply failed with a dangling caveman.json symlink"
+[ -L "$R18/omp/agent/caveman.json" ] || fail "(25) seed replaced the user's symlink"
+[ -e "$R18/omp/agent/nonexistent-caveman.json" ] && fail "(25) seed wrote through the dangling symlink"
+[ -f "$R18/omp/agent/extensions/caveman/package.json" ] || fail "(25) extension not deployed alongside the skipped seed"
+
+echo "PASS: sync-omp-config.test.sh (25 cases)"

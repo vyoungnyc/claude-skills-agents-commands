@@ -291,10 +291,14 @@ export default function caveman(pi: ExtensionAPI) {
     if (sessionLevel !== null) {
       // Resuming — use session state
       level = sessionLevel;
-    } else if (config.defaultLevel !== "off") {
-      // New session — apply default from config
+    } else {
+      // New session — apply the configured default, including "off", so a
+      // level left over from an earlier session in the same process is never
+      // inherited. Only a non-off default is persisted to session state.
       level = config.defaultLevel;
-      pi.appendEntry("caveman-level", { level });
+      if (level !== "off") {
+        pi.appendEntry("caveman-level", { level });
+      }
     }
 
     syncStatus(ctx);

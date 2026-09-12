@@ -218,7 +218,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 - New `omp-extensions/caveman/` — a self-contained omp extension (ported from [jonjonrankin/pi-caveman](https://github.com/jonjonrankin/pi-caveman)) that compresses agent output while keeping full technical accuracy: `/caveman` command, level taxonomy (lite/full/ultra + wenyan variants), animated status bar, auto-activation on every session, config at `~/.omp/agent/caveman.json`
 - The injected rules are **not** hardcoded — they are vendored verbatim from `skills/caveman/SKILL.md` in [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) into `omp-extensions/caveman/prompts/`, and `scripts/update-caveman-prompt.sh` re-pulls upstream (`--check` fails when the copy is stale) so the extension tracks the canonical definition
 - `sync-omp-config.sh` now overlays `omp-extensions/*` into `~/.omp/agent/extensions/<name>/` (omp auto-discovers them), refreshes the vendored prompt from upstream first on `--apply` (best-effort, non-fatal; `--no-update` to skip), and seeds `~/.omp/agent/caveman.json` from the shared default only when absent — never clobbering a chosen level; skip extensions with `--no-extensions`
-- Script count 7 → 8 (`update-caveman-prompt.sh` + test suite); `sync-omp-config.test.sh` gains 8 extension/settings/refresh cases (16 → 24)
+- Script count 7 → 8 (`update-caveman-prompt.sh` + test suite); `sync-omp-config.test.sh` gains 9 extension/settings/refresh cases (16 → 25)
 
 **v2.14.0** — Rich status line, deployed via `sync-claude-config.sh`:
 - New `statusline/` directory (5 scripts): model/effort/repo/branch/context/cache-hit-rate on line 1, session cost on line 2, and — on Max/Pro or API billing — 5h/7d rate limits or credit spend pulled from the same endpoint `/usage` uses

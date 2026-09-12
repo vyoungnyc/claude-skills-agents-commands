@@ -576,7 +576,10 @@ if [ "$WITH_EXT" -eq 1 ]; then
   # install starts in caveman mode without ever clobbering a chosen level.
   caveman_seed="$REPO_ROOT/omp-extensions/caveman/caveman.default.json"
   caveman_target="$OMP_AGENT/caveman.json"
-  if [ -f "$caveman_seed" ] && [ ! -e "$caveman_target" ]; then
+  # -L as well as -e: a dangling symlink is absent to -e, but seeding through it
+  # either aborts mid-apply or writes outside OMP_HOME. Treat any symlink as
+  # user-owned config and leave it alone.
+  if [ -f "$caveman_seed" ] && [ ! -e "$caveman_target" ] && [ ! -L "$caveman_target" ]; then
     note "caveman.json (seed defaults)"
     CHANGED=$((CHANGED + 1))
     if [ "$APPLY" -eq 1 ]; then
